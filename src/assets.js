@@ -7,20 +7,25 @@ const BASE = globalThis.__LS_BASE__ || import.meta.env.BASE_URL;
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);
 
-const urls = {
-  deer: `${BASE}assets/wildlife/deer.glb`,
-  rabbit: `${BASE}assets/wildlife/rabbit.glb`,
-  zombie: `${BASE}assets/infected/zombie.glb`,
-  rifle: `${BASE}assets/weapons/rifle.glb`,
-  barrel: `${BASE}assets/props/barrel.glb`,
-  container: `${BASE}assets/props/container.glb`,
-  cinderblock: `${BASE}assets/props/cinderblock.glb`,
-  blenderBlastDoor: `${BASE}assets/blender/blast_door.glb`,
-  blenderGunVault: `${BASE}assets/blender/gun_vault.glb`,
-  blenderCCTV: `${BASE}assets/blender/cctv_console.glb`,
-  blenderGate: `${BASE}assets/blender/perimeter_gate.glb`,
-  blenderFloodlight: `${BASE}assets/blender/floodlight.glb`,
-  blenderDeadTree: `${BASE}assets/blender/dead_tree.glb`,
+const bunkerUrls = {
+  desk: `${BASE}assets/blender/desk_station.glb`,
+  radio: `${BASE}assets/blender/radio.glb`,
+  cctv: `${BASE}assets/blender/cctv_console_v2.glb`,
+  vault: `${BASE}assets/blender/gun_vault_v2.glb`,
+  rifle: `${BASE}assets/blender/hunting_rifle.glb`,
+  generator: `${BASE}assets/blender/generator.glb`,
+  bed: `${BASE}assets/blender/bed.glb`,
+  chair: `${BASE}assets/blender/chair.glb`,
+  storage: `${BASE}assets/blender/storage_rack.glb`,
+  blastDoor: `${BASE}assets/blender/blast_door_v2.glb`,
+  pipes: `${BASE}assets/blender/pipe_cluster.glb`,
+  ceilingLight: `${BASE}assets/blender/ceiling_light.glb`,
+};
+
+const exteriorUrls = {
+  gate: `${BASE}assets/blender/perimeter_gate.glb`,
+  floodlight: `${BASE}assets/blender/floodlight.glb`,
+  deadTree: `${BASE}assets/blender/dead_tree.glb`,
 };
 
 const textureUrls = {
@@ -40,7 +45,7 @@ function prepare(root) {
     const materials = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of materials) {
       if (!m) continue;
-      if ('roughness' in m) m.roughness = Math.max(0.45, m.roughness ?? 0.75);
+      if ('roughness' in m) m.roughness = Math.max(0.32, m.roughness ?? 0.7);
       if (m.map) {
         m.map.colorSpace = THREE.SRGBColorSpace;
         m.map.anisotropy = 8;
@@ -50,48 +55,43 @@ function prepare(root) {
   return root;
 }
 
-export function fitToHeight(root, height) {
-  root.updateMatrixWorld(true);
-  let box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  root.scale.multiplyScalar(height / Math.max(size.y, 0.001));
-  root.updateMatrixWorld(true);
-  box = new THREE.Box3().setFromObject(root);
-  root.position.y -= box.min.y;
-  return root;
+async function loadModel(url) {
+  const gltf = await loader.loadAsync(url);
+  prepare(gltf.scene);
+  return gltf;
 }
 
 export async function loadGameAssets(onProgress = () => {}) {
   await MeshoptDecoder.ready;
-  const required = ['deer', 'rabbit', 'zombie', 'rifle'];
-  const optional = [
-    'barrel', 'container', 'cinderblock',
-    'blenderBlastDoor', 'blenderGunVault', 'blenderCCTV',
-    'blenderGate', 'blenderFloodlight', 'blenderDeadTree'
-  ];
+  const entries = Object.entries(bunkerUrls);
   const assets = {};
 
-  for (let i = 0; i < required.length; i++) {
-    const key = required[i];
-    onProgress(`Loading ${key.toUpperCase()} model`, i + 1, required.length + 1);
-    const gltf = await loader.loadAsync(urls[key]);
-    prepare(gltf.scene);
+  onProgress('Loading bunker PBR materials', 1, 3);
+  const texturesPromise = loadTextures();
+
+  onProgress('Loading Blender bunker kit', 2, 3);
+  const modelsPromise = Promise.all(entries.map(async ([key, url]) => {
+    const gltf = await loadModel(url);
     assets[key] = gltf;
-  }
-
-  onProgress('Loading PBR materials', required.length + 1, required.length + 1);
-  assets.textures = await loadTextures();
-
-  await Promise.all(optional.map(async (key) => {
-    try {
-      const gltf = await loader.loadAsync(urls[key]);
-      prepare(gltf.scene);
-      assets[key] = gltf;
-    } catch (err) {
-      console.warn(`Optional asset ${key} skipped`, err);
-    }
   }));
 
+  await Promise.all([texturesPromise.then(t => { assets.textures = t; }), modelsPromise]);
+  onProgress('Blender bunker ready', 3, 3);
+  return assets;
+}
+
+export async function loadExteriorAssets(onProgress = () => {}) {
+  await MeshoptDecoder.ready;
+  const assets = {};
+  const entries = Object.entries(exteriorUrls);
+  await Promise.all(entries.map(async ([key, url], i) => {
+    try {
+      onProgress(`Loading exterior ${key}`, i + 1, entries.length);
+      assets[key] = await loadModel(url);
+    } catch (err) {
+      console.warn(`Exterior Blender asset ${key} skipped`, err);
+    }
+  }));
   return assets;
 }
 
@@ -105,6 +105,7 @@ async function loadTextures() {
     t.anisotropy = 8;
     return t;
   };
+
   const [concreteColor, concreteNormal, concreteRoughness, plateColor, plateNormal, plateRoughness] = await Promise.all([
     load(textureUrls.concreteColor, true, 3, 3),
     load(textureUrls.concreteNormal, false, 3, 3),
@@ -120,17 +121,19 @@ export function cloneGLTF(gltf) {
   return clone(gltf.scene);
 }
 
-export function pickClip(gltf, regex, fallback = 0) {
-  return gltf.animations.find((clip) => regex.test(clip.name)) ?? gltf.animations[fallback] ?? null;
+export function fitToHeight(root, height) {
+  root.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  root.scale.multiplyScalar(height / Math.max(size.y, 0.001));
+  root.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(root);
+  root.position.y -= box.min.y;
+  return root;
 }
 
-export function createMixer(root, clip, speed = 1) {
-  const mixer = new THREE.AnimationMixer(root);
-  if (clip) {
-    const action = mixer.clipAction(clip);
-    action.timeScale = speed;
-    action.play();
-    if (clip.duration) action.time = Math.random() * clip.duration;
-  }
-  return mixer;
+export function findNamed(root, name) {
+  let found = null;
+  root.traverse(o => { if (!found && o.name === name) found = o; });
+  return found;
 }
