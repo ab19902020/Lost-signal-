@@ -13,6 +13,7 @@ permissions:
 jobs:
   blender-assets:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,8 +26,18 @@ jobs:
           sudo apt-get install -y blender
           blender --version
 
-      - name: Generate Lost Signal GLBs
-        run: blender -b --python blender/generate_assets.py
+      - name: Generate premium bunker GLBs
+        run: blender -b --python blender/generate_bunker_v2.py
+
+      - name: Verify generated files
+        run: |
+          ls -lah public/assets/blender
+          test -f public/assets/blender/desk_station.glb
+          test -f public/assets/blender/cctv_console_v2.glb
+          test -f public/assets/blender/gun_vault_v2.glb
+          test -f public/assets/blender/hunting_rifle.glb
+          test -f public/assets/blender/generator.glb
+          test -f public/assets/blender/blast_door_v2.glb
 
       - name: Commit generated assets
         run: |
@@ -36,6 +47,6 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No Blender asset changes to commit.'
           else
-            git commit -m 'Generate Blender environment assets'
+            git commit -m 'Generate premium Blender bunker assets'
             git push
           fi
