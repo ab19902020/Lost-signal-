@@ -7,7 +7,9 @@ const BASE = globalThis.__LS_BASE__ || import.meta.env.BASE_URL;
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);
 
+// Lost Signal V3 rule: every visible world object is a Blender-exported GLB.
 const bunkerUrls = {
+  environment: `${BASE}assets/blender/bunker_environment_v3.glb`,
   desk: `${BASE}assets/blender/desk_station.glb`,
   radio: `${BASE}assets/blender/radio.glb`,
   cctv: `${BASE}assets/blender/cctv_console_v2.glb`,
@@ -20,21 +22,25 @@ const bunkerUrls = {
   blastDoor: `${BASE}assets/blender/blast_door_v2.glb`,
   pipes: `${BASE}assets/blender/pipe_cluster.glb`,
   ceilingLight: `${BASE}assets/blender/ceiling_light.glb`,
+  ventilation: `${BASE}assets/blender/ventilation_unit_v3.glb`,
+  electrical: `${BASE}assets/blender/electrical_wall_v3.glb`,
+  lockers: `${BASE}assets/blender/locker_bank_v3.glb`,
+  bench: `${BASE}assets/blender/maintenance_bench_v3.glb`,
+  clutter: `${BASE}assets/blender/survival_clutter_v3.glb`,
+  statusBoard: `${BASE}assets/blender/status_board_v3.glb`,
+  accessControl: `${BASE}assets/blender/access_control_v3.glb`,
+  wallCamera: `${BASE}assets/blender/wall_camera_v3.glb`,
 };
 
 const exteriorUrls = {
+  exteriorGround: `${BASE}assets/blender/exterior_ground_v3.glb`,
+  exteriorEntrance: `${BASE}assets/blender/exterior_entrance_v3.glb`,
+  fence: `${BASE}assets/blender/perimeter_fence_v3.glb`,
   gate: `${BASE}assets/blender/perimeter_gate.glb`,
   floodlight: `${BASE}assets/blender/floodlight.glb`,
   deadTree: `${BASE}assets/blender/dead_tree.glb`,
-};
-
-const textureUrls = {
-  concreteColor: `${BASE}assets/textures/concrete__Concrete034_1K_Color.jpg`,
-  concreteNormal: `${BASE}assets/textures/concrete__Concrete034_1K_NormalGL.jpg`,
-  concreteRoughness: `${BASE}assets/textures/concrete__Concrete034_1K_Roughness.jpg`,
-  plateColor: `${BASE}assets/textures/metal_floor_plate__DiamondPlate008C_1K_Color.jpg`,
-  plateNormal: `${BASE}assets/textures/metal_floor_plate__DiamondPlate008C_1K_NormalGL.jpg`,
-  plateRoughness: `${BASE}assets/textures/metal_floor_plate__DiamondPlate008C_1K_Roughness.jpg`,
+  barrier: `${BASE}assets/blender/concrete_barrier_v3.glb`,
+  rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
 };
 
 function prepare(root) {
@@ -45,11 +51,12 @@ function prepare(root) {
     const materials = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of materials) {
       if (!m) continue;
-      if ('roughness' in m) m.roughness = Math.max(0.32, m.roughness ?? 0.7);
       if (m.map) {
         m.map.colorSpace = THREE.SRGBColorSpace;
         m.map.anisotropy = 8;
       }
+      if (m.normalMap) m.normalMap.anisotropy = 8;
+      if ('roughness' in m && m.roughness == null) m.roughness = .65;
     }
   });
   return root;
@@ -61,22 +68,33 @@ async function loadModel(url) {
   return gltf;
 }
 
+async function loadSet(entries, assets, onItem) {
+  await Promise.all(entries.map(async ([key, url]) => {
+    assets[key] = await loadModel(url);
+    onItem(key);
+  }));
+}
+
 export async function loadGameAssets(onProgress = () => {}) {
   await MeshoptDecoder.ready;
-  const entries = Object.entries(bunkerUrls);
   const assets = {};
+  const bunkerEntries = Object.entries(bunkerUrls);
+  const exteriorEntries = Object.entries(exteriorUrls);
+  const total = bunkerEntries.length + exteriorEntries.length;
+  let loaded = 0;
+  const tick = (key) => {
+    loaded += 1;
+    onProgress(`Blender asset: ${key}`, loaded, total);
+  };
 
-  onProgress('Loading bunker PBR materials', 1, 3);
-  const texturesPromise = loadTextures();
+  // Everything loads in parallel. No third-party animal/zombie downloads and no runtime
+  // texture pack round-trip: the Blender GLBs carry their authored materials.
+  await Promise.all([
+    loadSet(bunkerEntries, assets, tick),
+    loadSet(exteriorEntries, assets, tick),
+  ]);
 
-  onProgress('Loading Blender bunker kit', 2, 3);
-  const modelsPromise = Promise.all(entries.map(async ([key, url]) => {
-    const gltf = await loadModel(url);
-    assets[key] = gltf;
-  }));
-
-  await Promise.all([texturesPromise.then(t => { assets.textures = t; }), modelsPromise]);
-  onProgress('Blender bunker ready', 3, 3);
+  onProgress('Complete Blender world ready', total, total);
   return assets;
 }
 
@@ -84,37 +102,12 @@ export async function loadExteriorAssets(onProgress = () => {}) {
   await MeshoptDecoder.ready;
   const assets = {};
   const entries = Object.entries(exteriorUrls);
-  await Promise.all(entries.map(async ([key, url], i) => {
-    try {
-      onProgress(`Loading exterior ${key}`, i + 1, entries.length);
-      assets[key] = await loadModel(url);
-    } catch (err) {
-      console.warn(`Exterior Blender asset ${key} skipped`, err);
-    }
-  }));
+  let loaded = 0;
+  await loadSet(entries, assets, (key) => {
+    loaded += 1;
+    onProgress(`Blender exterior: ${key}`, loaded, entries.length);
+  });
   return assets;
-}
-
-async function loadTextures() {
-  const tl = new THREE.TextureLoader();
-  const load = async (url, srgb = false, rx = 1, ry = 1) => {
-    const t = await tl.loadAsync(url);
-    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(rx, ry);
-    t.anisotropy = 8;
-    return t;
-  };
-
-  const [concreteColor, concreteNormal, concreteRoughness, plateColor, plateNormal, plateRoughness] = await Promise.all([
-    load(textureUrls.concreteColor, true, 3, 3),
-    load(textureUrls.concreteNormal, false, 3, 3),
-    load(textureUrls.concreteRoughness, false, 3, 3),
-    load(textureUrls.plateColor, true, 4, 7),
-    load(textureUrls.plateNormal, false, 4, 7),
-    load(textureUrls.plateRoughness, false, 4, 7),
-  ]);
-  return { concreteColor, concreteNormal, concreteRoughness, plateColor, plateNormal, plateRoughness };
 }
 
 export function cloneGLTF(gltf) {
