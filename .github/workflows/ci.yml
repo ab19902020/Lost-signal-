@@ -1,0 +1,29 @@
+name: Validate Lost Signal Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Verify Blender bunker assets are present
+        run: |
+          test -f public/assets/blender/desk_station.glb
+          test -f public/assets/blender/cctv_console_v2.glb
+          test -f public/assets/blender/gun_vault_v2.glb
+          test -f public/assets/blender/hunting_rifle.glb
+          test -f public/assets/blender/generator.glb
+          test -f public/assets/blender/blast_door_v2.glb
