@@ -15,6 +15,12 @@ const urls = {
   barrel: `${BASE}assets/props/barrel.glb`,
   container: `${BASE}assets/props/container.glb`,
   cinderblock: `${BASE}assets/props/cinderblock.glb`,
+  blenderBlastDoor: `${BASE}assets/blender/blast_door.glb`,
+  blenderGunVault: `${BASE}assets/blender/gun_vault.glb`,
+  blenderCCTV: `${BASE}assets/blender/cctv_console.glb`,
+  blenderGate: `${BASE}assets/blender/perimeter_gate.glb`,
+  blenderFloodlight: `${BASE}assets/blender/floodlight.glb`,
+  blenderDeadTree: `${BASE}assets/blender/dead_tree.glb`,
 };
 
 const textureUrls = {
@@ -58,7 +64,11 @@ export function fitToHeight(root, height) {
 export async function loadGameAssets(onProgress = () => {}) {
   await MeshoptDecoder.ready;
   const required = ['deer', 'rabbit', 'zombie', 'rifle'];
-  const optional = ['barrel', 'container', 'cinderblock'];
+  const optional = [
+    'barrel', 'container', 'cinderblock',
+    'blenderBlastDoor', 'blenderGunVault', 'blenderCCTV',
+    'blenderGate', 'blenderFloodlight', 'blenderDeadTree'
+  ];
   const assets = {};
 
   for (let i = 0; i < required.length; i++) {
