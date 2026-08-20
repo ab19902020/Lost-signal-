@@ -1,0 +1,49 @@
+name: Enable Pages diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/enable-pages-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  STATUS_FILE: PAGES_ENABLE_STATUS.txt
+
+jobs:
+  enable-pages:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Try to enable Pages in workflow mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          OUTPUT=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow 2>&1)
+          CODE=$?
+          set -e
+          {
+            echo "exit_code=$CODE"
+            echo "timestamp=$(date -u +%FT%TZ)"
+            echo "output<<EOF"
+            echo "$OUTPUT"
+            echo "EOF"
+          } > "$STATUS_FILE"
+
+      - name: Commit diagnostic result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$STATUS_FILE"
+          git commit -m "Record Pages enable diagnostic" || exit 0
+          git push
