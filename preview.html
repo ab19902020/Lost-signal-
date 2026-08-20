@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#020303">
+<title>LOST SIGNAL — Shelter 47</title>
+<style>
+:root{--green:#9bffc0;--amber:#ffc26d;--red:#ff5f55}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#e8eee9;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;touch-action:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#boot,#fatal,#rotate{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(circle at 50% 35%,rgba(77,109,86,.18),transparent 38%),linear-gradient(#090d0a,#020302)}
+.card{width:min(720px,94vw);border:1px solid rgba(180,255,200,.24);background:rgba(3,7,5,.94);padding:22px;box-shadow:0 25px 90px #000}
+.kicker{font-size:10px;letter-spacing:.2em;color:#79877e}
+h1{font-size:clamp(34px,8vw,72px);margin:7px 0 4px;letter-spacing:.08em}
+.desc{font-size:12px;line-height:1.55;color:#a8b5ad}
+#start{width:100%;padding:16px;margin-top:18px;background:linear-gradient(#193522,#0c1c12);border:1px solid #76a886;color:white;font:800 13px inherit;letter-spacing:.14em}
+#start:disabled{opacity:.35}
+#engineState{margin-top:10px;font-size:11px;color:#85948a;line-height:1.45}
+#fatal{display:none;text-align:center}
+#fatal b{color:#ff877d}
+#rotate{display:none;z-index:90;text-align:center;font-weight:800;letter-spacing:.08em}
+body.playing.portrait #rotate{display:flex}
+#hud{position:fixed;inset:0;z-index:20;pointer-events:none}
+#hud:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 42%,rgba(0,0,0,.12) 72%,rgba(0,0,0,.38) 100%);mix-blend-mode:multiply}
+#hud:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.045;background-image:repeating-radial-gradient(circle at 20% 30%,#fff 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
+#top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;justify-content:space-between;gap:10px}
+.panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
+#name{font-size:10px;letter-spacing:.16em}
+#stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
+.ok{color:var(--green)}.warn{color:var(--amber)}
+#crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
+#crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
+#crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
+#crosshair:after{width:1px;height:11px;left:8.5px;top:3.5px}
+#prompt{position:absolute;left:50%;bottom:18%;transform:translateX(-50%);padding:8px 11px;border:1px solid rgba(220,255,228,.16);background:rgba(2,6,4,.78);font-size:11px;opacity:0;transition:.12s;white-space:nowrap}
+#prompt.on{opacity:1}
+#msg{position:absolute;left:50%;top:22%;transform:translateX(-50%);font-size:12px;letter-spacing:.08em;text-align:center;text-shadow:0 2px 8px #000;opacity:0;transition:.2s}
+#msg.on{opacity:1}
+#backend{position:absolute;left:50%;bottom:7px;transform:translateX(-50%);font-size:9px;color:#9eada3;letter-spacing:.08em;text-shadow:0 2px 4px #000}
+#controls{position:fixed;inset:0;z-index:30;pointer-events:none;display:none}
+body.playing #controls{display:block}
+#movePad{position:absolute;left:22px;bottom:calc(env(safe-area-inset-bottom) + 22px);width:128px;height:128px;border-radius:50%;border:1px solid rgba(255,255,255,.17);background:rgba(13,20,15,.26);pointer-events:auto;touch-action:none}
+#moveNub{position:absolute;width:50px;height:50px;border-radius:50%;left:39px;top:39px;background:rgba(154,200,166,.20);border:1px solid rgba(255,255,255,.25)}
+#lookZone{position:absolute;left:48%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
+#use{position:absolute;right:22px;bottom:calc(env(safe-area-inset-bottom) + 28px);width:78px;height:78px;border-radius:50%;border:1px solid rgba(255,255,255,.32);background:radial-gradient(circle at 40% 35%,rgba(135,183,150,.38),rgba(10,18,13,.85));color:#effff3;font:800 12px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none}
+#soundBadge{position:absolute;right:18px;top:calc(env(safe-area-inset-top) + 94px);font-size:9px;color:#9fb0a5;background:rgba(4,8,5,.55);padding:5px 7px;border:1px solid rgba(255,255,255,.1)}
+#fire{position:absolute;right:112px;bottom:calc(env(safe-area-inset-bottom) + 33px);width:72px;height:72px;border-radius:50%;border:1px solid rgba(255,210,170,.36);background:radial-gradient(circle at 40% 35%,rgba(153,91,48,.46),rgba(29,14,8,.88));color:#ffe8d0;font:900 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none;display:none}
+#weaponHud{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom) + 12px);transform:translateX(-50%);font-size:10px;letter-spacing:.08em;padding:6px 9px;border:1px solid rgba(255,230,190,.16);background:rgba(12,8,5,.62);color:#f0dcc5;display:none;text-shadow:0 2px 3px #000}
+body.armed #fire,body.armed #weaponHud{display:block}
+.overlay{position:fixed;inset:0;z-index:50;display:none;background:rgba(0,0,0,.08);padding:12px}
+.overlay.open{display:block}
+.frame{position:relative;width:100%;height:100%;border:1px solid rgba(185,255,205,.23);background:transparent;overflow:hidden}
+#camTitle{position:absolute;left:16px;top:16px;color:#d9f0df;font-size:11px;letter-spacing:.12em;text-shadow:0 2px 4px #000}
+#rec{position:absolute;right:16px;top:16px;color:#ff7770;font-size:11px}
+#ptzHelp{position:absolute;left:16px;top:42px;color:#a9b9ae;font-size:9px;letter-spacing:.08em;text-shadow:0 2px 4px #000}
+#ptzReadout{position:absolute;left:16px;bottom:60px;color:#cbe4d2;font-size:9px;letter-spacing:.06em;text-shadow:0 2px 4px #000}
+#camBtns{position:absolute;right:15px;bottom:15px;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+#camBtns button,#exitCam,.modal button{padding:10px 12px;border:1px solid rgba(210,255,220,.25);background:rgba(7,14,9,.88);color:#e8f5eb;font:inherit;font-size:11px}
+#exitCam{position:absolute;left:15px;bottom:15px}
+.scan{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.018) 0,rgba(255,255,255,.018) 1px,transparent 2px,transparent 4px)}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:55;width:min(620px,90vw);max-height:78vh;overflow:auto;padding:17px;background:rgba(3,8,5,.97);border:1px solid rgba(190,255,205,.22);display:none;box-shadow:0 20px 80px #000}
+.modal.open{display:block}
+.modal .x{float:right}
+.term{white-space:pre-wrap;color:#adffc1;font-size:11px;line-height:1.6}
+#freq{font-size:34px;margin:14px 0;letter-spacing:.06em}
+.row{display:flex;gap:8px}.row button{flex:1}
+#radioText{font-size:11px;line-height:1.6;color:#9faf9f;margin-top:12px}
+@media(pointer:fine){#controls{display:none!important}}
+@media(max-height:500px){#movePad{width:108px;height:108px}#moveNub{left:33px;top:33px;width:42px;height:42px}#use{width:68px;height:68px}}
+</style>
+</head>
+<body>
+<div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
+<div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
+<div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
+<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
+<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
+<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button></div><div class="scan"></div></div></div>
+<div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
+NETWORK ............... OFFLINE
+EXTERNAL LINK ......... LOST
+CAMERAS ............... 4 / 4 ONLINE
+DIESEL RESERVE ........ 73%
+AIR SCRUBBER .......... NOMINAL
+
+LAST CIVIL DEFENCE PACKET:
+"Remain below ground. Do not approach population centres."
+
+NOTICE:
+Unknown HF carrier detected at approximately 105.80 MHz.
+
+> _</div></div>
+<div id="radio" class="modal"><button class="x">CLOSE</button><b>HF EMERGENCY RECEIVER</b><div id="freq">104.30 MHz</div><div class="row"><button id="down">◀ TUNE</button><button id="up">TUNE ▶</button></div><div id="radioText">SIGNAL: STATIC<br>STRENGTH: 04%</div></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+  }
+}
+</script>
+<script>window.__LS_BASE__ = new URL('./public/', location.href).href;</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
