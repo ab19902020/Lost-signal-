@@ -1,0 +1,41 @@
+name: Build browser preview
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'preview/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preview:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm run build
+      - name: Publish compiled preview into repository
+        run: |
+          rm -rf preview
+          mkdir -p preview
+          cp -R dist/. preview/
+          # Vite is configured for /Lost-signal-/ when deployed. Rewrite preview paths
+          # so the same compiled bundle works from /preview/ through a CDN URL.
+          sed -i 's#/Lost-signal-/assets/#./assets/#g' preview/index.html
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add preview
+          if git diff --cached --quiet; then
+            echo 'Preview already current.'
+          else
+            git commit -m 'Build playable browser preview'
+            git push
+          fi
