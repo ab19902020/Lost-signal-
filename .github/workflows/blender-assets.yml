@@ -25,11 +25,12 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           persist-credentials: true
 
-      - name: Install Blender
+      - name: Install Blender and glTF dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender
+          sudo apt-get install -y blender python3-numpy
           blender --version
+          blender -b --python-expr "import numpy; print('Blender numpy', numpy.__version__)"
 
       - name: Generate premium bunker GLBs
         run: blender -b --python blender/generate_bunker_v2.py
@@ -38,11 +39,17 @@ jobs:
         run: |
           ls -lah public/assets/blender
           test -f public/assets/blender/desk_station.glb
+          test -f public/assets/blender/radio.glb
           test -f public/assets/blender/cctv_console_v2.glb
           test -f public/assets/blender/gun_vault_v2.glb
           test -f public/assets/blender/hunting_rifle.glb
           test -f public/assets/blender/generator.glb
+          test -f public/assets/blender/bed.glb
+          test -f public/assets/blender/chair.glb
+          test -f public/assets/blender/storage_rack.glb
           test -f public/assets/blender/blast_door_v2.glb
+          test -f public/assets/blender/pipe_cluster.glb
+          test -f public/assets/blender/ceiling_light.glb
 
       - name: Commit generated assets to source branch
         run: |
