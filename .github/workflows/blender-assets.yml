@@ -6,6 +6,10 @@ on:
     paths:
       - 'blender/**'
       - '.github/workflows/blender-assets.yml'
+  pull_request:
+    paths:
+      - 'blender/**'
+      - '.github/workflows/blender-assets.yml'
 
 permissions:
   contents: write
@@ -15,9 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Checkout source branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref || github.ref_name }}
           persist-credentials: true
 
       - name: Install Blender
@@ -39,7 +44,7 @@ jobs:
           test -f public/assets/blender/generator.glb
           test -f public/assets/blender/blast_door_v2.glb
 
-      - name: Commit generated assets
+      - name: Commit generated assets to source branch
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -48,5 +53,5 @@ jobs:
             echo 'No Blender asset changes to commit.'
           else
             git commit -m 'Generate premium Blender bunker assets'
-            git push
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
           fi
