@@ -17,7 +17,7 @@ permissions:
 jobs:
   blender-assets:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout source branch
         uses: actions/checkout@v4
@@ -32,24 +32,21 @@ jobs:
           blender --version
           blender -b --python-expr "import numpy; print('Blender numpy', numpy.__version__)"
 
-      - name: Generate premium bunker GLBs
+      - name: Generate Blender furniture kit
         run: blender -b --python blender/generate_bunker_v2.py
 
-      - name: Verify generated files
+      - name: Generate Blender environment kit
+        run: blender -b --python blender/generate_environment_v3.py
+
+      - name: Verify generated Blender library
         run: |
           ls -lah public/assets/blender
-          test -f public/assets/blender/desk_station.glb
-          test -f public/assets/blender/radio.glb
-          test -f public/assets/blender/cctv_console_v2.glb
-          test -f public/assets/blender/gun_vault_v2.glb
-          test -f public/assets/blender/hunting_rifle.glb
-          test -f public/assets/blender/generator.glb
-          test -f public/assets/blender/bed.glb
-          test -f public/assets/blender/chair.glb
-          test -f public/assets/blender/storage_rack.glb
-          test -f public/assets/blender/blast_door_v2.glb
-          test -f public/assets/blender/pipe_cluster.glb
-          test -f public/assets/blender/ceiling_light.glb
+          for f in \
+            desk_station.glb radio.glb cctv_console_v2.glb gun_vault_v2.glb hunting_rifle.glb generator.glb bed.glb chair.glb storage_rack.glb blast_door_v2.glb pipe_cluster.glb ceiling_light.glb \
+            bunker_environment_v3.glb ventilation_unit_v3.glb electrical_wall_v3.glb locker_bank_v3.glb maintenance_bench_v3.glb survival_clutter_v3.glb status_board_v3.glb access_control_v3.glb wall_camera_v3.glb \
+            exterior_ground_v3.glb exterior_entrance_v3.glb perimeter_fence_v3.glb perimeter_gate.glb floodlight.glb dead_tree.glb concrete_barrier_v3.glb rubble_cluster_v3.glb; do
+            test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
+          done
 
       - name: Commit generated assets to source branch
         run: |
@@ -59,6 +56,6 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No Blender asset changes to commit.'
           else
-            git commit -m 'Generate premium Blender bunker assets'
+            git commit -m 'Generate complete Blender V3 asset library'
             git push origin HEAD:${{ github.head_ref || github.ref_name }}
           fi
