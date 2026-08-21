@@ -1,1 +1,1 @@
-export { createGameWorld } from './world_v5.js';
+export { createGameWorld } from './world_v6.js';
