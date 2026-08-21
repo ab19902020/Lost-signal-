@@ -1,0 +1,68 @@
+name: Build Shelter 47 V5 Room
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'blender/rebuild_room_v5.py'
+      - '.github/workflows/blender-room-v5.yml'
+      - 'public/assets/textures/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-room-v5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Blender headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          blender --version
+
+      - name: Build integrated V5 room and QA renders
+        run: xvfb-run -a blender -b --python blender/rebuild_room_v5.py
+
+      - name: Verify V5 GLB and seven QA renders
+        run: |
+          test -s public/assets/blender/shelter47_room_v5.glb
+          for f in 01_spawn 02_blast_door 03_operations 04_living 05_overview 06_cctv 07_comms; do
+            test -s "qa/renders/v5/${f}.png" || { echo "Missing render ${f}"; exit 1; }
+          done
+          ls -lh public/assets/blender/shelter47_room_v5.glb qa/renders/v5/*.png
+
+      - name: Upload V5 QA renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-v5-qa-renders
+          path: qa/renders/v5/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Commit generated room and QA renders
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/blender/shelter47_room_v5.glb qa/renders/v5/*.png
+          if git diff --cached --quiet; then
+            echo 'No V5 room changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Generate integrated Shelter 47 V5 room and QA renders'
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin HEAD:"$BRANCH"
