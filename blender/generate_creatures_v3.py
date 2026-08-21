@@ -142,12 +142,12 @@ def build_deer():
         cube(f'Deer_Ear_{side}', (side * .13, 1.55, .80), (.035, .09, .05), HIDE,
              rotation=(0, 0, side * .5), edge=.02)
         sphere(f'Deer_Eye_{side}', (side * .105, 1.47, .94), .028, EYE)
-        # Antlers: a main beam with three tines.
-        cyl(f'Deer_Antler_{side}', (side * .09, 1.76, .74), .022, .48, ANTLER,
-            rotation=(.35, 0, side * .38))
-        for i, (h, angle) in enumerate(((.12, .9), (.26, .7), (.38, .5))):
-            cyl(f'Deer_Tine_{side}_{i}', (side * (.13 + i * .04), 1.72 + h, .70 - i * .05),
-                .014, .17, ANTLER, rotation=(angle, 0, side * .9))
+        # Antlers: a main beam rooted on the skull, with three tines off it.
+        cyl(f'Deer_Antler_{side}', (side * .10, 1.65, .74), .022, .40, ANTLER,
+            rotation=(.30, 0, side * .34))
+        for i, (h, angle) in enumerate(((.04, .95), (.15, .78), (.26, .58))):
+            cyl(f'Deer_Tine_{side}_{i}', (side * (.12 + i * .025), 1.62 + h, .73 - i * .05),
+                .013, .15, ANTLER, rotation=(angle, 0, side * .95))
 
     for name, x, z in (('FL', -.20, .42), ('FR', .20, .42), ('BL', -.20, -.44), ('BR', .20, -.44)):
         limb(f'Deer_Leg{name}', (x, .86, z), (.055, .43, .07), HIDE, edge=.025)

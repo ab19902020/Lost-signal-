@@ -22,6 +22,7 @@ const backendEl = document.getElementById('backend');
 const ammoEl = document.getElementById('ammo');
 const foodEl = document.getElementById('foodStat');
 const healthEl = document.getElementById('healthStat');
+const motionEl = document.getElementById('motion');
 
 let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -597,6 +598,29 @@ function updateWeapon(dt) {
   );
 }
 
+// Motion detection: anything alive inside the camera's frustum trips the
+// indicator, which is what makes sweeping the cameras worth doing before
+// opening the blast door.
+const feedFrustum = new THREE.Frustum();
+const feedMatrix = new THREE.Matrix4();
+const feedPoint = new THREE.Vector3();
+
+function detectMotion(camera) {
+  feedMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  feedFrustum.setFromProjectionMatrix(feedMatrix);
+  let contacts = 0;
+  let hostile = false;
+  for (const target of [...game.zombies, ...game.wildlife]) {
+    if (!target.parent || target.userData.alive === false) continue;
+    feedPoint.copy(target.position);
+    feedPoint.y += 0.9;
+    if (!feedFrustum.containsPoint(feedPoint)) continue;
+    contacts++;
+    if (target.userData.kind === 'zombie') hostile = true;
+  }
+  return { contacts, hostile };
+}
+
 function renderCameraFeed() {
   const cam = game.cctvCameras[currentCam];
   cam.rotation.copy(game.cctvBaseRot[currentCam]);
@@ -612,6 +636,14 @@ function renderCameraFeed() {
   feedPass.uniforms.time.value = clock.elapsedTime;
   feedPass.uniforms.nightVision.value = nightVision ? 1 : 0;
   feedPass.uniforms.signal.value = camSignal[currentCam];
+  cam.updateMatrixWorld();
+
+  const { contacts, hostile } = detectMotion(cam);
+  motionEl.textContent = contacts
+    ? `MOTION ${contacts} CONTACT${contacts > 1 ? 'S' : ''}${hostile ? ' — HOSTILE' : ''}`
+    : 'NO MOTION';
+  motionEl.classList.toggle('alert', hostile);
+
   feedComposer.render();
 }
 

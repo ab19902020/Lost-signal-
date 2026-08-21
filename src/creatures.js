@@ -215,6 +215,32 @@ export function createCreatureSystem({ scene, colliders, assets, counts = {} }) 
   for (let i = 0; i < (counts.rabbit ?? 5); i++) spawn(assets.rabbit, 'rabbit', { speed: 1.5, radius: 0.22, turnRate: 4 });
   for (let i = 0; i < (counts.zombie ?? 4); i++) spawn(assets.infected, 'zombie', { speed: 1.15, radius: 0.4, hp: 3 });
 
+  // Keep bodies out of each other. With a dozen agents the pairwise pass is
+  // far cheaper than any spatial index would be to maintain.
+  function separate() {
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      if (a.root.userData.alive === false) continue;
+      for (let j = i + 1; j < agents.length; j++) {
+        const b = agents[j];
+        if (b.root.userData.alive === false) continue;
+        const dx = b.root.position.x - a.root.position.x;
+        const dz = b.root.position.z - a.root.position.z;
+        const minimum = a.radius + b.radius;
+        const distanceSq = dx * dx + dz * dz;
+        if (distanceSq >= minimum * minimum || distanceSq < 1e-6) continue;
+        const distance = Math.sqrt(distanceSq);
+        const push = (minimum - distance) * 0.5;
+        const nx = dx / distance;
+        const nz = dz / distance;
+        a.root.position.x -= nx * push;
+        a.root.position.z -= nz * push;
+        b.root.position.x += nx * push;
+        b.root.position.z += nz * push;
+      }
+    }
+  }
+
   function update(dt, world, playerPosition, onAttack) {
     // Creatures only exist on the surface; skip the whole system indoors.
     if (world !== 'outside') return;
@@ -223,6 +249,7 @@ export function createCreatureSystem({ scene, colliders, assets, counts = {} }) 
       if (agent instanceof Infected) agent.update(dt, playerPosition, colliders, onAttack);
       else agent.update(dt, playerPosition, colliders);
     }
+    separate();
   }
 
   return { wildlife, zombies, agents, update };

@@ -59,6 +59,9 @@ body.armed #fire,body.armed #weaponHud{display:block}
 #camBtns{position:absolute;right:15px;bottom:15px;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 #camBtns button,#exitCam,.modal button{padding:10px 12px;border:1px solid rgba(210,255,220,.25);background:rgba(7,14,9,.88);color:#e8f5eb;font:inherit;font-size:11px}
 #nightVision.on{border-color:rgba(120,255,170,.9);background:rgba(24,66,38,.95);color:#b6ffcf}
+#motion{position:absolute;top:34px;right:14px;font-size:11px;letter-spacing:.08em;color:rgba(190,220,200,.5)}
+#motion.alert{color:#ff8f70;animation:motionBlink 1s steps(2,end) infinite}
+@keyframes motionBlink{50%{opacity:.25}}
 #exitCam{position:absolute;left:15px;bottom:15px}
 .scan{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.018) 0,rgba(255,255,255,.018) 1px,transparent 2px,transparent 4px)}
 .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:55;width:min(620px,90vw);max-height:78vh;overflow:auto;padding:17px;background:rgba(3,8,5,.97);border:1px solid rgba(190,255,205,.22);display:none;box-shadow:0 20px 80px #000}
@@ -78,7 +81,7 @@ body.armed #fire,body.armed #weaponHud{display:block}
 <div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
 <div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
 <div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
-<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
+<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="motion">NO MOTION</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE
 EXTERNAL LINK ......... LOST
