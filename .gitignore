@@ -1,7 +1,4 @@
 node_modules/
 dist/
 .DS_Store
-qa-orient.html
-qa-game.mjs
-qa-shot.mjs
-qa-out/
+qa/out/

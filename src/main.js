@@ -154,6 +154,13 @@ async function prepare() {
         world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, 0, spawn.z); },
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
+        simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
+        debug: () => ({ started, modal, cctv, keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
+        boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
+          climbable,
+          min: box.min.toArray().map(v => +v.toFixed(2)),
+          max: box.max.toArray().map(v => +v.toFixed(2)),
+        })),
         freecam: (px, py, pz, tx, ty, tz, fov = 70) => {
           started = false;
           const cam = game.camera;
@@ -229,6 +236,7 @@ function wireGameEvents() {
   document.querySelectorAll('.modal .x').forEach((button) => {
     button.onclick = () => {
       button.parentElement.classList.remove('open');
+      document.body.classList.remove('overlay-open');
       modal = false;
       setRadioNoise(0);
       clickSound(280);
@@ -252,10 +260,13 @@ function wireGameEvents() {
   document.getElementById('up').onclick = () => { freq = Math.min(118, freq + .05); updateRadio(); clickSound(520); };
 }
 
+// Overlays own the screen: the shelter HUD is hidden behind them so readouts
+// like the CCTV motion detector do not collide with the survival stats.
 function openModal(id) {
   modal = true;
   document.exitPointerLock?.();
   document.getElementById(id).classList.add('open');
+  document.body.classList.add('overlay-open');
 }
 
 function nearestDownedAnimal() {
@@ -381,6 +392,7 @@ function openCCTV() {
   modal = true;
   document.exitPointerLock?.();
   document.getElementById('cctv').classList.add('open');
+  document.body.classList.add('overlay-open');
   setOutdoorAudio(true);
   switchCam(currentCam);
 }
@@ -388,6 +400,7 @@ function closeCCTV() {
   cctv = false;
   modal = false;
   document.getElementById('cctv').classList.remove('open');
+  document.body.classList.remove('overlay-open');
   if (currentWorld !== 'outside') setOutdoorAudio(false);
 }
 function switchCam(i) {
@@ -647,15 +660,27 @@ function renderCameraFeed() {
   feedComposer.render();
 }
 
-function loop() {
-  const dt = Math.min(clock.getDelta(), .05);
-  if (!game) return;
-
+// Simulation is kept separate from rendering so the visual QA harness can
+// advance the world by a fixed timestep instead of depending on the browser's
+// frame clock, which headless Chromium does not run on an idle page.
+function simulate(dt) {
   updatePlayer(dt);
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
   updateWeapon(dt);
+  hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
+  if (health < 100 && currentWorld === 'bunker') {
+    health = Math.min(100, health + dt * 1.6);
+    updateHealth();
+  }
+}
+
+function loop() {
+  const dt = Math.min(clock.getDelta(), .05);
+  if (!game) return;
+
+  simulate(dt);
 
   if (cctv) {
     renderCameraFeed();
@@ -666,13 +691,8 @@ function loop() {
   renderPass.scene = scene;
   renderPass.camera = game.camera;
   gradePass.uniforms.time.value = clock.elapsedTime;
-  hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
   const wounded = THREE.MathUtils.clamp(1 - health / 100, 0, 1);
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);
-  if (health < 100 && currentWorld === 'bunker') {
-    health = Math.min(100, health + dt * 1.6);
-    updateHealth();
-  }
   // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
   // where there are no bright practicals to bleed.
   const spent = 1 - stamina;

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "qa:game": "node qa/game.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/game.png",
+    "qa:physics": "node qa/physics.mjs http://127.0.0.1:5173/Lost-signal-/",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -12,6 +14,7 @@
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "playwright": "^1.62.1",
     "vite": "^7.1.3"
   }
 }

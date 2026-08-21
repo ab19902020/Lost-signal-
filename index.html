@@ -30,6 +30,7 @@ body.playing.portrait #rotate{display:flex}
 #name{font-size:10px;letter-spacing:.16em}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
 .ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:#ff7a63}
+body.overlay-open #top{opacity:0;transition:opacity .18s ease}
 #crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
 #crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
@@ -59,7 +60,7 @@ body.armed #fire,body.armed #weaponHud{display:block}
 #camBtns{position:absolute;right:15px;bottom:15px;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 #camBtns button,#exitCam,.modal button{padding:10px 12px;border:1px solid rgba(210,255,220,.25);background:rgba(7,14,9,.88);color:#e8f5eb;font:inherit;font-size:11px}
 #nightVision.on{border-color:rgba(120,255,170,.9);background:rgba(24,66,38,.95);color:#b6ffcf}
-#motion{position:absolute;top:34px;right:14px;font-size:11px;letter-spacing:.08em;color:rgba(190,220,200,.5)}
+#motion{position:absolute;top:34px;right:14px;z-index:3;font-size:11px;letter-spacing:.08em;color:rgba(190,220,200,.5)}
 #motion.alert{color:#ff8f70;animation:motionBlink 1s steps(2,end) infinite}
 @keyframes motionBlink{50%{opacity:.25}}
 #exitCam{position:absolute;left:15px;bottom:15px}
