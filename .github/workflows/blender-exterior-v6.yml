@@ -30,6 +30,9 @@ jobs:
           sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
           blender --version
 
+      - name: Make render engine compatible with runner Blender
+        run: sed -i 's/BLENDER_EEVEE_NEXT/BLENDER_EEVEE/g' blender/build_exterior_v6.py
+
       - name: Build authored exterior assets and QA renders
         run: xvfb-run -a blender -b --python blender/build_exterior_v6.py
 
