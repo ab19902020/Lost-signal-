@@ -1,0 +1,80 @@
+name: Build AAA Reference World V2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'blender/build_reference_aaa_v2.py'
+      - '.github/workflows/blender-aaa-reference-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-aaa-reference-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - name: Checkout rebuild branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Blender headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          blender --version
+
+      - name: Build second-pass reference world
+        run: xvfb-run -a blender -b --python blender/build_reference_aaa_v2.py
+
+      - name: Verify V2 assets and QA renders
+        run: |
+          set -euo pipefail
+          for f in shelter47_aaa_v2_interior shelter47_aaa_v2_exterior deer_aaa_v2 rabbit_aaa_v2 infected_aaa_v2; do
+            test -s "public/assets/blender/aaa_v2/${f}.glb" || { echo "Missing asset ${f}"; exit 1; }
+          done
+          for f in 01_interior_spawn 02_cctv_station 03_door47 04_exterior_yard 05_exterior_gate 06_vehicle 07_deer 08_rabbit 09_infected; do
+            test -s "qa/renders/aaa_v2/${f}.png" || { echo "Missing render ${f}"; exit 1; }
+          done
+          ls -lh public/assets/blender/aaa_v2/*.glb qa/renders/aaa_v2/*.png
+
+      - name: Upload V2 QA renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-aaa-v2-qa
+          path: qa/renders/aaa_v2/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Commit generated V2 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # These files are build output, not edits to reconcile: rebasing this
+          # run's own commit onto a branch that already carries generated
+          # binaries conflicts on every PNG and GLB, which failed the job every
+          # time. Re-point at the branch tip and commit the fresh build on top.
+          for attempt in 1 2 3; do
+            git fetch origin "$BRANCH"
+            git reset --mixed "origin/$BRANCH"
+            git add public/assets/blender/aaa_v2 qa/renders/aaa_v2
+            if git diff --cached --quiet; then
+              echo 'No generated changes to commit.'
+              exit 0
+            fi
+            git commit -m 'Generate second-pass AAA reference world and QA renders'
+            if git push origin HEAD:"$BRANCH"; then exit 0; fi
+            echo "Push rejected, retrying against the new branch tip (attempt $attempt)."
+            sleep $((attempt * 4))
+          done
+          echo 'Could not push generated output after three attempts.'
+          exit 1

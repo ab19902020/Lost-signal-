@@ -61,12 +61,22 @@ jobs:
           BRANCH="${{ github.head_ref || github.ref_name }}"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add public/assets/blender/*_v8.glb qa/renders/exterior_v8/*.png
-          if git diff --cached --quiet; then
-            echo 'No V8 changes to commit.'
-            exit 0
-          fi
-          git commit -m 'Generate authored Shelter 47 exterior V8 assets'
-          git fetch origin "$BRANCH"
-          git rebase "origin/$BRANCH"
-          git push origin HEAD:"$BRANCH"
+          # These files are build output, not edits to reconcile: rebasing this
+          # run's own commit onto a branch that already carries generated
+          # binaries conflicts on every PNG and GLB, which failed the job every
+          # time. Re-point at the branch tip and commit the fresh build on top.
+          for attempt in 1 2 3; do
+            git fetch origin "$BRANCH"
+            git reset --mixed "origin/$BRANCH"
+            git add public/assets/blender/*_v8.glb qa/renders/exterior_v8/*.png
+            if git diff --cached --quiet; then
+              echo 'No generated changes to commit.'
+              exit 0
+            fi
+            git commit -m 'Generate authored Shelter 47 exterior V8 assets'
+            if git push origin HEAD:"$BRANCH"; then exit 0; fi
+            echo "Push rejected, retrying against the new branch tip (attempt $attempt)."
+            sleep $((attempt * 4))
+          done
+          echo 'Could not push generated output after three attempts.'
+          exit 1
