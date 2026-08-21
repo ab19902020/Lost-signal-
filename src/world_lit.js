@@ -133,26 +133,27 @@ export function createGameWorld(assets) {
   emergency.decay = 2;
 
   // --- Exterior -------------------------------------------------------------
-  outside.background = new THREE.Color(0x0a0f12);
-  outside.fog = new THREE.FogExp2(0x111a1e, 0.024);
+  outside.background = new THREE.Color(0x121a20);
+  outside.fog = new THREE.FogExp2(0x18242b, 0.018);
   outside.traverse((object) => {
     if (object.isHemisphereLight) {
-      object.color.setHex(0x54687a);
-      object.groundColor.setHex(0x14161a);
-      object.intensity = 0.75;
+      object.color.setHex(0x6f8ba3);
+      object.groundColor.setHex(0x22262a);
+      object.intensity = 1.9;
     }
     if (object.isDirectionalLight) {
-      object.color.setHex(0xa9c2d6);
-      object.intensity = 1.35;
+      object.color.setHex(0xb4cbdd);
+      object.intensity = 3.1;
       object.shadow.bias = -0.0012;
       object.shadow.normalBias = 0.03;
     }
     if (object.isSpotLight) {
-      object.color.setHex(0xdfe9ef);
-      object.intensity = 90;
-      object.distance = 36;
+      object.color.setHex(0xe6efe2);
+      object.intensity = 260;
+      object.distance = 40;
       object.decay = 2;
-      object.penumbra = 0.55;
+      object.penumbra = 0.5;
+      object.angle = 0.72;
     }
   });
 

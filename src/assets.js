@@ -32,6 +32,14 @@ const bunkerUrls = {
   wallCamera: `${BASE}assets/blender/wall_camera_v3.glb`,
 };
 
+// Creatures are loaded best-effort: the game still boots if the asset workflow
+// has not published them yet, it just runs with an empty surface.
+const creatureUrls = {
+  deer: `${BASE}assets/blender/deer_v3.glb`,
+  rabbit: `${BASE}assets/blender/rabbit_v3.glb`,
+  infected: `${BASE}assets/blender/infected_v3.glb`,
+};
+
 const exteriorUrls = {
   exteriorGround: `${BASE}assets/blender/exterior_ground_v3.glb`,
   exteriorEntrance: `${BASE}assets/blender/exterior_entrance_v3.glb`,
@@ -155,6 +163,14 @@ export async function loadGameAssets(onProgress = () => {}) {
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
   ]);
+
+  await Promise.all(Object.entries(creatureUrls).map(async ([key, url]) => {
+    try {
+      assets[key] = await loadModel(url);
+    } catch (error) {
+      console.warn(`Creature asset unavailable (${key}); the surface will be empty until the Blender workflow publishes it.`, error);
+    }
+  }));
 
   onProgress('Complete Blender world ready', total, total);
   return assets;

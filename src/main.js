@@ -21,6 +21,7 @@ const msgEl = document.getElementById('msg');
 const backendEl = document.getElementById('backend');
 const ammoEl = document.getElementById('ammo');
 const foodEl = document.getElementById('foodStat');
+const healthEl = document.getElementById('healthStat');
 
 let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -35,6 +36,8 @@ let ammo = 5;
 let reserve = 20;
 let reloading = false;
 let foodDays = 8;
+let health = 100;
+let hurtFlash = 0;
 let recoil = 0;
 let sprinting = false;
 let stamina = 1;
@@ -212,6 +215,15 @@ function wireGameEvents() {
     flash('SHELTER 47 — BLAST CHAMBER');
   });
   addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:attack', () => {
+    if (currentWorld !== 'outside' || !started) return;
+    health = Math.max(0, health - (8 + Math.random() * 6));
+    hurtFlash = 1;
+    updateHealth();
+    hurtSound();
+    if (health <= 0) collapse();
+    else flash('INFECTED ON YOU — FIGHT OR RUN', 1200);
+  });
 
   document.querySelectorAll('.modal .x').forEach((button) => {
     button.onclick = () => {
@@ -336,6 +348,27 @@ function reload() {
 }
 
 function updateAmmo() { ammoEl.textContent = `${ammo} / ${reserve}`; }
+
+function updateHealth() {
+  healthEl.textContent = `${Math.round(health)}%`;
+  healthEl.className = health > 60 ? 'ok' : (health > 25 ? 'warn' : 'bad');
+}
+
+// Going down is not a game over: the survivor wakes back in the shelter having
+// lost the day's foraging, which keeps a run going.
+function collapse() {
+  health = 45;
+  foodDays = Math.max(0, foodDays - 2);
+  foodEl.textContent = `${foodDays} DAYS`;
+  updateHealth();
+  currentWorld = 'bunker';
+  const spawn = game.setWorld('bunker');
+  body.teleport(spawn.x, 0, spawn.z);
+  yaw = 0;
+  pitch = -0.02;
+  setOutdoorAudio(false);
+  flash('YOU WOKE UP BACK IN THE SHELTER — TWO DAYS OF FOOD GONE', 3200);
+}
 
 // CCTV PTZ
 const camPan = [0,0,0,0], camTilt = [0,0,0,0], camFov = [48,50,48,42];
@@ -502,6 +535,16 @@ function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.c
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
 function beacon(){clickSound(760,.25,.035)}
+function hurtSound(){
+  if(!ac)return;
+  const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
+  o.type='square';
+  o.frequency.setValueAtTime(140,t);
+  o.frequency.exponentialRampToValueAtTime(62,t+.28);
+  g.gain.setValueAtTime(.16,t);
+  g.gain.exponentialRampToValueAtTime(.001,t+.3);
+  o.connect(g);g.connect(master);o.start(t);o.stop(t+.31);
+}
 // Footsteps are filtered noise bursts: a dull thud on concrete indoors, a
 // wetter, brighter scuff on the wrecked surface apron.
 function footstepSound(outdoors, strength = 1) {
@@ -591,6 +634,13 @@ function loop() {
   renderPass.scene = scene;
   renderPass.camera = game.camera;
   gradePass.uniforms.time.value = clock.elapsedTime;
+  hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
+  const wounded = THREE.MathUtils.clamp(1 - health / 100, 0, 1);
+  gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);
+  if (health < 100 && currentWorld === 'bunker') {
+    health = Math.min(100, health + dt * 1.6);
+    updateHealth();
+  }
   // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
   // where there are no bright practicals to bleed.
   const spent = 1 - stamina;

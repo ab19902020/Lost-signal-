@@ -38,13 +38,17 @@ jobs:
       - name: Generate Blender environment kit
         run: blender -b --python blender/generate_environment_v3.py
 
+      - name: Generate Blender creature kit
+        run: blender -b --python blender/generate_creatures_v3.py
+
       - name: Verify generated Blender library
         run: |
           ls -lah public/assets/blender
           for f in \
             desk_station.glb radio.glb cctv_console_v2.glb gun_vault_v2.glb hunting_rifle.glb generator.glb bed.glb chair.glb storage_rack.glb blast_door_v2.glb pipe_cluster.glb ceiling_light.glb \
             bunker_environment_v3.glb ventilation_unit_v3.glb electrical_wall_v3.glb locker_bank_v3.glb maintenance_bench_v3.glb survival_clutter_v3.glb status_board_v3.glb access_control_v3.glb wall_camera_v3.glb \
-            exterior_ground_v3.glb exterior_entrance_v3.glb perimeter_fence_v3.glb perimeter_gate.glb floodlight.glb dead_tree.glb concrete_barrier_v3.glb rubble_cluster_v3.glb; do
+            exterior_ground_v3.glb exterior_entrance_v3.glb perimeter_fence_v3.glb perimeter_gate.glb floodlight.glb dead_tree.glb concrete_barrier_v3.glb rubble_cluster_v3.glb \
+            deer_v3.glb rabbit_v3.glb infected_v3.glb; do
             test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
           done
 

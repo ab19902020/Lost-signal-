@@ -29,7 +29,7 @@ body.playing.portrait #rotate{display:flex}
 .panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
 #name{font-size:10px;letter-spacing:.16em}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
-.ok{color:var(--green)}.warn{color:var(--amber)}
+.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:#ff7a63}
 #crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
 #crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
@@ -76,7 +76,7 @@ body.armed #fire,body.armed #weaponHud{display:block}
 <div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
 <div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
 <div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
-<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
+<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
 <div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
 <div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT

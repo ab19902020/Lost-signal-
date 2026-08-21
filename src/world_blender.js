@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
 import { ColliderSet } from './physics.js';
+import { createCreatureSystem } from './creatures.js';
 
 // V3 WORLD RULE:
 // No visible architecture/props are authored with Three.js geometry.
@@ -24,8 +25,6 @@ export function createGameWorld(assets) {
   bunker.add(player);
 
   const interactions = [];
-  const wildlife = [];
-  const zombies = [];
   const colliders = {
     bunker: new ColliderSet({ minX: -6.55, maxX: 6.55, minZ: -6.85, maxZ: 6.85 }),
     outside: new ColliderSet({ minX: -19.2, maxX: 19.2, minZ: -26.0, maxZ: 17.2 }),
@@ -211,6 +210,15 @@ export function createGameWorld(assets) {
   const returnPanel = place(assets.accessControl,outside,[-2.15,.55,-13.55],[0,0,0],.64,{ collide: false });
   addInteraction(returnPanel,'RETURN TO SHELTER','outside',()=>window.dispatchEvent(new CustomEvent('lostsignal:return')));
 
+  // Wildlife and infected populate the surface once their Blender assets exist.
+  const creatures = createCreatureSystem({
+    scene: outside,
+    colliders: colliders.outside,
+    assets,
+  });
+  const wildlife = creatures.wildlife;
+  const zombies = creatures.zombies;
+
   // Rain is an atmospheric effect, not physical world geometry.
   const rainCount=320;
   const rainGeo=new THREE.PlaneGeometry(.012,.44);
@@ -299,8 +307,11 @@ export function createGameWorld(assets) {
   }
 
   let elapsed=0;
-  function update(dt) {
+  function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
+    creatures.update(dt, world, playerPosition, (agent) => {
+      window.dispatchEvent(new CustomEvent('lostsignal:attack', { detail: { agent } }));
+    });
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
     dust.rotation.y += dt*.008;
@@ -324,7 +335,7 @@ export function createGameWorld(assets) {
 
   return {
     bunker,outside,player,camera,interactions,wildlife,zombies,cctvCameras,cctvBaseRot,
-    weaponView,blocked,colliders,spawnPoints,nearestInteraction,setWorld,setArmed,playGun,update,
+    weaponView,blocked,colliders,spawnPoints,creatures,nearestInteraction,setWorld,setArmed,playGun,update,
     bunkerLights,emergency,
     doorOpen:()=>doorOpen,
   };
