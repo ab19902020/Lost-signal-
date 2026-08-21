@@ -7,8 +7,10 @@ const BASE = globalThis.__LS_BASE__ || import.meta.env.BASE_URL;
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);
 
-// Lost Signal V3 rule: every visible world object is a Blender-exported GLB.
+// V5 adds one integrated Blender-authored bunker scene. The older component
+// assets remain available while the exterior/survival systems are migrated.
 const bunkerUrls = {
+  roomV5: `${BASE}assets/blender/shelter47_room_v5.glb`,
   environment: `${BASE}assets/blender/bunker_environment_v3.glb`,
   desk: `${BASE}assets/blender/desk_station.glb`,
   radio: `${BASE}assets/blender/radio.glb`,
@@ -87,8 +89,6 @@ export async function loadGameAssets(onProgress = () => {}) {
     onProgress(`Blender asset: ${key}`, loaded, total);
   };
 
-  // Everything loads in parallel. No third-party animal/zombie downloads and no runtime
-  // texture pack round-trip: the Blender GLBs carry their authored materials.
   await Promise.all([
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
