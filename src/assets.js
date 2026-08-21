@@ -54,11 +54,48 @@ function orientToYUp(scene) {
     marker.parent?.remove(marker);
     return scene;
   }
-  const corrected = new THREE.Group();
-  corrected.name = 'LS_LegacyOrientation';
-  corrected.rotation.x = Math.PI / 2;
-  corrected.add(scene);
-  return corrected;
+  // The correction lives on an inner group. The returned root keeps an identity
+  // transform so callers stay free to set position/rotation/scale on it, which
+  // is exactly what place() does for every prop in the world.
+  const pivot = new THREE.Group();
+  pivot.name = 'LS_LegacyOrientation';
+  pivot.rotation.x = Math.PI / 2;
+  pivot.add(scene);
+  const root = new THREE.Group();
+  root.name = 'LS_AssetRoot';
+  root.add(pivot);
+  return root;
+}
+
+// Blender's box unwrap gives every face the full 0..1 UV range, so a 1K
+// concrete map stretched across a 13 m floor smears into giant diamonds.
+// Rescaling the mesh's own UVs keeps one texture instance shared across the
+// scene while giving each surface a consistent texel density.
+const TILE_METRES = 2.2;
+const _tileBox = new THREE.Box3();
+const _tileSize = new THREE.Vector3();
+
+function retileUVs(mesh) {
+  const geometry = mesh.geometry;
+  const uv = geometry?.attributes?.uv;
+  if (!uv || geometry.userData.lsRetiled) return;
+  geometry.userData.lsRetiled = true;
+
+  geometry.computeBoundingBox();
+  _tileBox.copy(geometry.boundingBox);
+  _tileBox.getSize(_tileSize);
+  mesh.updateWorldMatrix(true, false);
+  const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld);
+  const extents = [_tileSize.x * scale.x, _tileSize.y * scale.y, _tileSize.z * scale.z]
+    .sort((a, b) => b - a);
+  const repeatU = Math.max(1, Math.round(extents[0] / TILE_METRES));
+  const repeatV = Math.max(1, Math.round(extents[1] / TILE_METRES));
+  if (repeatU === 1 && repeatV === 1) return;
+
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) * repeatU, uv.getY(i) * repeatV);
+  }
+  uv.needsUpdate = true;
 }
 
 function prepare(root) {
@@ -67,15 +104,21 @@ function prepare(root) {
     o.castShadow = true;
     o.receiveShadow = true;
     const materials = Array.isArray(o.material) ? o.material : [o.material];
+    let textured = false;
     for (const m of materials) {
       if (!m) continue;
-      if (m.map) {
-        m.map.colorSpace = THREE.SRGBColorSpace;
-        m.map.anisotropy = 8;
+      for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+        const texture = m[slot];
+        if (!texture) continue;
+        textured = true;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.anisotropy = 8;
+        if (slot === 'map') texture.colorSpace = THREE.SRGBColorSpace;
       }
-      if (m.normalMap) m.normalMap.anisotropy = 8;
       if ('roughness' in m && m.roughness == null) m.roughness = .65;
     }
+    if (textured) retileUVs(o);
   });
   return root;
 }

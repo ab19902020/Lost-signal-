@@ -60,22 +60,18 @@ export function createGameWorld(assets) {
   // ---------------------------------------------------------------------------
   place(assets.environment, bunker, [0,0,0], [0,0,0], 1, { collide: false });
 
-  // Lighting is runtime because it is an effect, not visible geometry.
-  bunker.add(new THREE.HemisphereLight(0x52655c, 0x040504, 0.42));
-  bunker.add(new THREE.AmbientLight(0x26342d, 0.28));
-
-  const emergency = new THREE.PointLight(0xff2818, 2.5, 8.5, 2.0);
+  // Lighting is runtime because it is an effect, not visible geometry. Only the
+  // fixtures that exist as Blender models are created here; every intensity,
+  // colour and animation is owned by the lighting layer in world_lit.js.
+  const emergency = new THREE.PointLight(0xff6a3a, 3.2, 7.5, 2.0);
   emergency.position.set(0, 3.35, 6.0);
   bunker.add(emergency);
 
   const fixturePositions = [[-3.4,-3.6],[3.4,-3.6],[-3.4,2.35],[3.4,2.35]];
   for (const [x,z] of fixturePositions) {
     place(assets.ceilingLight, bunker, [x,3.76,z], [0,0,0], 1, { collide: false });
-    const light = new THREE.PointLight(0xd9f0df, 7.5, 8.6, 1.7);
+    const light = new THREE.PointLight(0xdfe6df, 16, 11, 2);
     light.position.set(x,3.40,z);
-    light.castShadow = true;
-    light.shadow.mapSize.set(768,768);
-    light.shadow.bias = -0.00035;
     bunker.add(light);
     bunkerLights.push(light);
   }
@@ -324,13 +320,6 @@ export function createGameWorld(assets) {
     }
     rain.instanceMatrix.needsUpdate=true;
 
-    if(bunkerLights.length && Math.random()<.0015){
-      const l=bunkerLights[Math.floor(Math.random()*bunkerLights.length)];
-      const v=l.intensity;
-      l.intensity=.25;
-      setTimeout(()=>l.intensity=v,65);
-    }
-    emergency.intensity=2.2+Math.sin(elapsed*2.1)*.25;
   }
 
   return {

@@ -2,8 +2,13 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { loadGameAssets } from './assets.js';
 import { createGameWorld } from './world.js';
+import { CharacterBody } from './physics.js';
+import { GradeShader, CameraFeedShader } from './grade.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -17,7 +22,7 @@ const backendEl = document.getElementById('backend');
 const ammoEl = document.getElementById('ammo');
 const foodEl = document.getElementById('foodStat');
 
-let renderer, composer, renderPass, bloomPass, game;
+let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
 let started = false;
 let modal = false;
@@ -31,7 +36,10 @@ let reserve = 20;
 let reloading = false;
 let foodDays = 8;
 let recoil = 0;
-const velocity = new THREE.Vector3();
+let sprinting = false;
+let stamina = 1;
+let breath = 0;
+const body = new CharacterBody();
 const clock = new THREE.Clock();
 const keys = {};
 const ray = new THREE.Raycaster();
@@ -58,17 +66,61 @@ function fail(error) {
   boot.style.display = 'none';
 }
 
+// One quality tier decides pixel ratio, shadow resolution and how much of the
+// post stack we can afford, so a phone and a desktop run the same code path.
+const quality = (() => {
+  const cores = navigator.hardwareConcurrency || 4;
+  if (coarse || cores <= 4) return { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026 };
+  if (cores <= 8) return { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03 };
+  return { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032 };
+})();
+
 function createRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', alpha: false });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.65 : 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, quality.pixelRatio));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = quality.shadows;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 1.0;
   renderer.domElement.style.zIndex = '0';
   document.body.insertBefore(renderer.domElement, document.body.firstChild);
+}
+
+// The composer renders into its own target, which silently drops the context's
+// antialiasing — so the render target has to be multisampled itself, with SMAA
+// as the fallback where MSAA targets are too expensive.
+function createComposer() {
+  const size = new THREE.Vector2();
+  renderer.getDrawingBufferSize(size);
+  const target = new THREE.WebGLRenderTarget(size.x, size.y, {
+    type: THREE.HalfFloatType,
+    samples: quality.samples,
+    colorSpace: THREE.LinearSRGBColorSpace,
+  });
+
+  composer = new EffectComposer(renderer, target);
+  renderPass = new RenderPass(game.bunker, game.camera);
+  composer.addPass(renderPass);
+
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.26, 0.5, 0.92);
+  composer.addPass(bloomPass);
+
+  gradePass = new ShaderPass(GradeShader);
+  gradePass.uniforms.grain.value = quality.grain;
+  composer.addPass(gradePass);
+
+  composer.addPass(new OutputPass());
+  if (quality.smaa && !quality.samples) composer.addPass(new SMAAPass(size.x, size.y));
+
+  // The CCTV feed gets its own chain so the monitor look never touches the
+  // first-person view.
+  feedComposer = new EffectComposer(renderer, target.clone());
+  feedComposer.addPass(new RenderPass(game.outside, game.cctvCameras[0]));
+  feedPass = new ShaderPass(CameraFeedShader);
+  feedComposer.addPass(feedPass);
+  feedComposer.addPass(new OutputPass());
 }
 
 async function prepare() {
@@ -82,19 +134,37 @@ async function prepare() {
     game = createGameWorld(assets);
     game.camera.rotation.order = 'YXZ';
 
-    composer = new EffectComposer(renderer);
-    renderPass = new RenderPass(game.bunker, game.camera);
-    bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.46, 0.78);
-    bloomPass.threshold = 0.75;
-    bloomPass.strength = 0.3;
-    bloomPass.radius = 0.46;
-    composer.addPass(renderPass);
-    composer.addPass(bloomPass);
+    createComposer();
+    body.teleport(game.player.position.x, 0, game.player.position.z);
 
     wireGameEvents();
     wireControls();
-    engineState.textContent = '✓ Bunker + wildlife + infected + rifle loaded from this repository.';
-    backendEl.textContent = 'THREE.JS / PBR / MESHOPT / SAME-ORIGIN GLB';
+
+    // Dev-only handle so the visual QA harness can drive the camera without
+    // synthesising pointer events. Stripped from production builds.
+    if (import.meta.env.DEV) {
+      globalThis.__ls = {
+        game, body, quality,
+        look: (y, p = pitch) => { yaw = y; pitch = p; },
+        moveTo: (x, z) => body.teleport(x, body.position.y, z),
+        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, 0, spawn.z); },
+        openCam: (i) => { currentCam = i; openCCTV(); },
+        exposure: (v) => { renderer.toneMappingExposure = v; },
+        freecam: (px, py, pz, tx, ty, tz, fov = 70) => {
+          started = false;
+          const cam = game.camera;
+          cam.parent?.remove(cam);
+          (currentWorld === 'outside' ? game.outside : game.bunker).add(cam);
+          cam.position.set(px, py, pz);
+          cam.rotation.set(0, 0, 0);
+          cam.lookAt(tx, ty, tz);
+          cam.fov = fov;
+          cam.updateProjectionMatrix();
+        },
+      };
+    }
+    engineState.textContent = '✓ Shelter 47, surface compound, wildlife and rifle loaded from this repository.';
+    backendEl.textContent = `THREE.JS / PBR / MESHOPT / SAME-ORIGIN GLB / ${quality.name.toUpperCase()}`;
     startButton.disabled = false;
     startButton.textContent = 'ENTER SHELTER';
     renderer.setAnimationLoop(loop);
@@ -125,19 +195,19 @@ function wireGameEvents() {
   addEventListener('lostsignal:surface', (e) => {
     if (!e.detail.allowed) { flash('OPEN THE BLAST DOOR FIRST'); return; }
     currentWorld = 'outside';
-    game.setWorld('outside');
+    const spawn = game.setWorld('outside');
+    body.teleport(spawn.x, 0, spawn.z);
     yaw = Math.PI;
     pitch = -0.03;
-    velocity.set(0,0,0);
     setOutdoorAudio(true);
     flash('SURFACE COMPOUND — PERIMETER FENCE ACTIVE', 2200);
   });
   addEventListener('lostsignal:return', () => {
     currentWorld = 'bunker';
-    game.setWorld('bunker');
+    const spawn = game.setWorld('bunker');
+    body.teleport(spawn.x, 0, spawn.z);
     yaw = 0;
     pitch = -0.02;
-    velocity.set(0,0,0);
     setOutdoorAudio(false);
     flash('SHELTER 47 — BLAST CHAMBER');
   });
@@ -269,6 +339,8 @@ function updateAmmo() { ammoEl.textContent = `${ammo} / ${reserve}`; }
 
 // CCTV PTZ
 const camPan = [0,0,0,0], camTilt = [0,0,0,0], camFov = [48,50,48,42];
+const camSignal = [1, 0.82, 0.93, 0.66];
+let nightVision = false;
 const camNames = ['MAIN GATE','EAST FENCE / WOODLINE','SERVICE YARD','TOWER OVERVIEW'];
 function openCCTV() {
   cctv = true;
@@ -286,9 +358,18 @@ function closeCCTV() {
 }
 function switchCam(i) {
   currentCam = i;
-  document.getElementById('camTitle').textContent = `CAM 0${i+1} // ${camNames[i]}`;
+  const strength = Math.round(camSignal[i] * 100);
+  document.getElementById('camTitle').textContent =
+    `CAM 0${i+1} // ${camNames[i]}  ·  SIG ${strength}%${nightVision ? '  ·  IR' : ''}`;
   updatePTZ();
   clickSound(650,.035,.025);
+}
+
+function toggleNightVision() {
+  nightVision = !nightVision;
+  document.getElementById('nightVision')?.classList.toggle('on', nightVision);
+  switchCam(currentCam);
+  clickSound(nightVision ? 880 : 420, .06, .03);
 }
 function updatePTZ() {
   const pan = Math.round(camPan[currentCam] * 180 / Math.PI);
@@ -304,6 +385,7 @@ document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => switchCam(+
 document.getElementById('zoomIn').onclick = () => zoom(-6);
 document.getElementById('zoomOut').onclick = () => zoom(6);
 document.getElementById('ptzReset').onclick = () => { camPan[currentCam]=0; camTilt[currentCam]=0; camFov[currentCam]=[48,50,48,42][currentCam]; updatePTZ(); };
+document.getElementById('nightVision')?.addEventListener('click', toggleNightVision);
 const cctvFrame = document.querySelector('#cctv .frame');
 let ptzId=null,ptzX=0,ptzY=0;
 cctvFrame.addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;ptzId=e.pointerId;ptzX=e.clientX;ptzY=e.clientY;cctvFrame.setPointerCapture?.(ptzId)});
@@ -311,7 +393,7 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&cctv)closeCCTV()});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>keys[e.code]=false);
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)renderer.domElement.requestPointerLock?.()});
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
@@ -331,21 +413,70 @@ function wireControls() {
   document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
 }
 
+const desiredVelocity = new THREE.Vector3();
+const forwardAxis = new THREE.Vector3();
+const rightAxis = new THREE.Vector3();
+
 function updatePlayer(dt) {
   if (!started || modal) return;
   game.camera.rotation.y = yaw;
   game.camera.rotation.x = pitch;
-  let x=(keys.KeyD?1:0)-(keys.KeyA?1:0)+(game.mobileMove?.x||0);
-  let f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-(game.mobileMove?.y||0);
-  const len=Math.hypot(x,f);if(len>1){x/=len;f/=len}
-  const fw=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const rt=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
-  const speed=currentWorld==='outside'?3.2:2.65;
-  const target=fw.multiplyScalar(f*speed).add(rt.multiplyScalar(x*speed));
-  velocity.x=THREE.MathUtils.damp(velocity.x,target.x,12,dt);velocity.z=THREE.MathUtils.damp(velocity.z,target.z,12,dt);
-  let next=game.player.position.clone();next.x+=velocity.x*dt;if(!game.blocked(currentWorld,next.x,next.z))game.player.position.x=next.x;
-  next=game.player.position.clone();next.z+=velocity.z*dt;if(!game.blocked(currentWorld,next.x,next.z))game.player.position.z=next.z;
-  game.camera.position.y=1.67+(Math.abs(velocity.x)+Math.abs(velocity.z)>.25?Math.sin(clock.elapsedTime*10)*.016:0);
+
+  let strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
+  let forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
+  const magnitude = Math.hypot(strafe, forward);
+  if (magnitude > 1) { strafe /= magnitude; forward /= magnitude; }
+
+  const crouching = !!keys.ControlLeft || !!keys.KeyC;
+  const wantsSprint = (!!keys.ShiftLeft || !!keys.ShiftRight) && forward > 0.1 && !crouching;
+  sprinting = wantsSprint && stamina > 0.05;
+
+  // Sprinting drains stamina; standing still or walking refills it, with a
+  // short recovery lag so a spent player cannot immediately sprint again.
+  stamina = THREE.MathUtils.clamp(
+    stamina + (sprinting ? -dt / 6.5 : dt / (stamina < 0.2 ? 9 : 5)), 0, 1);
+
+  const base = currentWorld === 'outside' ? 3.05 : 2.55;
+  const speed = base * (sprinting ? 1.72 : 1) * (crouching ? 0.48 : 1);
+
+  forwardAxis.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+  rightAxis.set(Math.cos(yaw), 0, -Math.sin(yaw));
+  desiredVelocity.copy(forwardAxis).multiplyScalar(forward * speed)
+    .addScaledVector(rightAxis, strafe * speed);
+
+  body.step(dt, desiredVelocity, game.colliders[currentWorld], {
+    crouch: crouching,
+    jump: !!keys.Space && currentWorld === 'outside',
+  });
+  game.player.position.set(body.position.x, body.position.y, body.position.z);
+
+  // Head bob is driven by distance walked, not by wall-clock time, so it stops
+  // dead when the player walks into geometry instead of bobbing on the spot.
+  const speedRatio = THREE.MathUtils.clamp(body.horizontalSpeed / base, 0, 2);
+  const bobPhase = body.distanceWalked * 3.4;
+  const bobAmount = speedRatio * (sprinting ? 0.045 : 0.028) * (crouching ? 0.5 : 1);
+  breath += dt * (sprinting ? 3.4 : 1.15);
+
+  game.camera.position.y = body.eyeHeight
+    + Math.sin(bobPhase) * bobAmount
+    + Math.sin(breath) * 0.006
+    - body.landingImpact * 0.22;
+  game.camera.position.x = Math.cos(bobPhase * 0.5) * bobAmount * 0.55;
+  game.camera.rotation.z = Math.cos(bobPhase * 0.5) * bobAmount * 0.22
+    + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0);
+
+  footsteps(dt, speedRatio, crouching);
+}
+
+// Footsteps fire on distance travelled so their rhythm always matches the legs.
+let nextStepAt = 0;
+function footsteps(dt, speedRatio, crouching) {
+  if (!body.grounded || speedRatio < 0.15) return;
+  const stride = crouching ? 1.05 : (sprinting ? 1.05 : 0.78);
+  if (body.distanceWalked < nextStepAt) return;
+  nextStepAt = body.distanceWalked + stride;
+  const outdoors = currentWorld === 'outside';
+  footstepSound(outdoors, crouching ? 0.35 : (sprinting ? 1 : 0.7));
 }
 
 function updatePrompt() {
@@ -371,6 +502,26 @@ function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.c
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
 function beacon(){clickSound(760,.25,.035)}
+// Footsteps are filtered noise bursts: a dull thud on concrete indoors, a
+// wetter, brighter scuff on the wrecked surface apron.
+function footstepSound(outdoors, strength = 1) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const source = ac.createBufferSource();
+  source.buffer = noiseBuffer(.25);
+  const filter = ac.createBiquadFilter();
+  filter.type = outdoors ? 'bandpass' : 'lowpass';
+  filter.frequency.value = outdoors ? 1400 + Math.random() * 700 : 320 + Math.random() * 140;
+  filter.Q.value = outdoors ? 1.1 : .7;
+  const gain = ac.createGain();
+  const peak = (outdoors ? .05 : .07) * strength;
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(peak, t + .008);
+  gain.gain.exponentialRampToValueAtTime(.0006, t + .17);
+  source.connect(filter); filter.connect(gain); gain.connect(master);
+  source.start(t);
+  source.stop(t + .2);
+}
 function gunshotSound(){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.type='sawtooth';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(50,t+.1);g.gain.setValueAtTime(.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.17);o.connect(g);g.connect(master);o.start(t);o.stop(t+.18)}
 function bloodBurst(point){const g=new THREE.SphereGeometry(.05,8,6),m=new THREE.MeshBasicMaterial({color:0x771714});for(let i=0;i<7;i++){const p=new THREE.Mesh(g,m);p.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.25,(Math.random()-.5)*.25,(Math.random()-.5)*.25));game.outside.add(p);setTimeout(()=>game.outside.remove(p),450)}}
 
@@ -379,24 +530,83 @@ startButton.onclick=async()=>{
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
   started=true;document.body.classList.add('playing');boot.style.display='none';updateOrientation();
-  setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
+  setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
   if(!coarse)renderer.domElement.requestPointerLock?.();
   flash('SHELTER 47 // REPOSITORY BUILD',2200);
 };
 
-function loop(){
-  const dt=Math.min(clock.getDelta(),.05);
-  if(game){
-    updatePlayer(dt);updatePrompt();game.update(dt,currentWorld,game.player.position);
-    recoil=THREE.MathUtils.damp(recoil,0,13,dt);
-    if(armed){game.weaponView.position.y=-.46+Math.sin(clock.elapsedTime*1.8)*.005+recoil*.07;game.weaponView.position.z=-.55+recoil*.13}
-    if(cctv){
-      const cam=game.cctvCameras[currentCam];cam.rotation.copy(game.cctvBaseRot[currentCam]);cam.rotation.y+=camPan[currentCam];cam.rotation.x+=camTilt[currentCam];cam.fov=camFov[currentCam];cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.render(game.outside,cam);
-    }else{
-      const scene=currentWorld==='outside'?game.outside:game.bunker;renderPass.scene=scene;renderPass.camera=game.camera;composer.render();
-    }
-  }
+// Weapon sway is driven by the body, so the rifle settles when the player does.
+const weaponRest = new THREE.Vector3(.32, -.38, -.72);
+
+function updateWeapon(dt) {
+  if (!armed) return;
+  const sway = Math.min(body.horizontalSpeed / 3, 1);
+  const bob = body.distanceWalked * 3.4;
+  game.weaponView.position.set(
+    weaponRest.x + Math.cos(bob * 0.5) * 0.014 * sway,
+    weaponRest.y + Math.sin(bob) * 0.011 * sway + Math.sin(breath * 0.8) * 0.004 + recoil * 0.07,
+    weaponRest.z + recoil * 0.13 + (sprinting ? 0.05 : 0),
+  );
+  game.weaponView.rotation.set(
+    -0.04 - recoil * 0.5 + (sprinting ? 0.22 : 0),
+    -0.08 + Math.sin(bob * 0.5) * 0.02 * sway + (sprinting ? 0.3 : 0),
+    (sprinting ? 0.24 : 0),
+  );
 }
 
-addEventListener('resize',()=>{if(!renderer||!game)return;renderer.setSize(innerWidth,innerHeight);composer?.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()});
+function renderCameraFeed() {
+  const cam = game.cctvCameras[currentCam];
+  cam.rotation.copy(game.cctvBaseRot[currentCam]);
+  cam.rotation.y += camPan[currentCam];
+  cam.rotation.x += camTilt[currentCam];
+  cam.fov = camFov[currentCam];
+  // The monitor is a fixed 16:9 window, so the feed must not inherit the
+  // browser window's aspect or every camera looks stretched.
+  cam.aspect = 16 / 9;
+  cam.updateProjectionMatrix();
+  feedComposer.passes[0].scene = game.outside;
+  feedComposer.passes[0].camera = cam;
+  feedPass.uniforms.time.value = clock.elapsedTime;
+  feedPass.uniforms.nightVision.value = nightVision ? 1 : 0;
+  feedPass.uniforms.signal.value = camSignal[currentCam];
+  feedComposer.render();
+}
+
+function loop() {
+  const dt = Math.min(clock.getDelta(), .05);
+  if (!game) return;
+
+  updatePlayer(dt);
+  updatePrompt();
+  game.update(dt, currentWorld, game.player.position);
+  recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
+  updateWeapon(dt);
+
+  if (cctv) {
+    renderCameraFeed();
+    return;
+  }
+
+  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  renderPass.scene = scene;
+  renderPass.camera = game.camera;
+  gradePass.uniforms.time.value = clock.elapsedTime;
+  // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
+  // where there are no bright practicals to bleed.
+  const spent = 1 - stamina;
+  gradePass.uniforms.vignette.value = 0.5 + spent * 0.18;
+  gradePass.uniforms.saturation.value = 0.94 - spent * 0.14;
+  gradePass.uniforms.aberration.value = 0.0016 + spent * 0.0012;
+  bloomPass.strength = currentWorld === 'outside' ? 0.2 : 0.26;
+  composer.render();
+}
+
+addEventListener('resize', () => {
+  if (!renderer || !game) return;
+  renderer.setSize(innerWidth, innerHeight);
+  composer?.setSize(innerWidth, innerHeight);
+  feedComposer?.setSize(innerWidth, innerHeight);
+  game.camera.aspect = innerWidth / innerHeight;
+  game.camera.updateProjectionMatrix();
+});
 prepare().catch(fail);
