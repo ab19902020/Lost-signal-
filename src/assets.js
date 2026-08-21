@@ -43,6 +43,24 @@ const exteriorUrls = {
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
 };
 
+// Assets exported before the up-axis fix carry the authored Y-up world rotated
+// onto -Z. Corrected exports ship an LS_ORIENT_YUP marker, so anything without
+// one is rotated back into place at load time and both generations render right.
+const ORIENTATION_MARKER = 'LS_ORIENT_YUP';
+
+function orientToYUp(scene) {
+  const marker = findNamed(scene, ORIENTATION_MARKER);
+  if (marker) {
+    marker.parent?.remove(marker);
+    return scene;
+  }
+  const corrected = new THREE.Group();
+  corrected.name = 'LS_LegacyOrientation';
+  corrected.rotation.x = Math.PI / 2;
+  corrected.add(scene);
+  return corrected;
+}
+
 function prepare(root) {
   root.traverse((o) => {
     if (!o.isMesh && !o.isSkinnedMesh) return;
@@ -64,6 +82,7 @@ function prepare(root) {
 
 async function loadModel(url) {
   const gltf = await loader.loadAsync(url);
+  gltf.scene = orientToYUp(gltf.scene);
   prepare(gltf.scene);
   return gltf;
 }

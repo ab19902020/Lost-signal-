@@ -99,15 +99,33 @@ def cylinder_between(name, a, b, radius, mat, vertices=16):
     return o
 
 
+# These scripts author with Y as the up axis (floor at y=0, ceiling at y=4.2),
+# which is exactly the convention the Three.js runtime expects. Blender's glTF
+# exporter otherwise assumes Z is up and rotates every asset 90 degrees on the
+# way out, which shipped the whole world lying on its back. Exporting with
+# export_yup=False keeps the authored axes, and the marker empty lets the loader
+# tell a corrected asset from a legacy one.
+ORIENTATION_MARKER = 'LS_ORIENT_YUP'
+
+
+def add_orientation_marker():
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+    o = bpy.context.object
+    o.name = ORIENTATION_MARKER
+    o.empty_display_size = .01
+    return o
+
+
 def export_glb(filename):
     path = os.path.join(OUT, filename)
+    add_orientation_marker()
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.export_scene.gltf(
         filepath=path,
         export_format='GLB',
         use_selection=True,
         export_apply=True,
-        export_yup=True,
+        export_yup=False,
         export_materials='EXPORT',
     )
     print('Exported', path)
@@ -133,8 +151,8 @@ def build_blast_door():
     for y in (0.55, 1.10, 1.65, 2.20, 2.75):
         cube(f'Brace_{y:.2f}', (0, y, -0.31), (1.32, 0.055, 0.06), STEEL, 0.025)
     # wheel and hub
-    torus('DoorWheel_Rim', (0.82, 1.62, -0.42), 0.42, 0.045, RED, rotation=(math.pi/2, 0, 0))
-    cylinder('DoorWheel_Hub', (0.82, 1.62, -0.42), 0.105, 0.12, DARK_STEEL, rotation=(math.pi/2, 0, 0), vertices=28)
+    torus('DoorWheel_Rim', (0.82, 1.62, -0.42), 0.42, 0.045, RED)
+    cylinder('DoorWheel_Hub', (0.82, 1.62, -0.42), 0.105, 0.12, DARK_STEEL, vertices=28)
     for i in range(8):
         a = i * math.pi / 4
         x1, y1 = 0.82 + math.cos(a)*0.09, 1.62 + math.sin(a)*0.09
@@ -143,7 +161,7 @@ def build_blast_door():
     # bolts
     for sx in (-1,1):
         for sy in (0.52, 1.00, 1.48, 1.96, 2.44, 2.92):
-            cylinder(f'Bolt_{sx}_{sy}', (sx*1.52, sy, -0.39), 0.045, 0.055, DARK_STEEL, rotation=(math.pi/2,0,0), vertices=16, bevel=0.008)
+            cylinder(f'Bolt_{sx}_{sy}', (sx*1.52, sy, -0.39), 0.045, 0.055, DARK_STEEL, vertices=16, bevel=0.008)
     # warning inset
     cube('WarningPanel', (-0.75, 2.75, -0.40), (0.46, 0.14, 0.018), RED, 0.018)
     export_glb('blast_door.glb')
@@ -180,7 +198,7 @@ def build_cctv_console():
         x=-0.92+col*1.84; y=1.72+row*0.92
         cube(f'MonitorHousing_{i+1}', (x,y,-0.46), (0.78,0.40,0.11), DARK_STEEL, 0.07)
         cube(f'MonitorScreen_{i+1}', (x,y,-0.585), (0.67,0.31,0.012), SCREEN, 0.025)
-        cylinder(f'CamLED_{i+1}', (x+0.62,y+0.31,-0.61), 0.018, 0.018, RED, rotation=(math.pi/2,0,0), vertices=12, bevel=0.003)
+        cylinder(f'CamLED_{i+1}', (x+0.62,y+0.31,-0.61), 0.018, 0.018, RED, vertices=12, bevel=0.003)
     # keypad / joysticks
     for row in range(4):
         for col in range(7):

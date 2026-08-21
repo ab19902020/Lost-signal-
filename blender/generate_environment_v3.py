@@ -116,7 +116,7 @@ def between(name, a, b, radius, material, verts=16):
     return o
 
 
-def text_obj(name, text, loc, size, material, rotation=(math.pi/2,0,0), extrude=.006):
+def text_obj(name, text, loc, size, material, rotation=(0,math.pi,0), extrude=.006):
     bpy.ops.object.text_add(location=loc, rotation=rotation)
     o = bpy.context.object
     o.name = name
@@ -133,10 +133,29 @@ def text_obj(name, text, loc, size, material, rotation=(math.pi/2,0,0), extrude=
     return o
 
 
+# These scripts author with Y as the up axis (floor at y=0, ceiling at y=4.2),
+# which is exactly the convention the Three.js runtime expects. Blender's glTF
+# exporter otherwise assumes Z is up and rotates every asset 90 degrees on the
+# way out, which shipped the whole world lying on its back. Exporting with
+# export_yup=False keeps the authored axes, and the marker empty lets the loader
+# tell a corrected asset from a legacy one.
+ORIENTATION_MARKER = 'LS_ORIENT_YUP'
+
+
+def add_orientation_marker():
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+    o = bpy.context.object
+    o.name = ORIENTATION_MARKER
+    o.empty_display_size = .01
+    return o
+
+
 def export(name):
     path = os.path.join(OUT, name)
+    add_orientation_marker()
     bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True, export_apply=True)
+    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True,
+                              export_apply=True, export_yup=False)
     print('EXPORT', path)
 
 
@@ -162,7 +181,7 @@ WOOD = mat('WorkbenchWoodV3',(.20,.08,.025),0,.72)
 def bolt_grid(prefix, xs, ys, z, material=DARK, radius=.025):
     for ix,x in enumerate(xs):
         for iy,y in enumerate(ys):
-            cyl(f'{prefix}_{ix}_{iy}',(x,y,z),radius,.035,material,rotation=(math.pi/2,0,0),verts=14,edge=.003)
+            cyl(f'{prefix}_{ix}_{iy}',(x,y,z),radius,.035,material,verts=14,edge=.003)
 
 
 def build_environment():
@@ -192,7 +211,7 @@ def build_environment():
     for z in [i*.48-6.5 for i in range(28)]:
         cube('CableTrayRung_'+str(round(z,2)),(5.1,3.72,z),(.55,.025,.025),DARK,edge=.006)
     for x,c in ((4.82,RED),(5.04,YELLOW),(5.27,STEEL)):
-        cyl('UtilityCable_'+str(x),(x,3.76,0),.028,13.2,c,rotation=(math.pi/2,0,0),verts=16,edge=.004)
+        cyl('UtilityCable_'+str(x),(x,3.76,0),.028,13.2,c,verts=16,edge=.004)
     # drainage channel + individually modelled steel grating
     cube('DrainTrench',(-5.80,.055,0),(.70,.08,6.45),DARK,edge=.015)
     for i,z in enumerate([-.0 + (-6.25 + j*.22) for j in range(58)]):
@@ -208,7 +227,7 @@ def build_environment():
             bolt_grid(f'ArmorBolt_{side}_{iz}',[x-side*.075], [1.08,2.32], z-side*.01)
     # wall conduit ladders
     for x in (-5.4,-4.9,-4.4):
-        cyl('ConduitVertical_'+str(x),(x,2.15,7.20),.035,3.4,BRUSHED,verts=18)
+        cyl('ConduitVertical_'+str(x),(x,2.15,7.20),.035,3.4,BRUSHED,rotation=(math.pi/2,0,0),verts=18)
         torus('ConduitBend_'+str(x),(x,3.84,6.88),.32,.035,BRUSHED,rotation=(0,math.pi/2,0))
     # hazard stripes at doorway
     for i in range(10):
@@ -224,12 +243,12 @@ def build_ventilation():
     cube('AHU_ServiceDoor',(-.58,1.30,-.68),(.56,.80,.035),DARK,edge=.035)
     bolt_grid('AHU_DoorBolt',[-1.05,-.12],[.62,1.98],-.72,STEEL,.022)
     # exposed fan face
-    cyl('FanHousing',(.72,1.38,-.70),.53,.08,DARK,rotation=(math.pi/2,0,0),verts=48)
-    cyl('FanHub',(.72,1.38,-.77),.11,.09,BRUSHED,rotation=(math.pi/2,0,0),verts=28)
+    cyl('FanHousing',(.72,1.38,-.70),.53,.08,DARK,verts=48)
+    cyl('FanHub',(.72,1.38,-.77),.11,.09,BRUSHED,verts=28)
     for i in range(8):
         a=i*math.tau/8
         blade=cube(f'FanBlade_{i}',(.72+math.cos(a)*.25,1.38+math.sin(a)*.25,-.78),(.24,.055,.018),BRUSHED,rotation=(0,0,a+.35),edge=.018)
-    torus('FanGuard',(.72,1.38,-.79),.50,.022,BRUSHED,rotation=(math.pi/2,0,0),major_segments=48)
+    torus('FanGuard',(.72,1.38,-.79),.50,.022,BRUSHED,major_segments=48)
     # filter stack
     for i in range(4):
         cube(f'Filter_{i}',(-.70+i*.44,.42,-.69),(.18,.28,.035),WHITE,edge=.025)
@@ -237,8 +256,8 @@ def build_ventilation():
             cube(f'FilterPleat_{i}_{j}',(-.84+i*.44+j*.055,.42,-.73),(.012,.24,.01),DARK,edge=.002)
     # gauges
     for i,x in enumerate((-.72,-.30,.12)):
-        cyl(f'Gauge_{i}',(x,2.05,-.70),.115,.055,BRUSHED,rotation=(math.pi/2,0,0),verts=32)
-        cyl(f'GaugeGlass_{i}',(x,2.05,-.738),.085,.015,GLASS,rotation=(math.pi/2,0,0),verts=32)
+        cyl(f'Gauge_{i}',(x,2.05,-.70),.115,.055,BRUSHED,verts=32)
+        cyl(f'GaugeGlass_{i}',(x,2.05,-.738),.085,.015,GLASS,verts=32)
         between(f'GaugeNeedle_{i}',(x,2.05,-.755),(x+.045,2.10,-.755),.008,RED,10)
     # ducts
     cube('DuctTop',(0,2.62,.10),(1.0,.22,.55),BRUSHED,edge=.08)
@@ -260,13 +279,13 @@ def build_electrical():
             cube(f'BreakerToggle_{row}_{col}',(x,y+.02,-.32),(.028,.04,.018),RED if (row+col)%7==0 else WHITE,edge=.006)
     cube('MeterBox',(.60,1.82,-.06),(.52,.46,.18),GREEN,edge=.06)
     for i,x in enumerate((.34,.72)):
-        cyl(f'Meter_{i}',(x,1.88,-.255),.14,.04,BRUSHED,rotation=(math.pi/2,0,0),verts=32)
-        cyl(f'MeterFace_{i}',(x,1.88,-.282),.108,.012,GLASS,rotation=(math.pi/2,0,0),verts=32)
+        cyl(f'Meter_{i}',(x,1.88,-.255),.14,.04,BRUSHED,verts=32)
+        cyl(f'MeterFace_{i}',(x,1.88,-.282),.108,.012,GLASS,verts=32)
     cube('EmergencyIsolator',(.72,.88,-.10),(.34,.25,.20),YELLOW,edge=.06)
-    cyl('IsolatorKnob',(.72,.88,-.34),.11,.08,RED,rotation=(math.pi/2,0,0),verts=28)
+    cyl('IsolatorKnob',(.72,.88,-.34),.11,.08,RED,verts=28)
     for x in (-1.0,-.55,-.10,.36,.82,1.20):
         cyl('ElecConduit'+str(x),(x,3.10,.10),.034,2.2,BRUSHED,verts=18)
-    text_obj('ElecLabel','POWER DISTRIBUTION',(0,.28,-.27),.19,YELLOW,rotation=(math.pi/2,0,0),extrude=.004)
+    text_obj('ElecLabel','POWER DISTRIBUTION',(0,.28,-.27),.19,YELLOW,rotation=(0,math.pi,0),extrude=.004)
     export('electrical_wall_v3.glb')
 
 
@@ -294,7 +313,7 @@ def build_bench():
     # peg holes
     for r in range(7):
         for c in range(16):
-            cyl(f'Peg_{r}_{c}',(-1.35+c*.18,1.42+r*.17,.355),.010,.012,DARK,rotation=(math.pi/2,0,0),verts=8,edge=.001)
+            cyl(f'Peg_{r}_{c}',(-1.35+c*.18,1.42+r*.17,.355),.010,.012,DARK,verts=8,edge=.001)
     # vice
     cube('ViceBase',(-1.05,1.18,-.12),(.28,.12,.22),BRUSHED,edge=.045)
     cube('ViceJawA',(-1.05,1.34,-.30),(.27,.16,.06),DARK,edge=.025)
@@ -343,11 +362,11 @@ def build_status():
     clear_scene()
     cube('StatusHousing',(0,1.0,0),(1.35,.72,.08),DARK,edge=.07)
     cube('StatusGlass',(0,1.0,-.095),(1.22,.60,.018),GLASS,edge=.025)
-    text_obj('ShelterTitle','SHELTER 47',(0,1.42,-.125),.24,WHITE,rotation=(math.pi/2,0,0),extrude=.003)
-    text_obj('Occupancy','OCCUPANCY  01',(0,1.05,-.125),.16,GREEN_GLOW,rotation=(math.pi/2,0,0),extrude=.003)
-    text_obj('SystemLine','AIR  OK   WATER  OK   POWER  73%',(0,.75,-.125),.095,AMBER_GLOW,rotation=(math.pi/2,0,0),extrude=.002)
+    text_obj('ShelterTitle','SHELTER 47',(0,1.42,-.125),.24,WHITE,rotation=(0,math.pi,0),extrude=.003)
+    text_obj('Occupancy','OCCUPANCY  01',(0,1.05,-.125),.16,GREEN_GLOW,rotation=(0,math.pi,0),extrude=.003)
+    text_obj('SystemLine','AIR  OK   WATER  OK   POWER  73%',(0,.75,-.125),.095,AMBER_GLOW,rotation=(0,math.pi,0),extrude=.002)
     for i,x in enumerate((-.92,-.62,-.32,.32,.62,.92)):
-        cyl(f'StatusLED_{i}',(x,.48,-.13),.035,.018,GREEN_GLOW if i<4 else AMBER_GLOW,rotation=(math.pi/2,0,0),verts=16)
+        cyl(f'StatusLED_{i}',(x,.48,-.13),.035,.018,GREEN_GLOW if i<4 else AMBER_GLOW,verts=16)
     export('status_board_v3.glb')
 
 
@@ -355,11 +374,11 @@ def build_access():
     clear_scene()
     cube('AccessBack',(0,.60,0),(.38,.60,.10),DARK,edge=.06)
     cube('AccessScreen',(0,.82,-.115),(.26,.15,.018),GLASS,edge=.02)
-    text_obj('AccessText','SURFACE',(0,.82,-.14),.075,GREEN_GLOW,rotation=(math.pi/2,0,0),extrude=.002)
+    text_obj('AccessText','SURFACE',(0,.82,-.14),.075,GREEN_GLOW,rotation=(0,math.pi,0),extrude=.002)
     for r in range(4):
         for c in range(3):
             x=-.15+c*.15; y=.36+r*.13
-            cyl(f'AccessKey_{r}_{c}',(x,y,-.13),.037,.022,BRUSHED,rotation=(math.pi/2,0,0),verts=16)
+            cyl(f'AccessKey_{r}_{c}',(x,y,-.13),.037,.022,BRUSHED,verts=16)
     cube('CardSlot',(0,.17,-.13),(.18,.035,.018),AMBER_GLOW,edge=.008)
     cube('EmergencyCover',(0,1.18,-.12),(.27,.11,.025),RED,edge=.02)
     export('access_control_v3.glb')
@@ -370,9 +389,9 @@ def build_camera():
     cube('CameraBracket',(0,.20,.24),(.10,.22,.10),DARK,edge=.035)
     between('CameraArm',(0,.22,.12),(0,.40,-.18),.055,BRUSHED,18)
     cube('CameraBody',(0,.48,-.48),(.22,.16,.38),DARK,rotation=(-.10,0,0),edge=.07)
-    cyl('CameraLens',(0,.48,-.88),.11,.08,BRUSHED,rotation=(math.pi/2,0,0),verts=36)
-    cyl('CameraGlass',(0,.48,-.93),.075,.012,GLASS,rotation=(math.pi/2,0,0),verts=36)
-    cyl('CameraLED',(.14,.56,-.89),.018,.015,RED_GLOW,rotation=(math.pi/2,0,0),verts=14)
+    cyl('CameraLens',(0,.48,-.88),.11,.08,BRUSHED,verts=36)
+    cyl('CameraGlass',(0,.48,-.93),.075,.012,GLASS,verts=36)
+    cyl('CameraLED',(.14,.56,-.89),.018,.015,RED_GLOW,verts=14)
     cube('CameraSunshade',(0,.67,-.54),(.28,.035,.46),DARK,rotation=(-.08,0,0),edge=.03)
     export('wall_camera_v3.glb')
 
@@ -398,7 +417,7 @@ def build_entrance():
         cube('EntrancePier'+str(x),(x,1.48,-3.66),(.34,1.48,.48),DARK,edge=.08)
     for i in range(5):
         cube(f'EntranceStep_{i}',(0,.10+i*.11,-4.15-i*.25),(2.35,.10,1.00-i*.12),CONCRETE,edge=.035)
-    text_obj('SurfaceLabel','SHELTER 47',(0,3.34,-4.02),.28,YELLOW,rotation=(math.pi/2,0,0),extrude=.006)
+    text_obj('SurfaceLabel','SHELTER 47',(0,3.34,-4.02),.28,YELLOW,rotation=(0,math.pi,0),extrude=.006)
     # roof vents
     for x in (-2.8,2.8):
         cyl('RoofVent'+str(x),(x,3.85,.60),.32,.78,DARK,verts=28)
