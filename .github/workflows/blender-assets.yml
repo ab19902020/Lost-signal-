@@ -53,13 +53,29 @@ jobs:
           done
 
       - name: Commit generated assets to source branch
+        shell: bash
         run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add public/assets/blender/*.glb
-          if git diff --cached --quiet; then
-            echo 'No Blender asset changes to commit.'
-          else
+
+          # These GLBs are build output, not edits to reconcile. Re-point at the
+          # branch tip and commit this run's fresh build on top of it, so a push
+          # that landed while Blender was running does not turn into a binary
+          # merge conflict.
+          for attempt in 1 2 3; do
+            git fetch origin "$BRANCH"
+            git reset --mixed "origin/$BRANCH"
+            git add public/assets/blender/*.glb
+            if git diff --cached --quiet; then
+              echo 'No Blender asset changes to commit.'
+              exit 0
+            fi
             git commit -m 'Generate complete Blender V3 asset library'
-            git push origin HEAD:${{ github.head_ref || github.ref_name }}
-          fi
+            if git push origin HEAD:"$BRANCH"; then exit 0; fi
+            echo "Push rejected, retrying against the new branch tip (attempt $attempt)."
+            sleep $((attempt * 4))
+          done
+          echo 'Could not push generated assets after three attempts.'
+          exit 1
