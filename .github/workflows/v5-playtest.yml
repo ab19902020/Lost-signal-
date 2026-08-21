@@ -36,9 +36,11 @@ jobs:
       - name: Make artifact paths portable
         run: |
           sed -i 's#/Lost-signal-/assets/#./assets/#g' dist/index.html
+          sed -i 's#<script type="module"#<script>window.__LS_BASE__="./";</script><script type="module"#' dist/index.html
       - name: Verify V5 integrated room is packaged
         run: |
           test -s dist/assets/blender/shelter47_room_v5.glb
+          grep -q 'window.__LS_BASE__="./"' dist/index.html
           grep -q './assets/' dist/index.html
           find dist -maxdepth 3 -type f -printf '%p %k KB\n' | sort | head -80
       - uses: actions/upload-artifact@v4
