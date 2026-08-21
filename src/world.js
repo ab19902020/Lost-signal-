@@ -1,1 +1,1 @@
-export { createGameWorld } from './world_blender.js';
+export { createGameWorld } from './world_lit.js';
