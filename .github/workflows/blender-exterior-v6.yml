@@ -1,0 +1,72 @@
+name: Build Shelter 47 Exterior V6
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'blender/build_exterior_v6.py'
+      - '.github/workflows/blender-exterior-v6.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-exterior-v6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Blender headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          blender --version
+
+      - name: Make render engine compatible with runner Blender
+        run: sed -i 's/BLENDER_EEVEE_NEXT/BLENDER_EEVEE/g' blender/build_exterior_v6.py
+
+      - name: Build authored exterior assets and QA renders
+        run: xvfb-run -a blender -b --python blender/build_exterior_v6.py
+
+      - name: Verify authored exterior files
+        run: |
+          for f in shelter47_yard_v6 grass_clump_v6 pine_tree_v6 bush_v6 rock_v6 deer_v6 rabbit_v6; do
+            test -s "public/assets/blender/${f}.glb" || { echo "Missing ${f}.glb"; exit 1; }
+          done
+          for f in 01_gate_to_bunker 02_yard_overview 03_guard_gate; do
+            test -s "qa/renders/exterior_v6/${f}.png" || { echo "Missing QA ${f}"; exit 1; }
+          done
+          ls -lh public/assets/blender/*_v6.glb qa/renders/exterior_v6/*.png
+
+      - name: Upload exterior QA renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-exterior-v6-qa
+          path: qa/renders/exterior_v6/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Commit generated exterior assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/blender/*_v6.glb qa/renders/exterior_v6/*.png
+          if git diff --cached --quiet; then
+            echo 'No exterior V6 changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Generate authored Shelter 47 exterior V6 assets'
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin HEAD:"$BRANCH"

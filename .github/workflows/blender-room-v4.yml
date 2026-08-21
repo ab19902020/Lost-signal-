@@ -1,0 +1,61 @@
+name: Build Shelter 47 V4 Room
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'blender/rebuild_room_v4.py'
+      - '.github/workflows/blender-room-v4.yml'
+      - 'public/assets/textures/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-room-v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Blender headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          blender --version
+          ldconfig -p | grep -E 'libEGL.so.1|libGL.so.1' || true
+
+      - name: Build integrated Shelter 47 room and QA renders
+        run: xvfb-run -a blender -b --python blender/rebuild_room_v4.py
+
+      - name: Verify room GLB and five camera renders
+        run: |
+          test -s public/assets/blender/shelter47_room_v4.glb
+          for f in 01_spawn 02_blast_door 03_operations 04_living 05_overview; do
+            test -s "qa/renders/v4/${f}.png" || { echo "Missing render ${f}"; exit 1; }
+          done
+          ls -lh public/assets/blender/shelter47_room_v4.glb qa/renders/v4/*.png
+
+      - name: Commit generated room and QA renders to source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/blender/shelter47_room_v4.glb qa/renders/v4/*.png
+          if git diff --cached --quiet; then
+            echo 'No V4 room changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Generate integrated Shelter 47 V4 room and QA renders'
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin HEAD:"$BRANCH"

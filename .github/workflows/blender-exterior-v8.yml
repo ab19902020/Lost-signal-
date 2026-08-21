@@ -1,0 +1,72 @@
+name: Build Shelter 47 Exterior V8
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'blender/build_exterior_v8.py'
+      - '.github/workflows/blender-exterior-v8.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-exterior-v8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Blender headless dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          blender --version
+
+      - name: Match runner Eevee engine
+        run: sed -i 's/BLENDER_EEVEE_NEXT/BLENDER_EEVEE/g' blender/build_exterior_v8.py
+
+      - name: Build V8 authored exterior assets and QA renders
+        run: xvfb-run -a blender -b --python blender/build_exterior_v8.py
+
+      - name: Verify V8 files
+        run: |
+          for f in shelter47_yard_v8 abandoned_pickup_v8 rabbit_v8 deer_v8 infected_v8 pine_v8 grass_v8; do
+            test -s "public/assets/blender/${f}.glb" || { echo "Missing ${f}.glb"; exit 1; }
+          done
+          for f in 01_vehicle 02_rabbit 03_deer 04_infected 05_lineup; do
+            test -s "qa/renders/exterior_v8/${f}.png" || { echo "Missing QA ${f}"; exit 1; }
+          done
+          ls -lh public/assets/blender/*_v8.glb qa/renders/exterior_v8/*.png
+
+      - name: Upload V8 QA renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-exterior-v8-qa
+          path: qa/renders/exterior_v8/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Commit generated V8 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/blender/*_v8.glb qa/renders/exterior_v8/*.png
+          if git diff --cached --quiet; then
+            echo 'No V8 changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Generate authored Shelter 47 exterior V8 assets'
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin HEAD:"$BRANCH"

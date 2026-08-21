@@ -1,0 +1,33 @@
+name: Package Shelter 47 V4 QA Renders
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/v4-qa-artifact.yml'
+      - 'qa/renders/v4/**'
+
+permissions:
+  contents: read
+
+jobs:
+  qa-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+      - name: Verify QA renders
+        run: |
+          ls -lh qa/renders/v4/*.png
+          test -s qa/renders/v4/01_spawn.png
+          test -s qa/renders/v4/02_blast_door.png
+          test -s qa/renders/v4/03_operations.png
+          test -s qa/renders/v4/04_living.png
+          test -s qa/renders/v4/05_overview.png
+      - name: Upload QA renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-v4-qa-renders
+          path: qa/renders/v4/*.png
+          if-no-files-found: error
+          retention-days: 7

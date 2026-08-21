@@ -7,8 +7,10 @@ const BASE = globalThis.__LS_BASE__ || import.meta.env.BASE_URL;
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);
 
-// Lost Signal V3 rule: every visible world object is a Blender-exported GLB.
+// V5 integrated bunker plus the existing component set that still supports
+// proven weapon/survival plumbing while the migration completes.
 const bunkerUrls = {
+  roomV5: `${BASE}assets/blender/shelter47_room_v5.glb`,
   environment: `${BASE}assets/blender/bunker_environment_v3.glb`,
   desk: `${BASE}assets/blender/desk_station.glb`,
   radio: `${BASE}assets/blender/radio.glb`,
@@ -33,6 +35,8 @@ const bunkerUrls = {
 };
 
 const exteriorUrls = {
+  // Legacy set remains temporarily because the V5 compatibility layer creates
+  // its exterior before V6 replaces it. It is not displayed by V6.
   exteriorGround: `${BASE}assets/blender/exterior_ground_v3.glb`,
   exteriorEntrance: `${BASE}assets/blender/exterior_entrance_v3.glb`,
   fence: `${BASE}assets/blender/perimeter_fence_v3.glb`,
@@ -41,6 +45,15 @@ const exteriorUrls = {
   deadTree: `${BASE}assets/blender/dead_tree.glb`,
   barrier: `${BASE}assets/blender/concrete_barrier_v3.glb`,
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
+
+  // Shelter 47 V6 exterior: all authored by blender/build_exterior_v6.py.
+  yardV6: `${BASE}assets/blender/shelter47_yard_v6.glb`,
+  grassV6: `${BASE}assets/blender/grass_clump_v6.glb`,
+  pineV6: `${BASE}assets/blender/pine_tree_v6.glb`,
+  bushV6: `${BASE}assets/blender/bush_v6.glb`,
+  rockV6: `${BASE}assets/blender/rock_v6.glb`,
+  deerV6: `${BASE}assets/blender/deer_v6.glb`,
+  rabbitV6: `${BASE}assets/blender/rabbit_v6.glb`,
 };
 
 function prepare(root) {
@@ -87,14 +100,12 @@ export async function loadGameAssets(onProgress = () => {}) {
     onProgress(`Blender asset: ${key}`, loaded, total);
   };
 
-  // Everything loads in parallel. No third-party animal/zombie downloads and no runtime
-  // texture pack round-trip: the Blender GLBs carry their authored materials.
   await Promise.all([
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
   ]);
 
-  onProgress('Complete Blender world ready', total, total);
+  onProgress('Complete authored Blender world ready', total, total);
   return assets;
 }
 
