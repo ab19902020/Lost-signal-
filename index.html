@@ -23,15 +23,15 @@ h1{font-size:clamp(34px,8vw,72px);margin:7px 0 4px;letter-spacing:.08em}
 #rotate{display:none;z-index:90;text-align:center;font-weight:800;letter-spacing:.08em}
 body.playing.portrait #rotate{display:flex}
 #hud{position:fixed;inset:0;z-index:20;pointer-events:none}
-#hud:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 42%,rgba(0,0,0,.12) 72%,rgba(0,0,0,.38) 100%);mix-blend-mode:multiply}
-#hud:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.045;background-image:repeating-radial-gradient(circle at 20% 30%,#fff 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
+#hud:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,.10) 78%,rgba(0,0,0,.28) 100%);mix-blend-mode:multiply}
+#hud:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.025;background-image:repeating-radial-gradient(circle at 20% 30%,#fff 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
 #top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;justify-content:space-between;gap:10px}
-.panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
+.panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.64);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
 #name{font-size:10px;letter-spacing:.16em}
-#stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
+#stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:178px}
 .ok{color:var(--green)}.warn{color:var(--amber)}
 #crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
-#crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
+#crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.82);box-shadow:0 0 4px rgba(255,255,255,.6)}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
 #crosshair:after{width:1px;height:11px;left:8.5px;top:3.5px}
 #prompt{position:absolute;left:50%;bottom:18%;transform:translateX(-50%);padding:8px 11px;border:1px solid rgba(220,255,228,.16);background:rgba(2,6,4,.78);font-size:11px;opacity:0;transition:.12s;white-space:nowrap}
@@ -41,14 +41,21 @@ body.playing.portrait #rotate{display:flex}
 #backend{position:absolute;left:50%;bottom:7px;transform:translateX(-50%);font-size:9px;color:#9eada3;letter-spacing:.08em;text-shadow:0 2px 4px #000}
 #controls{position:fixed;inset:0;z-index:30;pointer-events:none;display:none}
 body.playing #controls{display:block}
-#movePad{position:absolute;left:22px;bottom:calc(env(safe-area-inset-bottom) + 22px);width:128px;height:128px;border-radius:50%;border:1px solid rgba(255,255,255,.17);background:rgba(13,20,15,.26);pointer-events:auto;touch-action:none}
-#moveNub{position:absolute;width:50px;height:50px;border-radius:50%;left:39px;top:39px;background:rgba(154,200,166,.20);border:1px solid rgba(255,255,255,.25)}
-#lookZone{position:absolute;left:48%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
-#use{position:absolute;right:22px;bottom:calc(env(safe-area-inset-bottom) + 28px);width:78px;height:78px;border-radius:50%;border:1px solid rgba(255,255,255,.32);background:radial-gradient(circle at 40% 35%,rgba(135,183,150,.38),rgba(10,18,13,.85));color:#effff3;font:800 12px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none}
-#soundBadge{position:absolute;right:18px;top:calc(env(safe-area-inset-top) + 94px);font-size:9px;color:#9fb0a5;background:rgba(4,8,5,.55);padding:5px 7px;border:1px solid rgba(255,255,255,.1)}
-#fire{position:absolute;right:112px;bottom:calc(env(safe-area-inset-bottom) + 33px);width:72px;height:72px;border-radius:50%;border:1px solid rgba(255,210,170,.36);background:radial-gradient(circle at 40% 35%,rgba(153,91,48,.46),rgba(29,14,8,.88));color:#ffe8d0;font:900 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none;display:none}
+#movePad{position:absolute;left:20px;bottom:calc(env(safe-area-inset-bottom) + 20px);width:136px;height:136px;border-radius:50%;border:1px solid rgba(255,255,255,.19);background:rgba(13,20,15,.26);box-shadow:inset 0 0 28px rgba(0,0,0,.28);pointer-events:auto;touch-action:none}
+#moveNub{position:absolute;width:52px;height:52px;border-radius:50%;left:42px;top:42px;background:rgba(154,200,166,.22);border:1px solid rgba(255,255,255,.28);box-shadow:0 2px 12px rgba(0,0,0,.3)}
+#lookZone{position:absolute;left:44%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
+.ctrl{position:absolute;border-radius:50%;color:#effff3;font:800 10px inherit;letter-spacing:.06em;pointer-events:auto;touch-action:none;backdrop-filter:blur(3px)}
+#use{right:20px;bottom:calc(env(safe-area-inset-bottom) + 24px);width:84px;height:84px;border:1px solid rgba(255,255,255,.30);background:radial-gradient(circle at 40% 35%,rgba(110,150,123,.28),rgba(10,18,13,.82));font-size:11px;transition:transform .12s,border-color .12s,background .12s,box-shadow .12s}
+#use.targeted{transform:scale(1.06);border-color:rgba(178,255,200,.80);background:radial-gradient(circle at 40% 35%,rgba(114,198,140,.58),rgba(10,28,16,.91));box-shadow:0 0 18px rgba(115,255,151,.18)}
+#fire{right:116px;bottom:calc(env(safe-area-inset-bottom) + 29px);width:74px;height:74px;border:1px solid rgba(255,210,170,.40);background:radial-gradient(circle at 40% 35%,rgba(153,91,48,.48),rgba(29,14,8,.90));color:#ffe8d0;display:none}
+#reload{right:119px;bottom:calc(env(safe-area-inset-bottom) + 112px);width:54px;height:54px;border:1px solid rgba(255,220,180,.28);background:rgba(30,22,15,.76);color:#f3dfc6;display:none}
+#light{right:28px;bottom:calc(env(safe-area-inset-bottom) + 120px);width:54px;height:54px;border:1px solid rgba(220,240,255,.25);background:rgba(13,20,22,.74);color:#dcecf3}
+#light.on{border-color:rgba(238,250,255,.72);background:rgba(75,91,91,.70);box-shadow:0 0 14px rgba(225,245,255,.16)}
+#sprint{left:164px;bottom:calc(env(safe-area-inset-bottom) + 36px);width:58px;height:58px;border:1px solid rgba(220,255,230,.24);background:rgba(13,22,16,.70);color:#dceadf}
+#sprint.held{border-color:rgba(160,255,187,.65);background:rgba(30,70,42,.72);transform:scale(.96)}
+#soundBadge{position:absolute;right:18px;top:calc(env(safe-area-inset-top) + 110px);font-size:9px;color:#9fb0a5;background:rgba(4,8,5,.55);padding:5px 7px;border:1px solid rgba(255,255,255,.1)}
 #weaponHud{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom) + 12px);transform:translateX(-50%);font-size:10px;letter-spacing:.08em;padding:6px 9px;border:1px solid rgba(255,230,190,.16);background:rgba(12,8,5,.62);color:#f0dcc5;display:none;text-shadow:0 2px 3px #000}
-body.armed #fire,body.armed #weaponHud{display:block}
+body.armed #fire,body.armed #reload,body.armed #weaponHud{display:block}
 .overlay{position:fixed;inset:0;z-index:50;display:none;background:rgba(0,0,0,.08);padding:12px}
 .overlay.open{display:block}
 .frame{position:relative;width:100%;height:100%;border:1px solid rgba(185,255,205,.23);background:transparent;overflow:hidden}
@@ -68,15 +75,15 @@ body.armed #fire,body.armed #weaponHud{display:block}
 .row{display:flex;gap:8px}.row button{flex:1}
 #radioText{font-size:11px;line-height:1.6;color:#9faf9f;margin-top:12px}
 @media(pointer:fine){#controls{display:none!important}}
-@media(max-height:500px){#movePad{width:108px;height:108px}#moveNub{left:33px;top:33px;width:42px;height:42px}#use{width:68px;height:68px}}
+@media(max-height:500px){#movePad{width:112px;height:112px}#moveNub{left:35px;top:35px;width:42px;height:42px}#use{width:70px;height:70px}#fire{width:64px;height:64px;right:100px}#sprint{left:142px;width:50px;height:50px}#light{bottom:100px}#reload{right:106px;bottom:96px}}
 </style>
 </head>
 <body>
-<div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
+<div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA V5.2</div><h1>LOST SIGNAL</h1><div class="desc">BLENDER WORLD BUILD. Integrated Shelter 47 room, contextual interaction, day/night weather and mobile survival controls.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading game and Blender assets…</div></div></div>
 <div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
-<div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
-<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
-<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
+<div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed for landscape play.</span></div>
+<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>TIME <span class="ok" id="timeStat">16:21</span><br>WEATHER <span class="warn" id="weatherStat">OVERCAST</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">BLENDER V5.2 / WEATHER / SMART INTERACT</div></div>
+<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="sprint" class="ctrl">SPRINT</button><button id="light" class="ctrl">LIGHT</button><button id="reload" class="ctrl">RELOAD</button><button id="use" class="ctrl">USE</button><button id="fire" class="ctrl">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
 <div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE
