@@ -41,7 +41,7 @@ jobs:
           for f in shelter47_yard_v8 abandoned_pickup_v8 rabbit_v8 deer_v8 infected_v8 pine_v8 grass_v8; do
             test -s "public/assets/blender/${f}.glb" || { echo "Missing ${f}.glb"; exit 1; }
           done
-          for f in 01_vehicle 02_rabbit 03_deer 04_infected 05_asset_lineup; do
+          for f in 01_vehicle 02_rabbit 03_deer 04_infected 05_lineup; do
             test -s "qa/renders/exterior_v8/${f}.png" || { echo "Missing QA ${f}"; exit 1; }
           done
           ls -lh public/assets/blender/*_v8.glb qa/renders/exterior_v8/*.png
