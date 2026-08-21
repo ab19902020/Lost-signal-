@@ -1,0 +1,12 @@
+/* Approved-reference presentation pass. No fake dirty-lens/bubble overlay. */
+#hud:before{display:none!important;background:none!important;opacity:0!important}
+#hud:after{background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.10) 82%,rgba(0,0,0,.22) 100%)!important;mix-blend-mode:normal!important}
+.panel{background:rgba(7,10,8,.70)!important;border-color:rgba(210,225,215,.22)!important;backdrop-filter:blur(7px)!important;box-shadow:0 8px 28px rgba(0,0,0,.18)!important}
+#name{padding:12px 14px!important;font-size:11px!important;letter-spacing:.18em!important;min-width:min(400px,38vw)!important}
+#stats{padding:10px 13px!important;font-size:11px!important;line-height:1.65!important;min-width:205px!important}
+#backend{color:#b7c0ba!important;opacity:.82!important}
+#use{width:90px!important;height:90px!important;font-size:13px!important;background:radial-gradient(circle at 40% 32%,rgba(110,153,123,.32),rgba(7,13,9,.88))!important}
+#movePad{background:rgba(8,14,10,.20)!important;border-color:rgba(230,240,234,.20)!important}
+#moveNub{background:rgba(140,170,150,.18)!important}
+#cctv .frame{background:rgba(0,0,0,.03)!important}
+.scan{opacity:.14!important}
