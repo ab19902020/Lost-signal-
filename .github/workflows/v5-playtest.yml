@@ -1,0 +1,43 @@
+name: Package Shelter 47 V5 Playtest
+
+on:
+  push:
+    branches:
+      - rebuild-v4-reference-room
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'public/**'
+      - '.github/workflows/v5-playtest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-playtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm run build
+      - name: Make artifact paths portable
+        run: |
+          sed -i 's#/Lost-signal-/assets/#./assets/#g' dist/index.html
+      - name: Verify V5 integrated room is packaged
+        run: |
+          test -s dist/assets/blender/shelter47_room_v5.glb
+          grep -q './assets/' dist/index.html
+          find dist -maxdepth 3 -type f -printf '%p %k KB\n' | sort | head -80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shelter47-v5-playtest
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
