@@ -7,9 +7,16 @@ import { execFileSync } from 'node:child_process';
 const url = process.argv[2] || 'http://127.0.0.1:5173/Lost-signal-/';
 const run = (script) => {
   const stdout = execFileSync('node', [script, url], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  // Take the JSON object only. Anything a harness prints around it is
+  // commentary, not readings.
   const start = stdout.indexOf('{');
-  if (start < 0) throw new Error(`${script} produced no readings`);
-  return JSON.parse(stdout.slice(start));
+  const end = stdout.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error(`${script} produced no readings:\n${stdout}`);
+  try {
+    return JSON.parse(stdout.slice(start, end + 1));
+  } catch (error) {
+    throw new Error(`${script} produced unparsable readings (${error.message}):\n${stdout}`);
+  }
 };
 
 const failures = [];
@@ -30,6 +37,16 @@ check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes')
 // load — which is exactly how the shelter once shipped untextured.
 for (const texture of physics.textures) {
   check(texture.size !== '1x1', `${texture.material} fell back to a placeholder texture`);
+}
+
+if (physics.silo.present) {
+  check(physics.silo.arrival.grounded, 'arriving in the silo did not land on the catwalk');
+  check(physics.silo.arrival.y > 6.5, `silo arrival was at y=${physics.silo.arrival.y}, not the catwalk`);
+  check(physics.silo.overCentre.y < 1, 'stepping off the catwalk did not fall to the silo floor');
+  check(physics.silo.overCentre.grounded, 'the player never landed on the silo floor');
+  check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
+} else {
+  console.error('note: silo assets are not present in this checkout, skipping silo checks');
 }
 
 check(combat.zombieDown, 'rifle did not down an infected');

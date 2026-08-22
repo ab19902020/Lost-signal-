@@ -32,7 +32,7 @@ await page.waitForFunction(() => {
   const b = document.getElementById('start');
   return b && !b.disabled;
 }, null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for start button'));
-console.log('boot:', await page.textContent('#engineState'));
+console.error('boot:', await page.textContent('#engineState'));
 await page.click('#start').catch(e => errors.push('click failed ' + e.message));
 await page.waitForTimeout(1500);
 for (const a of actions) {
@@ -43,8 +43,8 @@ for (const a of actions) {
 }
 await page.waitForTimeout(600);
 await page.screenshot({ path: out });
-console.log('state:', await page.evaluate(() => { const l = globalThis.__ls; return l ? JSON.stringify({ quality: l.quality.name, pos: l.body.position.toArray().map(v => +v.toFixed(2)), grounded: l.body.grounded }) : 'no hook'; }).catch(() => 'n/a'));
-if (errors.length) console.log('ERRORS:', [...new Set(errors)].slice(0, 6).join(' | '));
-console.log('shot ->', out);
+console.error('state:', await page.evaluate(() => { const l = globalThis.__ls; return l ? JSON.stringify({ quality: l.quality.name, pos: l.body.position.toArray().map(v => +v.toFixed(2)), grounded: l.body.grounded }) : 'no hook'; }).catch(() => 'n/a'));
+if (errors.length) console.error('ERRORS:', [...new Set(errors)].slice(0, 6).join(' | '));
+console.error('shot ->', out);
 await stopPump();
 await browser.close();

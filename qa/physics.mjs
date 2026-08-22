@@ -69,6 +69,32 @@ results.crouch = await read();
 await frames(30);
 results.standBackUp = await read();
 
+// The silo is the one place the player stands on authored collision rather
+// than the ground plane, so it gets its own checks.
+results.silo = await page.evaluate(async () => {
+  const ls = globalThis.__ls;
+  if (!ls.game.siloWorld) return { present: false };
+  const settle = (frames) => ls.simulate(frames);
+
+  ls.world('silo');
+  settle(20);
+  const arrival = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
+
+  // Step off the catwalk: the player should fall the full height of the shaft
+  // and land on the silo floor, not hover over the hole in the middle.
+  ls.body.teleport(0, ls.body.position.y, 0);
+  settle(240);
+  const overCentre = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
+
+  return {
+    present: true,
+    arrival,
+    overCentre,
+    colliders: ls.game.colliders.silo.boxes.length,
+    interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,
+  };
+});
+
 // A 1x1 map means a texture failed to load and three substituted a placeholder.
 results.textures = await page.evaluate(() => {
   const seen = [];
@@ -90,6 +116,6 @@ results.world = await page.evaluate(() => ({
 }));
 
 console.log(JSON.stringify(results, null, 1));
-if (errors.length) console.log('ERRORS:', [...new Set(errors)].join(' | '));
+if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));
 await stopPump();
 await browser.close();

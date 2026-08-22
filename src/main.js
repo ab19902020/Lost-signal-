@@ -726,7 +726,7 @@ cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 function wireControls() {
   addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>keys[e.code]=false);
-  renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)renderer.domElement.requestPointerLock?.()});
+  renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
 
   const move={x:0,y:0},pad=document.getElementById('movePad'),nub=document.getElementById('moveNub');
@@ -1036,7 +1036,9 @@ startButton.onclick=async()=>{
   updateStats();updateAmmo();updateHealth();renderObjectives();
   document.body.classList.add('playing');boot.style.display='none';updateOrientation();
   setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
-  if(!coarse)renderer.domElement.requestPointerLock?.();
+  // Requesting pointer lock without a trusted gesture rejects; that is normal
+  // when the game is driven by a test harness and is not worth reporting.
+  if(!coarse)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{});
   flash('SHELTER 47 // REPOSITORY BUILD',2200);
 };
 

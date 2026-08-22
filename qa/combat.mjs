@@ -107,5 +107,5 @@ const results = await page.evaluate(async () => {
 });
 
 console.log(JSON.stringify(results, null, 1));
-if (errors.length) console.log('ERRORS:', [...new Set(errors)].join(' | '));
+if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));
 await browser.close();
