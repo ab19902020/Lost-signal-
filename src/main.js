@@ -25,6 +25,7 @@ const healthEl = document.getElementById('healthStat');
 const motionEl = document.getElementById('motion');
 const staminaBar = document.getElementById('staminaBar');
 const staminaFill = document.getElementById('staminaFill');
+const taskListEl = document.getElementById('taskList');
 
 let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -40,6 +41,8 @@ let reserve = 20;
 let reloading = false;
 let foodDays = 8;
 let health = 100;
+const keys_found = new Set();
+let hatchOpen = false;
 let hurtFlash = 0;
 let recoil = 0;
 let sprinting = false;
@@ -154,7 +157,7 @@ async function prepare() {
         game, body, quality,
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
-        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, 0, spawn.z); },
+        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); },
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
@@ -205,7 +208,17 @@ function wireGameEvents() {
   addEventListener('lostsignal:computer', () => openModal('computer'));
   addEventListener('lostsignal:radio', () => { openModal('radio'); setRadioNoise(0.2); });
   addEventListener('lostsignal:generator', () => flash('GENERATOR 61% LOAD // FUEL 73%'));
-  addEventListener('lostsignal:vaultopen', () => flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE'));
+  addEventListener('lostsignal:vaultopen', () => {
+    flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE');
+    window.dispatchEvent(new CustomEvent('lostsignal:vaultkey'));
+  });
+  addEventListener('lostsignal:vaultkey', () => {
+    if (keys_found.has('A')) return;
+    keys_found.add('A');
+    flash('LAUNCH KEY A — TAPED INSIDE THE VAULT DOOR', 3000);
+    clickSound(620, .1, .045);
+    checkKeys();
+  });
   addEventListener('lostsignal:takegun', () => {
     armed = true;
     game.setArmed(true);
@@ -213,13 +226,14 @@ function wireGameEvents() {
     updateAmmo();
     flash('SURVIVAL RIFLE EQUIPPED', 2200);
     clickSound(360, .08, .05);
+    completeObjective('rifle');
   });
   addEventListener('lostsignal:door', (e) => flash(e.detail.open ? 'BLAST SEAL RELEASED' : 'BLAST SEAL LOCKED'));
   addEventListener('lostsignal:surface', (e) => {
     if (!e.detail.allowed) { flash('OPEN THE BLAST DOOR FIRST'); return; }
     currentWorld = 'outside';
     const spawn = game.setWorld('outside');
-    body.teleport(spawn.x, 0, spawn.z);
+    body.teleport(spawn.x, spawn.y, spawn.z);
     yaw = Math.PI;
     pitch = -0.03;
     setOutdoorAudio(true);
@@ -228,13 +242,67 @@ function wireGameEvents() {
   addEventListener('lostsignal:return', () => {
     currentWorld = 'bunker';
     const spawn = game.setWorld('bunker');
-    body.teleport(spawn.x, 0, spawn.z);
+    body.teleport(spawn.x, spawn.y, spawn.z);
     yaw = 0;
     pitch = -0.02;
     setOutdoorAudio(false);
     flash('SHELTER 47 — BLAST CHAMBER');
   });
   addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+
+  addEventListener('lostsignal:hatch', (e) => {
+    hatchOpen = e.detail.open;
+    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
+    clickSound(hatchOpen ? 210 : 160, .22, .06);
+    completeObjective('hatch');
+  });
+
+  addEventListener('lostsignal:descend', (e) => {
+    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
+    enterWorld('silo', Math.PI * 0.5, -0.05);
+    flash('SILO 47-A — SERVICE LEVEL', 2600);
+    completeObjective('descend');
+  });
+
+  addEventListener('lostsignal:ascend', () => {
+    enterWorld('bunker', 0, -0.02);
+    flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:missile', () => {
+    flash('LGM-30 · WARHEAD REMOVED 2019 · GUIDANCE STILL LIVE', 3200);
+  });
+
+  addEventListener('lostsignal:cache', () => {
+    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
+    cacheEmptied = true;
+    reserve += 24;
+    foodDays += 6;
+    keys_found.add('B');
+    updateAmmo();
+    foodEl.textContent = `${foodDays} DAYS`;
+    flash('+24 ROUNDS · +6 DAYS RATIONS · LAUNCH KEY B', 3400);
+    clickSound(520, .12, .05);
+    completeObjective('cache');
+    checkKeys();
+  });
+
+  addEventListener('lostsignal:launchconsole', () => {
+    const held = keys_found.size;
+    if (held < 2) {
+      flash(`ARMING SEQUENCE LOCKED — KEYS ${held} / 2`, 2600);
+      return;
+    }
+    if (!launchArmed) {
+      launchArmed = true;
+      flash('BOTH KEYS TURNED — THE BOARD GOES GREEN', 3200);
+      beacon();
+      completeObjective('arm');
+      return;
+    }
+    flash('GUIDANCE LIVE · NO WARHEAD · THE SIGNAL IS COMING FROM BELOW YOU', 4200);
+  });
   addEventListener('lostsignal:breach', () => {
     flash('SOMETHING CAME THROUGH THE BLAST DOOR', 3000);
     breachAlarm();
@@ -278,6 +346,74 @@ function wireGameEvents() {
 
 // Overlays own the screen: the shelter HUD is hidden behind them so readouts
 // like the CCTV motion detector do not collide with the survival stats.
+let cacheEmptied = false;
+let launchArmed = false;
+
+// A short, ordered chain so the shelter always has a next thing to do. Later
+// objectives stay hidden until the ones before them are done, which keeps the
+// list to a couple of lines instead of a wall of spoilers.
+const OBJECTIVES = [
+  { id: 'rifle', text: 'Open the gun vault and take the rifle' },
+  { id: 'cameras', text: 'Sweep the CCTV feeds for movement' },
+  { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
+  { id: 'descend', text: 'Descend into Silo 47-A' },
+  { id: 'cache', text: 'Find the supply cache on the silo floor' },
+  { id: 'keys', text: 'Recover both launch keys' },
+  { id: 'arm', text: 'Turn both keys at launch control' },
+];
+const completed = new Set();
+
+function renderObjectives() {
+  const pending = OBJECTIVES.filter(o => !completed.has(o.id));
+  const shown = [
+    ...OBJECTIVES.filter(o => completed.has(o.id)).slice(-2),
+    ...pending.slice(0, 2),
+  ];
+  taskListEl.innerHTML = '';
+  for (const objective of shown) {
+    const item = document.createElement('li');
+    item.textContent = objective.text;
+    if (completed.has(objective.id)) item.className = 'done';
+    taskListEl.appendChild(item);
+  }
+}
+
+function completeObjective(id) {
+  if (completed.has(id) || !OBJECTIVES.some(o => o.id === id)) return;
+  completed.add(id);
+  renderObjectives();
+  clickSound(700, .09, .035);
+  if (completed.size === OBJECTIVES.length) {
+    setTimeout(() => flash('EVERY SYSTEM IN SHELTER 47 IS YOURS. THE SIGNAL IS STILL TRANSMITTING.', 5000), 2600);
+  }
+}
+
+// Moving between the shelter, the surface and the silo is the same operation
+// every time: reparent the player, drop the body at the new spawn, face them
+// the right way.
+function enterWorld(name, facing, tilt) {
+  currentWorld = name;
+  const spawn = game.setWorld(name);
+  body.teleport(spawn.x, spawn.y, spawn.z);
+  yaw = facing;
+  pitch = tilt;
+  setOutdoorAudio(name === 'outside');
+}
+
+function checkKeys() {
+  if (keys_found.size >= 2) completeObjective('keys');
+}
+
+function toggleHelp(force) {
+  const panel = document.getElementById('help');
+  const open = force ?? !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  document.body.classList.toggle('overlay-open', open);
+  modal = open || cctv;
+  if (open) document.exitPointerLock?.();
+  clickSound(open ? 480 : 300, .05, .03);
+}
+
 function openModal(id) {
   modal = true;
   document.exitPointerLock?.();
@@ -420,7 +556,7 @@ function collapse() {
   updateHealth();
   currentWorld = 'bunker';
   const spawn = game.setWorld('bunker');
-  body.teleport(spawn.x, 0, spawn.z);
+  body.teleport(spawn.x, spawn.y, spawn.z);
   yaw = 0;
   pitch = -0.02;
   setOutdoorAudio(false);
@@ -485,7 +621,7 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>keys[e.code]=false);
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)renderer.domElement.requestPointerLock?.()});
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
@@ -504,6 +640,8 @@ function wireControls() {
   document.getElementById('use').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();use()});
   document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
+  document.getElementById('helpBtn').addEventListener('click',()=>toggleHelp());
+  document.querySelector('#help .x').addEventListener('click',()=>toggleHelp(false));
 
   // Sprint and crouch are latching toggles on touch: a phone has no spare
   // finger to hold a modifier while steering with both thumbs.
@@ -790,7 +928,7 @@ startButton.onclick=async()=>{
   if(!game){location.reload();return}
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
-  started=true;document.body.classList.add('playing');boot.style.display='none';updateOrientation();
+  started=true;renderObjectives();document.body.classList.add('playing');boot.style.display='none';updateOrientation();
   setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
   if(!coarse)renderer.domElement.requestPointerLock?.();
   flash('SHELTER 47 // REPOSITORY BUILD',2200);

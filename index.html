@@ -31,6 +31,25 @@ body.playing.portrait #rotate{display:flex}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
 .ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:#ff7a63}
 body.overlay-open #top{opacity:0;transition:opacity .18s ease}
+#tasks{position:absolute;left:12px;top:calc(env(safe-area-inset-top) + 168px);max-width:250px;font-size:10px;line-height:1.7;opacity:0;transition:opacity .3s ease}
+body.playing #tasks{opacity:1}
+body.overlay-open #tasks{opacity:0}
+#tasksTitle{color:#7d8d83;letter-spacing:.16em;margin-bottom:4px}
+#taskList{margin:0;padding:0;list-style:none}
+#taskList li{color:#cfe3d5;letter-spacing:.04em}
+#taskList li::before{content:'\25A2  ';color:#6f8a78}
+#taskList li.done{color:#5d6f63;text-decoration:line-through}
+#taskList li.done::before{content:'\25A0  ';color:#4f7a5e}
+#helpBtn{position:absolute;right:22px;top:calc(env(safe-area-inset-top) + 12px);width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(9,15,11,.7);color:#cfe3d5;font:700 13px inherit;pointer-events:auto;z-index:6}
+#help{position:fixed;inset:0;display:none;place-items:center;background:rgba(3,6,4,.9);z-index:40;padding:18px}
+#help.open{display:grid}
+#helpCard{max-width:560px;width:100%;max-height:86vh;overflow:auto;border:1px solid rgba(160,210,175,.25);background:rgba(8,14,10,.97);padding:18px 20px}
+#helpCard h2{margin:0 0 4px;font-size:13px;letter-spacing:.18em;color:#bfe4cb}
+#helpCard h3{margin:16px 0 6px;font-size:10px;letter-spacing:.16em;color:#7d9a86}
+#helpCard table{width:100%;border-collapse:collapse;font-size:11px}
+#helpCard td{padding:3px 0;color:#d6e6da;vertical-align:top}
+#helpCard td:first-child{width:44%;color:#8fb89c;white-space:nowrap;padding-right:12px}
+#helpCard p{font-size:11px;line-height:1.7;color:#a8bdae;margin:6px 0 0}
 #crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
 #crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
@@ -87,10 +106,35 @@ body.armed #reloadBtn{display:block}
 </head>
 <body>
 <div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
+<div id="help"><div id="helpCard">
+<h2>SHELTER 47 — FIELD MANUAL</h2>
+<p>You are the last occupant of a fallout shelter with a decommissioned missile under the floor and a voice on the shortwave that should not be there.</p>
+<h3>DESKTOP</h3><table>
+<tr><td>W A S D</td><td>Move</td></tr>
+<tr><td>Mouse</td><td>Look (click to capture)</td></tr>
+<tr><td>Shift</td><td>Sprint — drains stamina</td></tr>
+<tr><td>Ctrl / C</td><td>Crouch</td></tr>
+<tr><td>Space</td><td>Fire, and jump on the surface</td></tr>
+<tr><td>E</td><td>Interact with whatever is prompted</td></tr>
+<tr><td>R</td><td>Reload</td></tr>
+<tr><td>N</td><td>Infrared, while a camera feed is open</td></tr>
+<tr><td>H</td><td>This manual</td></tr>
+<tr><td>Esc</td><td>Close a screen</td></tr>
+</table>
+<h3>TOUCH</h3><table>
+<tr><td>Left stick</td><td>Move</td></tr>
+<tr><td>Right half swipe</td><td>Look</td></tr>
+<tr><td>RUN / CROUCH</td><td>Latch on and off</td></tr>
+<tr><td>USE / FIRE / RELOAD</td><td>As labelled</td></tr>
+</table>
+<h3>THE SHELTER</h3>
+<p>The CCTV console watches the surface compound — sweep it before you release the blast seal, because an open seal draws the infected to the entrance and they will eventually come through it. Close it behind you.</p>
+<p>The hatch in the floor opens onto Silo 47-A. Launch control needs two keys: one is taped inside the gun vault, the other is in the supply cache on the silo floor.</p>
+<button class="x">CLOSE</button></div></div>
 <div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
 <div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
-<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
-<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><button id="sprintBtn" class="stick">RUN</button><button id="crouchBtn" class="stick">CROUCH</button><button id="reloadBtn">RELOAD</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="staminaBar"><div id="staminaFill"></div></div><div id="soundBadge">🔊 SOUND ON</div></div>
+<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div class="panel" id="tasks"><div id="tasksTitle">OBJECTIVES</div><ul id="taskList"></ul></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
+<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><button id="sprintBtn" class="stick">RUN</button><button id="crouchBtn" class="stick">CROUCH</button><button id="reloadBtn">RELOAD</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><button id="helpBtn">?</button><div id="staminaBar"><div id="staminaFill"></div></div><div id="soundBadge">🔊 SOUND ON</div></div>
 <div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="motion">NO MOTION</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE

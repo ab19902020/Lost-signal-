@@ -40,6 +40,18 @@ const creatureUrls = {
   infected: `${BASE}assets/blender/infected_v3.glb`,
 };
 
+// The silo beneath the shelter. Loaded best-effort like the creatures, so a
+// checkout without the generated assets still boots into the bunker.
+const siloUrls = {
+  siloChamber: `${BASE}assets/blender/silo_chamber_v3.glb`,
+  siloCatwalk: `${BASE}assets/blender/silo_catwalk_v3.glb`,
+  siloStairs: `${BASE}assets/blender/silo_stairs_v3.glb`,
+  siloMissile: `${BASE}assets/blender/silo_missile_v3.glb`,
+  siloConsole: `${BASE}assets/blender/silo_console_v3.glb`,
+  accessHatch: `${BASE}assets/blender/access_hatch_v3.glb`,
+  siloCache: `${BASE}assets/blender/silo_cache_v3.glb`,
+};
+
 const exteriorUrls = {
   exteriorGround: `${BASE}assets/blender/exterior_ground_v3.glb`,
   exteriorEntrance: `${BASE}assets/blender/exterior_entrance_v3.glb`,
@@ -164,11 +176,11 @@ export async function loadGameAssets(onProgress = () => {}) {
     loadSet(exteriorEntries, assets, tick),
   ]);
 
-  await Promise.all(Object.entries(creatureUrls).map(async ([key, url]) => {
+  await Promise.all(Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {
     try {
       assets[key] = await loadModel(url);
     } catch (error) {
-      console.warn(`Creature asset unavailable (${key}); the surface will be empty until the Blender workflow publishes it.`, error);
+      console.warn(`Optional asset unavailable (${key}); that part of the world stays sealed until the Blender workflow publishes it.`, error);
     }
   }));
 
