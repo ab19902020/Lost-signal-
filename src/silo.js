@@ -14,7 +14,7 @@ import * as THREE from 'three';
 // real hole in the middle, and the stair gets one box per tread.
 
 export const SILO = {
-  shellRadius: 17.4,
+  shellRadius: 26.6,      // the shell stands back to leave room for dwellings
   wellRadius: 11.6,     // the open shaft is most of the silo's width
   deckOuter: 16.4,      // galleries are narrow rings around it
   levelHeight: 3.5,
@@ -24,6 +24,8 @@ export const SILO = {
   stairColumn: 2.7,
   stairSteps: 22,
   stairTurn: THREE.MathUtils.degToRad(190),
+  apartmentBack: 25.4,    // rear wall of every home
+  doorHalf: 0.62,
 };
 
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
@@ -44,7 +46,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   const {
     shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
-    stairRadius, stairColumn, stairSteps, stairTurn,
+    stairRadius, stairColumn, stairSteps, stairTurn, apartmentBack, doorHalf,
   } = SILO;
   const treadHalf = (stairRadius - stairColumn) / 2 + 0.75;
   const stairMid = stairColumn + treadHalf;
@@ -64,7 +66,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // Outer shell: an enclosure of flat panels rather than a rectangle.
   for (let i = 0; i < segments * 2; i++) {
     const angle = (i * Math.PI * 2) / (segments * 2);
-    colliders.addBox(ringBox(angle, shellRadius + 0.6, arcHalf(shellRadius + 0.6) / 2 + 0.3, 0.7, -1, shaftHeight + levelHeight * 2), {});
+    colliders.addBox(ringBox(angle, shellRadius + 0.6, arcHalf(shellRadius + 0.6) / 2 + 0.4, 0.8, -1, shaftHeight + levelHeight * 2), {});
   }
 
   const levelY = (index) => index * levelHeight;
@@ -101,6 +103,64 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     // The column the helix wraps is solid; the shaft around it stays open.
     colliders.addBox(box(-(stairColumn - 0.15), base, -(stairColumn - 0.15),
       stairColumn - 0.15, base + levelHeight, stairColumn - 0.15), {});
+  }
+
+  // --- Homes ---------------------------------------------------------------
+  // Every door in the silo opens onto a home. The interiors are joined single
+  // meshes, so two hundred and fifty of them cost draw calls rather than scene
+  // graphs, and frustum culling means only the ones you are looking at are
+  // drawn at all.
+  const apartmentMid = (deckOuter + apartmentBack) / 2;
+  const apartmentDepth = (apartmentBack - deckOuter) / 2;
+  const doorwayAngle = (level, bay) => {
+    // Which homes stand open. Deterministic, so a door you left open is open
+    // when you come back, and roughly a third of the silo is welcoming.
+    return ((level * 7 + bay * 5) % 3) === 0;
+  };
+
+  const homes = [];
+  for (let level = 0; level <= levels; level++) {
+    const y = levelY(level);
+    for (let bay = 0; bay < segments; bay++) {
+      const angle = (bay * Math.PI * 2) / segments;
+      const open = doorwayAngle(level, bay);
+
+      if (assets.habApartment) {
+        homes.push(place(assets.habApartment, scene,
+          [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
+          [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false }));
+      }
+
+      // The door leaf: flat in the opening when shut, swung back against the
+      // wall when the home is open.
+      const doorOffset = -arcHalf(deckOuter - 0.35) * 0.45;
+      const dx = Math.cos(angle) * (deckOuter - 0.28) + Math.sin(angle) * doorOffset;
+      const dz = Math.sin(angle) * (deckOuter - 0.28) - Math.cos(angle) * doorOffset;
+      if (assets.habDoor) {
+        place(assets.habDoor, scene, [dx, y, dz],
+          [0, -angle + Math.PI / 2 + (open ? 1.85 : 0), 0], 1, { world: 'silo', collide: false });
+      }
+
+      // Home shell: side walls between neighbours, and the rear wall.
+      const boundary = ((bay + 0.5) * Math.PI * 2) / segments;
+      colliders.addBox(ringBox(boundary, apartmentMid, 0.2, apartmentDepth, y, y + levelHeight), {});
+      colliders.addBox(ringBox(angle, apartmentBack, arcHalf(apartmentBack), 0.3, y, y + levelHeight), {});
+
+      // Facade: a panel either side of the doorway, and a lintel over it. A
+      // shut door fills the gap; an open one leaves it walkable.
+      const panelHalf = (arcHalf(deckOuter - 0.35) - doorHalf) / 2;
+      for (const side of [-1, 1]) {
+        const offset = doorOffset + side * (doorHalf + panelHalf);
+        colliders.addBox(ringBox(angle + offset / deckOuter, deckOuter - 0.35, panelHalf, 0.36,
+          y, y + levelHeight), {});
+      }
+      colliders.addBox(ringBox(angle + doorOffset / deckOuter, deckOuter - 0.35, doorHalf, 0.36,
+        y + 2.18, y + levelHeight), {});
+      if (!open) {
+        colliders.addBox(ringBox(angle + doorOffset / deckOuter, deckOuter - 0.35, doorHalf, 0.36,
+          y, y + 2.18), {});
+      }
+    }
   }
 
   // A bridge from the stair to the gallery on every level: without one the
@@ -201,6 +261,23 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
   }
 
+  // Every open home gets a lamp, culled with the gallery strips so the count
+  // stays constant. A lit doorway is what makes the wall read as dwellings.
+  const homeLights = [];
+  for (let level = 0; level <= levels; level++) {
+    for (let bay = 0; bay < segments; bay += 2) {
+      const angle = (bay * Math.PI * 2) / segments;
+      const light = new THREE.PointLight(0xffcf94, 26, 9, 2);
+      light.position.set(Math.cos(angle) * (deckOuter + 2.4), levelY(level) + 2.4,
+        Math.sin(angle) * (deckOuter + 2.4));
+      light.visible = false;
+      scene.add(light);
+      const entry = { light, base: 26, phase: level + bay, failing: false };
+      homeLights.push(entry);
+      allLights.push(entry);
+    }
+  }
+
   // The galleries have to look occupied. Ten residents walk and talk; these are
   // the rest of the three hundred, joined into one mesh each so a populated
   // silo costs draw calls rather than skeletons.
@@ -232,7 +309,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // They are all created, but only the nearest handful are ever visible, and
   // the visible count is held constant so the material shaders never recompile.
   const strips = [];
-  const LIT_AT_ONCE = 12;
+  const allLights = [];
+  const LIT_AT_ONCE = 14;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
     const count = 4;
@@ -242,14 +320,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
       light.visible = false;
       scene.add(light);
-      strips.push({ light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 });
+      const entry = { light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 };
+      strips.push(entry);
+      allLights.push(entry);
     }
   }
 
   const _lightSort = [];
   function cullLights(playerPosition) {
     _lightSort.length = 0;
-    for (const strip of strips) {
+    for (const strip of allLights) {
       // Vertical distance dominates: the gallery you are on matters far more
       // than one twelve levels down on the same bearing.
       const dy = strip.light.position.y - playerPosition.y;
@@ -325,7 +405,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   function update(dt, playerPosition) {
     elapsed += dt;
     if (playerPosition) cullLights(playerPosition);
-    for (const strip of strips) {
+    for (const strip of allLights) {
       if (!strip.light.visible) continue;
       const hum = 1 + Math.sin(elapsed * 1.4 + strip.phase) * 0.035;
       const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.72
@@ -343,5 +423,5 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     geometry.attributes.position.needsUpdate = true;
   }
 
-  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight };
+  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes };
 }

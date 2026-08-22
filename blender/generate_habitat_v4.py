@@ -16,7 +16,7 @@ ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
 # --- Silo dimensions, shared with the runtime -------------------------------
-SHELL_RADIUS = 17.4      # inner face of the outer shell
+SHELL_RADIUS = 26.6      # the shell stands back to leave room for dwellings
 WELL_RADIUS = 11.6       # the open shaft: most of the silo's width
 DECK_OUTER = 16.4        # gallery walkways are narrow rings around it
 LEVEL_HEIGHT = 3.5
@@ -25,6 +25,8 @@ SEGMENTS = 18            # apartment bays per level
 STAIR_RADIUS = 4.6       # heavy spiral stair down the middle of the shaft
 STAIR_COLUMN = 2.7
 STAIR_STEPS = 22         # per level
+APARTMENT_BACK = 25.4    # rear wall of every home
+DOOR_HALF = .62          # half-width of a doorway opening
 
 
 def clear_scene():
@@ -305,54 +307,62 @@ def build_level():
              rotation=(0, -a, 0), edge=.04)
 
         # --- Facade -----------------------------------------------------------
+        # Built as two panels and a lintel around a real doorway, so a home is
+        # somewhere you walk into rather than a painted rectangle.
         ox, oz = math.cos(a) * (DECK_OUTER - .35), math.sin(a) * (DECK_OUTER - .35)
-        cube(f'Front_{i}', (ox, LEVEL_HEIGHT / 2, oz), (front_half, LEVEL_HEIGHT / 2, .35), PAINT,
-             rotation=(0, -a, 0), edge=.04)
+        panel_half = (front_half - DOOR_HALF) / 2
+        door_centre = -front_half * .45
+        for k in (-1, 1):
+            offset = door_centre + k * (DOOR_HALF + panel_half)
+            px = math.cos(a) * (DECK_OUTER - .35) + math.sin(a) * offset
+            pz = math.sin(a) * (DECK_OUTER - .35) - math.cos(a) * offset
+            cube(f'Front_{i}_{k}', (px, LEVEL_HEIGHT / 2, pz), (panel_half, LEVEL_HEIGHT / 2, .35),
+                 PAINT, rotation=(0, -a, 0), edge=.04)
+        lx = math.cos(a) * (DECK_OUTER - .35) + math.sin(a) * door_centre
+        lz = math.sin(a) * (DECK_OUTER - .35) - math.cos(a) * door_centre
+        cube(f'Lintel_{i}', (lx, (LEVEL_HEIGHT + 2.18) / 2, lz),
+             (DOOR_HALF, (LEVEL_HEIGHT - 2.18) / 2, .35), PAINT, rotation=(0, -a, 0), edge=.04)
+        cube(f'Reveal_{i}', (lx, 1.09, lz), (DOOR_HALF + .07, 1.09, .38), DARK,
+             rotation=(0, -a, 0), edge=.02)
 
         def bay_point(offset, inset):
             """A point `offset` along the bay's chord, `inset` in from the wall."""
             return (math.cos(a) * (DECK_OUTER - inset) + math.sin(a) * offset,
                     math.sin(a) * (DECK_OUTER - inset) - math.cos(a) * offset)
 
-        # A front door with a lit fanlight, off-centre in the bay.
-        dx, dz = bay_point(-front_half * .45, .62)
-        cube(f'Door_{i}', (dx, 1.03, dz), (.48, 1.03, .07), DOORPAINT, rotation=(0, -a, 0), edge=.03)
-        cube(f'DoorKick_{i}', (dx, .16, dz), (.48, .16, .09), BRUSHED, rotation=(0, -a, 0), edge=.02)
-        cube(f'DoorFrame_{i}', (dx, 1.10, dz), (.58, 1.14, .04), DARK, rotation=(0, -a, 0), edge=.02)
-        fx, fz = bay_point(-front_half * .45, .60)
-        cube(f'Fanlight_{i}', (fx, 2.34, fz), (.40, .17, .04), WARMWINDOW, rotation=(0, -a, 0), edge=.012)
-        hx, hz = bay_point(-front_half * .45 + .34, .70)
-        cyl(f'DoorHandle_{i}', (hx, 1.03, hz), .035, .20, BRUSHED, rotation=(0, -a, 0), verts=10)
-        # Unit number plate.
-        nx, nz = bay_point(-front_half * .45 + .56, .60)
-        cube(f'Plate_{i}', (nx, 1.86, nz), (.13, .09, .02), AMBER, rotation=(0, -a, 0), edge=.006)
+        # A lit fanlight over the opening, and the unit's number plate.
+        fx, fz = bay_point(door_centre, .30)
+        cube(f'Fanlight_{i}', (fx, 2.42, fz), (DOOR_HALF * .82, .13, .05), WARMWINDOW,
+             rotation=(0, -a, 0), edge=.012)
+        nx, nz = bay_point(door_centre + DOOR_HALF + .28, .30)
+        cube(f'Plate_{i}', (nx, 1.92, nz), (.13, .09, .02), AMBER, rotation=(0, -a, 0), edge=.006)
 
         # Two stacked dwellings' windows, warm from inside, with a shared sill.
-        for row, (wy, wh) in enumerate(((1.12, .40), (2.16, .34))):
+        for row, (wy, wh) in enumerate(((1.22, .40), (2.28, .30))):
             for k in (-1, 1):
-                wx, wz = bay_point(front_half * (.30 + k * .26), .58)
+                wx, wz = bay_point(door_centre + k * (DOOR_HALF + panel_half) + k * .12, .30)
                 cube(f'Win_{i}_{row}_{k}', (wx, wy, wz), (.34, wh, .04), WARMWINDOW,
                      rotation=(0, -a, 0), edge=.008)
                 cube(f'WinFrame_{i}_{row}_{k}', (wx, wy, wz), (.40, wh + .07, .03), DARK,
                      rotation=(0, -a, 0), edge=.01)
-                sx, sz = bay_point(front_half * (.30 + k * .26), .66)
+                sx, sz = bay_point(door_centre + k * (DOOR_HALF + panel_half) + k * .12, .38)
                 cube(f'WinSill_{i}_{row}_{k}', (sx, wy - wh - .09, sz), (.44, .05, .10), BRUSHED,
                      rotation=(0, -a, 0), edge=.012)
 
         # Service greeble: meter box, vent grille, riser pipes, cable run.
-        mx, mz = bay_point(front_half * .74, .58)
+        mx, mz = bay_point(front_half * .80, .30)
         cube(f'Meter_{i}', (mx, 1.62, mz), (.20, .26, .09), BRUSHED, rotation=(0, -a, 0), edge=.02)
         cube(f'MeterFace_{i}', (mx, 1.62, mz - .0), (.14, .18, .10), DARK, rotation=(0, -a, 0), edge=.01)
-        vx, vz = bay_point(front_half * .05, .58)
+        vx, vz = bay_point(front_half * .55, .30)
         cube(f'Vent_{i}', (vx, 2.72, vz), (.42, .22, .06), DARK, rotation=(0, -a, 0), edge=.015)
         for b in range(5):
             cube(f'VentBar_{i}_{b}', (vx, 2.60 + b * .06, vz), (.38, .015, .08), BRUSHED,
                  rotation=(0, -a, 0), edge=.004)
         for pi, po in enumerate((-.72, -.60)):
-            px, pz = bay_point(front_half * po, .74)
+            px, pz = bay_point(front_half * po, .46)
             cyl(f'Riser_{i}_{pi}', (px, LEVEL_HEIGHT / 2, pz), .055, LEVEL_HEIGHT, BRUSHED,
                 rotation=UP, verts=10)
-        cx, cz = bay_point(0, .80)
+        cx, cz = bay_point(front_half * .3, .52)
         cube(f'CableTray_{i}', (cx, LEVEL_HEIGHT - .46, cz), (front_half * .9, .05, .13), DARK,
              rotation=(0, -a, 0), edge=.015)
 
@@ -450,6 +460,133 @@ def build_landing():
                  (.035, .58, .035), BRUSHED, edge=.01)
     join_all('HabLanding')
     export('hab_landing_v4.glb')
+
+
+def build_apartment():
+    """A home. One of these sits behind every door in the silo.
+
+    Laid out for a family: an entrance strip off the gallery, a living space
+    with a table the family eats at, a galley kitchen down one wall, and a
+    sleeping alcove with bunks behind a curtain. Built centred on the origin,
+    facing -Z toward its own front door, so the runtime can rotate a copy into
+    every bay.
+    """
+    clear_scene()
+    width = 6.4          # along the gallery
+    depth = 8.4          # back from the facade
+    height = 3.1
+    half_w = width / 2
+    half_d = depth / 2
+
+    # --- Shell ---------------------------------------------------------------
+    cube('Apt_Floor', (0, -.08, 0), (half_w, .08, half_d), WARM, edge=.02)
+    cube('Apt_Ceiling', (0, height + .1, 0), (half_w, .10, half_d), CONCRETE, edge=.03)
+    cube('Apt_Back', (0, height / 2, half_d), (half_w, height / 2, .18), CONCRETE, edge=.04)
+    for side in (-1, 1):
+        cube(f'Apt_Side_{side}', (side * half_w, height / 2, 0), (.18, height / 2, half_d),
+             CONCRETE, edge=.04)
+    # Front wall either side of the doorway, matching the facade's opening.
+    panel = (half_w - DOOR_HALF) / 2
+    for side in (-1, 1):
+        cube(f'Apt_Front_{side}', (side * (DOOR_HALF + panel), height / 2, -half_d),
+             (panel, height / 2, .18), PAINT, edge=.04)
+    cube('Apt_FrontLintel', (0, (height + 2.18) / 2, -half_d),
+         (DOOR_HALF, (height - 2.18) / 2, .18), PAINT, edge=.04)
+    for i in range(6):
+        cube(f'Apt_CeilBeam_{i}', (0, height - .06, -half_d + 1.0 + i * 1.35),
+             (half_w - .2, .09, .13), DARK, edge=.02)
+    cube('Apt_Skirting', (0, .09, half_d - .2), (half_w - .2, .09, .04), DARK, edge=.01)
+
+    # --- Kitchen, down the left wall ----------------------------------------
+    cube('Apt_Counter', (-half_w + .55, .90, -.6), (.42, .06, 2.1), BRUSHED, edge=.02)
+    cube('Apt_CounterBody', (-half_w + .55, .44, -.6), (.40, .44, 2.05), PAINT, edge=.03)
+    for d in range(3):
+        cube(f'Apt_Drawer_{d}', (-half_w + .14, .40 + d * .30, -1.4 + d * .1), (.02, .12, .55),
+             DARK, edge=.01)
+    cube('Apt_Sink', (-half_w + .55, .93, .35), (.30, .05, .40), STEEL, edge=.015)
+    cyl('Apt_Tap', (-half_w + .78, 1.10, .35), .025, .34, BRUSHED, rotation=UP, verts=10)
+    cube('Apt_Hob', (-half_w + .55, .97, -1.5), (.28, .03, .34), DARK, edge=.01)
+    for r in range(2):
+        for c in range(2):
+            cyl(f'Apt_Ring_{r}_{c}', (-half_w + .40 + c * .30, .99, -1.66 + r * .30),
+                .09, .02, STEEL, rotation=UP, verts=14)
+    cube('Apt_Splashback', (-half_w + .20, 1.45, -.6), (.04, .50, 2.05), STEEL, edge=.01)
+    for shelf in range(2):
+        cube(f'Apt_Shelf_{shelf}', (-half_w + .42, 2.05 + shelf * .42, -.6), (.30, .04, 1.9),
+             WARM, edge=.012)
+        for j in range(6):
+            cyl(f'Apt_Jar_{shelf}_{j}', (-half_w + .42, 2.19 + shelf * .42, -1.9 + j * .55),
+                .07, .22, GLASS if j % 2 else BRUSHED, rotation=UP, verts=10)
+
+    # --- The table the family eats at ---------------------------------------
+    cube('Apt_Table', (.55, .74, -.9), (1.05, .05, .62), WARM, edge=.02)
+    for tx in (-.85, .85):
+        for tz in (-.45, .45):
+            cube(f'Apt_TableLeg_{tx}_{tz}', (.55 + tx, .36, -.9 + tz), (.06, .36, .06), DARK, edge=.012)
+    for side, sz in ((-1, -.95), (1, .95)):
+        cube(f'Apt_Bench_{side}', (.55, .43, -.9 + sz), (1.0, .05, .20), WARM, edge=.015)
+        for bx in (-.75, .75):
+            cube(f'Apt_BenchLeg_{side}_{bx}', (.55 + bx, .21, -.9 + sz), (.05, .21, .16), DARK, edge=.01)
+    for i, ox in enumerate((-.6, -.1, .45)):
+        cyl(f'Apt_Bowl_{i}', (.55 + ox, .80, -.9 + (i % 2) * .22), .10, .06, BRUSHED,
+            rotation=UP, verts=14)
+    cube('Apt_Lamp', (.55, height - .28, -.9), (.34, .06, .34), WHITELIGHT, edge=.02)
+    cube('Apt_LampShade', (.55, height - .18, -.9), (.40, .10, .40), DARK, edge=.03)
+
+    # --- Sleeping alcove, behind a curtain ----------------------------------
+    cube('Apt_Divider', (half_w - 2.5, height / 2, 1.1), (.10, height / 2, .9), PAINT, edge=.03)
+    cube('Apt_Curtain', (half_w - 2.5, 1.55, 2.4), (.06, 1.55, 1.5), CLOTH, edge=.02)
+    for bunk in range(2):
+        y = .55 + bunk * 1.15
+        cube(f'Apt_BunkFrame_{bunk}', (half_w - 1.2, y, 2.3), (1.05, .07, 1.85), STEEL, edge=.02)
+        cube(f'Apt_Mattress_{bunk}', (half_w - 1.2, y + .14, 2.3), (.95, .10, 1.75), CLOTH, edge=.05)
+        cube(f'Apt_Pillow_{bunk}', (half_w - 1.2, y + .24, 3.7), (.42, .09, .28), BONE, edge=.04)
+        cube(f'Apt_Blanket_{bunk}', (half_w - 1.2, y + .22, 1.7), (.93, .06, .90), PAINT, edge=.04)
+    for px in (half_w - 2.2, half_w - .25):
+        cube(f'Apt_BunkPost_{px:.1f}', (px, 1.35, 1.4), (.06, 1.35, .06), STEEL, edge=.015)
+        cube(f'Apt_BunkPost_b_{px:.1f}', (px, 1.35, 3.9), (.06, 1.35, .06), STEEL, edge=.015)
+    cube('Apt_Ladder_Rail', (half_w - 2.15, 1.0, 1.5), (.04, 1.0, .04), BRUSHED, edge=.01)
+    for r in range(3):
+        cube(f'Apt_Ladder_Rung_{r}', (half_w - 1.75, .55 + r * .40, 1.5), (.36, .03, .03),
+             BRUSHED, edge=.008)
+
+    # --- Living, and the small things that make it a home -------------------
+    cube('Apt_Sofa_Base', (-1.4, .32, 2.6), (1.0, .32, .48), PAINT, edge=.06)
+    cube('Apt_Sofa_Back', (-1.4, .72, 3.0), (1.0, .40, .16), PAINT, edge=.06)
+    for cx in (-.5, .5):
+        cube(f'Apt_Cushion_{cx}', (-1.4 + cx, .68, 2.5), (.42, .10, .40), CLOTH, edge=.05)
+    cube('Apt_Rug', (-1.0, .02, 1.2), (1.5, .02, 1.1), CLOTH, edge=.01)
+    cube('Apt_Chest', (-half_w + .6, .40, 3.4), (.40, .40, .85), WARM, edge=.03)
+    for i in range(3):
+        cube(f'Apt_Crate_{i}', (-half_w + .7, .30 + i * .55, 2.1), (.34, .26, .40),
+             STEEL if i % 2 else PAINT, edge=.03)
+    cube('Apt_Shelf_Tall', (half_w - .5, 1.30, -1.9), (.28, 1.30, .70), WARM, edge=.03)
+    for b in range(4):
+        cube(f'Apt_Books_{b}', (half_w - .5, .38 + b * .62, -1.9 + (b % 2) * .2),
+             (.22, .16, .46), DOORPAINT if b % 2 else AMBER, edge=.01)
+    # A child's drawing pinned by the door, and boots left in the entrance.
+    cube('Apt_Drawing', (-DOOR_HALF - .5, 1.65, -half_d + .22), (.24, .30, .01), BONE, edge=.004)
+    for bx in (DOOR_HALF + .35, DOOR_HALF + .62):
+        cube(f'Apt_Boot_{bx:.2f}', (bx, .09, -half_d + .5), (.10, .09, .17), DARK, edge=.02)
+    cube('Apt_Hook_Rail', (DOOR_HALF + .8, 1.85, -half_d + .22), (.55, .04, .06), BRUSHED, edge=.01)
+    for c, cx in enumerate((-.3, .1, .45)):
+        cube(f'Apt_Coat_{c}', (DOOR_HALF + .8 + cx, 1.40, -half_d + .30), (.16, .42, .09),
+             CLOTH if c % 2 else PAINT, edge=.03)
+
+    join_all('HabApartment')
+    export('hab_apartment_v4.glb')
+
+
+def build_door():
+    """A single front door leaf, placed per bay so it can stand open."""
+    clear_scene()
+    cube('Door_Leaf', (0, 1.05, 0), (DOOR_HALF - .04, 1.05, .05), DOORPAINT, edge=.02)
+    cube('Door_Kick', (0, .18, -.01), (DOOR_HALF - .04, .18, .06), BRUSHED, edge=.015)
+    cube('Door_Rail', (0, 1.55, -.02), (DOOR_HALF - .10, .05, .05), BRUSHED, edge=.01)
+    cyl('Door_Handle', (DOOR_HALF - .22, 1.05, -.10), .032, .20, BRUSHED, rotation=UP, verts=10)
+    cube('Door_Plate', (DOOR_HALF - .22, 1.30, -.06), (.07, .11, .02), BRUSHED, edge=.006)
+    join_all('HabDoor')
+    export('hab_door_v4.glb')
 
 
 def build_hydroponics():
@@ -622,6 +759,8 @@ build_shell()
 build_level()
 build_stair()
 build_landing()
+build_apartment()
+build_door()
 build_hydroponics()
 build_commons()
 build_secure_door()
