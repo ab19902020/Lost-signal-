@@ -5,6 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { loadGameAssets } from './assets.js';
 import { createGameWorld } from './world.js';
 import { CharacterBody } from './physics.js';
@@ -32,7 +33,7 @@ const powerEl = document.getElementById('powerStat');
 const waterEl = document.getElementById('waterStat');
 const airEl = document.getElementById('airStat');
 
-let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
+let renderer, composer, renderPass, bloomPass, gradePass, aoPass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
 let started = false;
 let modal = false;
@@ -91,9 +92,9 @@ function fail(error) {
 // post stack we can afford, so a phone and a desktop run the same code path.
 const quality = (() => {
   const cores = navigator.hardwareConcurrency || 4;
-  if (coarse || cores <= 4) return { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026 };
-  if (cores <= 8) return { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03 };
-  return { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032 };
+  if (coarse || cores <= 4) return { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026, ao: false };
+  if (cores <= 8) return { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03, ao: false };
+  return { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032, ao: true };
 })();
 
 function createRenderer() {
@@ -124,6 +125,16 @@ function createComposer() {
   composer = new EffectComposer(renderer, target);
   renderPass = new RenderPass(game.bunker, game.camera);
   composer.addPass(renderPass);
+
+  // Ambient occlusion does most of the work of grounding objects in a room lit
+  // by a handful of point lights: railings, deck edges and door recesses stop
+  // floating. Desktop only — it is a second depth-normal pass per frame.
+  if (quality.ao) {
+    aoPass = new GTAOPass(game.bunker, game.camera, size.x, size.y);
+    aoPass.output = GTAOPass.OUTPUT.Default;
+    aoPass.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.4, thickness: 0.6, scale: 1.1 });
+    composer.addPass(aoPass);
+  }
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.26, 0.5, 0.92);
   composer.addPass(bloomPass);
@@ -1294,6 +1305,7 @@ function loop() {
   const scene = activeScene();
   renderPass.scene = scene;
   renderPass.camera = game.camera;
+  if (aoPass) { aoPass.scene = scene; aoPass.camera = game.camera; }
   gradePass.uniforms.time.value = clock.elapsedTime;
   const wounded = THREE.MathUtils.clamp(1 - health / 100, 0, 1);
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);

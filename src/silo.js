@@ -47,7 +47,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   } = SILO;
 
   const shaftHeight = levels * levelHeight;
-  const bay = (Math.PI * (deckOuter + wellRadius) / 2) / segments;
+  // Each ring piece is a flat slab at its own radius, so each needs its own
+  // arc width. One width for all of them leaves gaps at the outside.
+  const arcHalf = (radius) => (Math.PI * radius / segments) * 1.06;
   const deckMid = (deckOuter + wellRadius) / 2;
   const deckHalf = (deckOuter - wellRadius) / 2;
 
@@ -59,7 +61,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // Outer shell: an enclosure of flat panels rather than a rectangle.
   for (let i = 0; i < segments * 2; i++) {
     const angle = (i * Math.PI * 2) / (segments * 2);
-    colliders.addBox(ringBox(angle, shellRadius + 0.6, bay + 0.4, 0.7, -1, shaftHeight + levelHeight * 2), {});
+    colliders.addBox(ringBox(angle, shellRadius + 0.6, arcHalf(shellRadius + 0.6) / 2 + 0.3, 0.7, -1, shaftHeight + levelHeight * 2), {});
   }
 
   const levelY = (index) => index * levelHeight;
@@ -72,11 +74,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let i = 0; i < segments; i++) {
       const angle = (i * Math.PI * 2) / segments;
       // Deck: walkable, with the light well left open through the middle.
-      colliders.addBox(ringBox(angle, deckMid, bay + 0.12, deckHalf, y - 0.3, y + 0.02),
+      colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, y - 0.3, y + 0.02),
         { climbable: true });
       // Apartment frontage, and the gallery railing over the well.
-      colliders.addBox(ringBox(angle, deckOuter - 0.3, bay + 0.1, 0.34, y, y + levelHeight), {});
-      colliders.addBox(ringBox(angle, wellRadius, bay + 0.12, 0.1, y + 0.02, y + 1.15), {});
+      colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, y, y + levelHeight), {});
+      colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
     }
     gallery.push({ level, y });
   }
@@ -141,10 +143,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   place(assets.habLevel, scene, [0, topY, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
   for (let i = 0; i < segments; i++) {
     const angle = (i * Math.PI * 2) / segments;
-    colliders.addBox(ringBox(angle, deckMid, bay + 0.12, deckHalf, topY - 0.3, topY + 0.02),
+    colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, topY - 0.3, topY + 0.02),
       { climbable: true });
-    colliders.addBox(ringBox(angle, deckOuter - 0.3, bay + 0.1, 0.34, topY, topY + levelHeight), {});
-    colliders.addBox(ringBox(angle, wellRadius, bay + 0.12, 0.1, topY + 0.02, topY + 1.15), {});
+    colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, topY, topY + levelHeight), {});
+    colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, topY + 0.02, topY + 1.15), {});
   }
 
   const secureAngle = Math.PI * 0.25;
@@ -187,16 +189,39 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   scene.add(new THREE.HemisphereLight(0x5a6a70, 0x141614, 0.55));
   scene.add(new THREE.AmbientLight(0x49535a, 0.3));
 
+  // Fifty-two point lights would be compiled into every shader in the scene.
+  // They are all created, but only the nearest handful are ever visible, and
+  // the visible count is held constant so the material shaders never recompile.
   const strips = [];
+  const LIT_AT_ONCE = 8;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
     const count = 4;
     for (let i = 0; i < count; i++) {
       const angle = (i * Math.PI * 2) / count + level * 0.5;
-      const light = new THREE.PointLight(0xffe9c8, 34, 13, 2);
+      const light = new THREE.PointLight(0xffe9c8, 34, 15, 2);
       light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
+      light.visible = false;
       scene.add(light);
       strips.push({ light, base: 34, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 });
+    }
+  }
+
+  const _lightSort = [];
+  function cullLights(playerPosition) {
+    _lightSort.length = 0;
+    for (const strip of strips) {
+      // Vertical distance dominates: the gallery you are on matters far more
+      // than one twelve levels down on the same bearing.
+      const dy = strip.light.position.y - playerPosition.y;
+      const dx = strip.light.position.x - playerPosition.x;
+      const dz = strip.light.position.z - playerPosition.z;
+      strip.score = dx * dx + dz * dz + dy * dy * 4;
+      _lightSort.push(strip);
+    }
+    _lightSort.sort((a, b) => a.score - b.score);
+    for (let i = 0; i < _lightSort.length; i++) {
+      _lightSort[i].light.visible = i < LIT_AT_ONCE;
     }
   }
 
@@ -241,9 +266,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   }
 
   let elapsed = 0;
-  function update(dt) {
+  function update(dt, playerPosition) {
     elapsed += dt;
+    if (playerPosition) cullLights(playerPosition);
     for (const strip of strips) {
+      if (!strip.light.visible) continue;
       const hum = 1 + Math.sin(elapsed * 1.4 + strip.phase) * 0.035;
       const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.72
         ? 0.15 : 1;

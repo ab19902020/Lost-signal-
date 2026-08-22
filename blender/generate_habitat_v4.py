@@ -249,7 +249,7 @@ def build_shell():
         a = i * math.tau / panels
         x, z = math.cos(a) * (SHELL_RADIUS + .6), math.sin(a) * (SHELL_RADIUS + .6)
         cube(f'Shell_Panel_{i}', (x, height / 2, z),
-             (math.pi * SHELL_RADIUS / panels + .08, height / 2, .6), CONCRETE,
+             (math.pi * (SHELL_RADIUS + .6) / panels * 1.08, height / 2, .6), CONCRETE,
              rotation=(0, -a, 0), edge=.07)
         rib = a + math.tau / (panels * 2)
         cube(f'Shell_Rib_{i}', (math.cos(rib) * SHELL_RADIUS, height / 2, math.sin(rib) * SHELL_RADIUS),
@@ -261,11 +261,23 @@ def build_shell():
     export('hab_shell_v4.glb')
 
 
+def arc_half(radius, overlap=1.06):
+    """Half-width of one bay at a given radius.
+
+    Every piece in the ring is a flat slab standing at its own radius, so they
+    each need their own width. Sizing them all from one radius leaves metre-wide
+    gaps between the outer apartment fronts and overlaps at the railing.
+    """
+    return math.pi * radius / SEGMENTS * overlap
+
+
 def build_level():
     """One residential level: deck, gallery railing and a ring of front doors."""
     clear_scene()
     step = math.tau / SEGMENTS
-    bay = math.pi * (DECK_OUTER + WELL_RADIUS) / 2 / SEGMENTS
+    deck_half = arc_half(DECK_OUTER)
+    front_half = arc_half(DECK_OUTER - .3)
+    rail_half = arc_half(WELL_RADIUS)
 
     for i in range(SEGMENTS):
         a = i * step
@@ -273,13 +285,13 @@ def build_level():
         x, z = math.cos(a) * mid, math.sin(a) * mid
         depth = (DECK_OUTER - WELL_RADIUS) / 2
 
-        cube(f'Deck_{i}', (x, -.12, z), (bay + .10, .12, depth), DECKPLATE, rotation=(0, -a, 0), edge=.03)
-        cube(f'Ceiling_{i}', (x, LEVEL_HEIGHT - .16, z), (bay + .10, .16, depth), CONCRETE,
+        cube(f'Deck_{i}', (x, -.12, z), (deck_half, .12, depth), DECKPLATE, rotation=(0, -a, 0), edge=.03)
+        cube(f'Ceiling_{i}', (x, LEVEL_HEIGHT - .16, z), (deck_half, .16, depth), CONCRETE,
              rotation=(0, -a, 0), edge=.04)
 
         # Apartment frontage against the outer wall: door, number plate, window.
         ox, oz = math.cos(a) * (DECK_OUTER - .3), math.sin(a) * (DECK_OUTER - .3)
-        cube(f'Front_{i}', (ox, LEVEL_HEIGHT / 2, oz), (bay + .08, LEVEL_HEIGHT / 2, .30), PAINT,
+        cube(f'Front_{i}', (ox, LEVEL_HEIGHT / 2, oz), (front_half, LEVEL_HEIGHT / 2, .30), PAINT,
              rotation=(0, -a, 0), edge=.04)
         dx, dz = math.cos(a) * (DECK_OUTER - .58), math.sin(a) * (DECK_OUTER - .58)
         cube(f'Door_{i}', (dx, 1.05, dz), (.52, 1.05, .06), DOORPAINT, rotation=(0, -a, 0), edge=.03)
@@ -288,21 +300,23 @@ def build_level():
                                 1.05,
                                 math.sin(a) * (DECK_OUTER - .70) - math.cos(a) * .34),
             .035, .22, BRUSHED, rotation=(0, -a, 0), verts=10)
+        # Two windows per bay, set either side of the door.
         wx, wz = math.cos(a) * (DECK_OUTER - .56), math.sin(a) * (DECK_OUTER - .56)
-        cube(f'Window_{i}', (wx + math.sin(a) * .95, 1.85, wz - math.cos(a) * .95),
-             (.44, .40, .04), GLASS, rotation=(0, -a, 0), edge=.01)
-        cube(f'WindowFrame_{i}', (wx + math.sin(a) * .95, 1.85, wz - math.cos(a) * .95),
-             (.50, .46, .03), DARK, rotation=(0, -a, 0), edge=.012)
+        for offset in (-front_half * .55, front_half * .55):
+            cube(f'Window_{i}_{offset:.2f}', (wx + math.sin(a) * offset, 1.95, wz - math.cos(a) * offset),
+                 (.46, .42, .04), GLASS, rotation=(0, -a, 0), edge=.01)
+            cube(f'WindowFrame_{i}_{offset:.2f}', (wx + math.sin(a) * offset, 1.95, wz - math.cos(a) * offset),
+                 (.53, .49, .03), DARK, rotation=(0, -a, 0), edge=.012)
 
         # Gallery railing on the light-well edge.
         rx, rz = math.cos(a) * WELL_RADIUS, math.sin(a) * WELL_RADIUS
         for h in (.56, 1.06):
-            cube(f'Rail_{i}_{h}', (rx, h, rz), (bay + .10, .045, .045), BRUSHED,
+            cube(f'Rail_{i}_{h}', (rx, h, rz), (rail_half, .045, .045), BRUSHED,
                  rotation=(0, -a, 0), edge=.012)
-        cube(f'Kerb_{i}', (rx, .10, rz), (bay + .10, .10, .07), DARK, rotation=(0, -a, 0), edge=.015)
+        cube(f'Kerb_{i}', (rx, .10, rz), (rail_half, .10, .07), DARK, rotation=(0, -a, 0), edge=.015)
         for side in (-1, 1):
-            px = math.cos(a) * WELL_RADIUS + math.sin(a) * side * bay
-            pz = math.sin(a) * WELL_RADIUS - math.cos(a) * side * bay
+            px = math.cos(a) * WELL_RADIUS + math.sin(a) * side * rail_half
+            pz = math.sin(a) * WELL_RADIUS - math.cos(a) * side * rail_half
             cube(f'Post_{i}_{side}', (px, .58, pz), (.05, .58, .05), BRUSHED, edge=.012)
 
         # A strip light over every second doorway.
@@ -314,7 +328,7 @@ def build_level():
 
         # Conduit and cable tray running the ceiling line.
         cyl(f'Conduit_{i}', (math.cos(a) * (DECK_OUTER - 2.4), LEVEL_HEIGHT - .5, math.sin(a) * (DECK_OUTER - 2.4)),
-            .06, bay * 2.05, BRUSHED, rotation=(0, -a + math.pi / 2, 0), verts=10)
+            .06, arc_half(DECK_OUTER - 2.4) * 2.1, BRUSHED, rotation=(0, -a + math.pi / 2, 0), verts=10)
 
     join_all('HabLevel')
     export('hab_level_v4.glb')

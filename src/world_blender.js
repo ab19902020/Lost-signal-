@@ -360,7 +360,7 @@ export function createGameWorld(assets) {
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
-    if (world === 'silo') siloWorld?.update(dt);
+    if (world === 'silo') siloWorld?.update(dt, playerPosition);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
