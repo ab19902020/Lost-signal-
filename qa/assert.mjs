@@ -42,8 +42,11 @@ for (const texture of physics.textures) {
 if (physics.silo.present) {
   check(physics.silo.arrival.grounded, 'arriving in the silo did not land on the top landing');
   check(physics.silo.arrival.y > 40, `silo arrival was at y=${physics.silo.arrival.y}, not the top landing`);
-  check(physics.silo.overCentre.y < 1, 'stepping into the light well did not fall to the silo floor');
-  check(physics.silo.overCentre.grounded, 'the player never landed at the bottom of the silo');
+  // The shaft is crossed by a landing on every level, so a fall can legitimately
+// end on one. What matters is that the well is open rather than solid.
+check(physics.silo.overCentre.y < physics.silo.arrival.y - 25,
+  `stepping into the light well fell only ${(physics.silo.arrival.y - physics.silo.overCentre.y).toFixed(1)} m`);
+  check(physics.silo.overCentre.grounded, 'the player never landed after falling down the well');
   check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
