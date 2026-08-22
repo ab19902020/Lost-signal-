@@ -15,14 +15,15 @@ import * as THREE from 'three';
 
 export const SILO = {
   shellRadius: 17.4,
-  wellRadius: 5.4,
-  deckOuter: 16.4,
-  levelHeight: 3.6,
-  levels: 12,
-  segments: 16,
-  stairRadius: 4.1,
-  stairSteps: 24,
-  stairTurn: THREE.MathUtils.degToRad(200),
+  wellRadius: 11.6,     // the open shaft is most of the silo's width
+  deckOuter: 16.4,      // galleries are narrow rings around it
+  levelHeight: 3.5,
+  levels: 14,
+  segments: 18,
+  stairRadius: 4.6,
+  stairColumn: 2.7,
+  stairSteps: 22,
+  stairTurn: THREE.MathUtils.degToRad(190),
 };
 
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
@@ -43,8 +44,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   const {
     shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
-    stairRadius, stairSteps, stairTurn,
+    stairRadius, stairColumn, stairSteps, stairTurn,
   } = SILO;
+  const treadHalf = (stairRadius - stairColumn) / 2 + 0.75;
+  const stairMid = stairColumn + treadHalf;
 
   const shaftHeight = levels * levelHeight;
   // Each ring piece is a flat slab at its own radius, so each needs its own
@@ -53,8 +56,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const deckMid = (deckOuter + wellRadius) / 2;
   const deckHalf = (deckOuter - wellRadius) / 2;
 
-  scene.background = new THREE.Color(0x080a0b);
-  scene.fog = new THREE.FogExp2(0x0e1213, 0.0085);
+  scene.background = new THREE.Color(0x070b10);
+  scene.fog = new THREE.FogExp2(0x0d1620, 0.0115);
 
   place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
 
@@ -92,11 +95,28 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     const rise = levelHeight / stairSteps;
     for (let i = 0; i < stairSteps; i++) {
       const angle = spin + (i * stairTurn) / stairSteps;
-      const top = base + i * rise + 0.04;
-      colliders.addBox(ringBox(angle, stairRadius, 0.9, 0.32, top - 0.5, top), { climbable: true });
+      const top = base + i * rise + 0.09;
+      colliders.addBox(ringBox(angle, stairMid, treadHalf, 0.48, top - 0.5, top), { climbable: true });
     }
-    // Only the spine is solid; the well around it stays open the whole drop.
-    colliders.addBox(box(-0.5, base, -0.5, 0.5, base + levelHeight, 0.5), {});
+    // The column the helix wraps is solid; the shaft around it stays open.
+    colliders.addBox(box(-(stairColumn - 0.15), base, -(stairColumn - 0.15),
+      stairColumn - 0.15, base + levelHeight, stairColumn - 0.15), {});
+  }
+
+  // A bridge from the stair to the gallery on every level: without one the
+  // helix ends in mid-air and the galleries are unreachable.
+  const landingSpan = (wellRadius - (stairColumn + 1.9)) / 2 + 0.4;
+  const landingMid = stairColumn + 1.9 + landingSpan;
+  for (let level = 0; level <= levels; level++) {
+    const y = levelY(level);
+    const angle = level * stairTurn + stairTurn * 0.98;
+    if (assets.habLanding) {
+      place(assets.habLanding, scene,
+        [Math.cos(angle) * landingMid, y, Math.sin(angle) * landingMid],
+        [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
+    }
+    colliders.addBox(ringBox(angle, landingMid, 1.1, landingSpan, y - 0.3, y + 0.02),
+      { climbable: true });
   }
 
   // --- Fittings -------------------------------------------------------------
@@ -181,12 +201,32 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
   }
 
+  // The galleries have to look occupied. Ten residents walk and talk; these are
+  // the rest of the three hundred, joined into one mesh each so a populated
+  // silo costs draw calls rather than skeletons.
+  const crowd = [];
+  if (assets.residentStill) {
+    for (let level = 0; level < levels; level++) {
+      const y = levelY(level);
+      const count = 3 + ((level * 5) % 4);
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + level * 0.83;
+        const radius = wellRadius + 0.55 + ((i + level) % 3) * 0.5;
+        const figure = place(assets.residentStill, scene,
+          [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
+          [0, Math.atan2(-Math.cos(angle), -Math.sin(angle)) + (i % 2 ? 0.4 : -0.3), 0], 1,
+          { world: 'silo', collide: false });
+        crowd.push(figure);
+      }
+    }
+  }
+
   // --- Lighting -------------------------------------------------------------
   // A silo is lit level by level. Strip lights over the doors give each gallery
   // its own band of light, and the well between them stays dim, which is what
   // sells the drop.
-  scene.add(new THREE.HemisphereLight(0x64737a, 0x171a18, 0.9));
-  scene.add(new THREE.AmbientLight(0x515b62, 0.45));
+  scene.add(new THREE.HemisphereLight(0x6f8ea8, 0x14181c, 1.05));
+  scene.add(new THREE.AmbientLight(0x46586a, 0.5));
 
   // Fifty-two point lights would be compiled into every shader in the scene.
   // They are all created, but only the nearest handful are ever visible, and
@@ -198,11 +238,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     const count = 4;
     for (let i = 0; i < count; i++) {
       const angle = (i * Math.PI * 2) / count + level * 0.5;
-      const light = new THREE.PointLight(0xffe9c8, 34, 15, 2);
+      const light = new THREE.PointLight(0xffd9a2, 40, 15, 2);
       light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
       light.visible = false;
       scene.add(light);
-      strips.push({ light, base: 34, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 });
+      strips.push({ light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 });
     }
   }
 
@@ -229,13 +269,20 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // give the opposite gallery enough to be seen by. They are never culled, so
   // the visible light count stays constant.
   for (let i = 0; i <= 3; i++) {
-    const fill = new THREE.PointLight(0x9fb4c4, 130, 46, 1.6);
+    const fill = new THREE.PointLight(0x7ea6c8, 180, 52, 1.5);
     fill.position.set(0, (shaftHeight / 3) * i + levelHeight, 0);
     scene.add(fill);
   }
 
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
+  // Light down the stair itself, so the helix reads as the silo's spine.
+  for (let i = 0; i <= 3; i++) {
+    const spine = new THREE.PointLight(0xcfe0ee, 90, 26, 1.7);
+    spine.position.set(0, (shaftHeight / 3) * i + levelHeight * 0.5, 0);
+    scene.add(spine);
+  }
+
   const crown = new THREE.SpotLight(0xd6e6f2, 2400, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);

@@ -17,13 +17,14 @@ UP = (math.pi / 2, 0, 0)
 
 # --- Silo dimensions, shared with the runtime -------------------------------
 SHELL_RADIUS = 17.4      # inner face of the outer shell
-WELL_RADIUS = 5.4        # open light well down the middle
-DECK_OUTER = 16.4
-LEVEL_HEIGHT = 3.6
-LEVELS = 12              # residential levels
-SEGMENTS = 16            # apartment bays per level
-STAIR_RADIUS = 4.1
-STAIR_STEPS = 24         # per level
+WELL_RADIUS = 11.6       # the open shaft: most of the silo's width
+DECK_OUTER = 16.4        # gallery walkways are narrow rings around it
+LEVEL_HEIGHT = 3.5
+LEVELS = 14              # residential levels
+SEGMENTS = 18            # apartment bays per level
+STAIR_RADIUS = 4.6       # heavy spiral stair down the middle of the shaft
+STAIR_COLUMN = 2.7
+STAIR_STEPS = 22         # per level
 
 
 def clear_scene():
@@ -228,6 +229,8 @@ DARK = mat('HabDarkSteel', (.06, .065, .062), .74, .42)
 PAINT = mat('HabPaint', (.19, .24, .22), .10, .62)
 DOORPAINT = mat('HabDoorPaint', (.15, .28, .30), .20, .48)
 WARM = mat('HabWarmWood', (.30, .19, .11), 0, .68)
+# Lit from inside: a wall of these is what makes the silo read as lived in.
+WARMWINDOW = mat('HabWarmWindow', (.42, .27, .12), 0, .35, (1.0, .64, .30), 3.2)
 CLOTH = mat('HabCloth', (.22, .24, .21), 0, .86)
 SKIN = mat('HabSkin', (.52, .38, .30), 0, .62)
 HAIR = mat('HabHair', (.09, .07, .06), 0, .70)
@@ -272,93 +275,181 @@ def arc_half(radius, overlap=1.06):
 
 
 def build_level():
-    """One residential level: deck, gallery railing and a ring of front doors."""
+    """One residential level: a narrow gallery ring against a dense facade.
+
+    The reference silo reads as a wall of small dwellings — stacked units,
+    pipes, vents, meter boxes and lit windows at different heights, broken up by
+    heavy structural columns — not as flat painted panels.
+    """
     clear_scene()
     step = math.tau / SEGMENTS
     deck_half = arc_half(DECK_OUTER)
-    front_half = arc_half(DECK_OUTER - .3)
+    front_half = arc_half(DECK_OUTER - .35)
     rail_half = arc_half(WELL_RADIUS)
+    mid = (DECK_OUTER + WELL_RADIUS) / 2
+    depth = (DECK_OUTER - WELL_RADIUS) / 2
 
     for i in range(SEGMENTS):
         a = i * step
-        mid = (DECK_OUTER + WELL_RADIUS) / 2
         x, z = math.cos(a) * mid, math.sin(a) * mid
-        depth = (DECK_OUTER - WELL_RADIUS) / 2
 
-        cube(f'Deck_{i}', (x, -.12, z), (deck_half, .12, depth), DECKPLATE, rotation=(0, -a, 0), edge=.03)
-        cube(f'Ceiling_{i}', (x, LEVEL_HEIGHT - .16, z), (deck_half, .16, depth), CONCRETE,
+        cube(f'Deck_{i}', (x, -.14, z), (deck_half, .14, depth), DECKPLATE, rotation=(0, -a, 0), edge=.03)
+        # Balcony underside: ribbed, and visible from every level below.
+        cube(f'Soffit_{i}', (x, -.30, z), (deck_half, .10, depth * .92), CONCRETE,
+             rotation=(0, -a, 0), edge=.04)
+        for r in range(3):
+            cube(f'SoffitRib_{i}_{r}', (math.cos(a) * (WELL_RADIUS + 1.1 + r * 1.5), -.42,
+                                        math.sin(a) * (WELL_RADIUS + 1.1 + r * 1.5)),
+                 (deck_half * .92, .09, .12), DARK, rotation=(0, -a, 0), edge=.02)
+        cube(f'Ceiling_{i}', (x, LEVEL_HEIGHT - .18, z), (deck_half, .18, depth), CONCRETE,
              rotation=(0, -a, 0), edge=.04)
 
-        # Apartment frontage against the outer wall: door, number plate, window.
-        ox, oz = math.cos(a) * (DECK_OUTER - .3), math.sin(a) * (DECK_OUTER - .3)
-        cube(f'Front_{i}', (ox, LEVEL_HEIGHT / 2, oz), (front_half, LEVEL_HEIGHT / 2, .30), PAINT,
+        # --- Facade -----------------------------------------------------------
+        ox, oz = math.cos(a) * (DECK_OUTER - .35), math.sin(a) * (DECK_OUTER - .35)
+        cube(f'Front_{i}', (ox, LEVEL_HEIGHT / 2, oz), (front_half, LEVEL_HEIGHT / 2, .35), PAINT,
              rotation=(0, -a, 0), edge=.04)
-        dx, dz = math.cos(a) * (DECK_OUTER - .58), math.sin(a) * (DECK_OUTER - .58)
-        cube(f'Door_{i}', (dx, 1.05, dz), (.52, 1.05, .06), DOORPAINT, rotation=(0, -a, 0), edge=.03)
-        cube(f'DoorKick_{i}', (dx, .18, dz), (.52, .18, .08), BRUSHED, rotation=(0, -a, 0), edge=.02)
-        cyl(f'DoorHandle_{i}', (math.cos(a) * (DECK_OUTER - .70) + math.sin(a) * .34,
-                                1.05,
-                                math.sin(a) * (DECK_OUTER - .70) - math.cos(a) * .34),
-            .035, .22, BRUSHED, rotation=(0, -a, 0), verts=10)
-        # Two windows per bay, set either side of the door.
-        wx, wz = math.cos(a) * (DECK_OUTER - .56), math.sin(a) * (DECK_OUTER - .56)
-        for offset in (-front_half * .55, front_half * .55):
-            cube(f'Window_{i}_{offset:.2f}', (wx + math.sin(a) * offset, 1.95, wz - math.cos(a) * offset),
-                 (.46, .42, .04), GLASS, rotation=(0, -a, 0), edge=.01)
-            cube(f'WindowFrame_{i}_{offset:.2f}', (wx + math.sin(a) * offset, 1.95, wz - math.cos(a) * offset),
-                 (.53, .49, .03), DARK, rotation=(0, -a, 0), edge=.012)
 
-        # Gallery railing on the light-well edge.
+        def bay_point(offset, inset):
+            """A point `offset` along the bay's chord, `inset` in from the wall."""
+            return (math.cos(a) * (DECK_OUTER - inset) + math.sin(a) * offset,
+                    math.sin(a) * (DECK_OUTER - inset) - math.cos(a) * offset)
+
+        # A front door with a lit fanlight, off-centre in the bay.
+        dx, dz = bay_point(-front_half * .45, .62)
+        cube(f'Door_{i}', (dx, 1.03, dz), (.48, 1.03, .07), DOORPAINT, rotation=(0, -a, 0), edge=.03)
+        cube(f'DoorKick_{i}', (dx, .16, dz), (.48, .16, .09), BRUSHED, rotation=(0, -a, 0), edge=.02)
+        cube(f'DoorFrame_{i}', (dx, 1.10, dz), (.58, 1.14, .04), DARK, rotation=(0, -a, 0), edge=.02)
+        fx, fz = bay_point(-front_half * .45, .60)
+        cube(f'Fanlight_{i}', (fx, 2.34, fz), (.40, .17, .04), WARMWINDOW, rotation=(0, -a, 0), edge=.012)
+        hx, hz = bay_point(-front_half * .45 + .34, .70)
+        cyl(f'DoorHandle_{i}', (hx, 1.03, hz), .035, .20, BRUSHED, rotation=(0, -a, 0), verts=10)
+        # Unit number plate.
+        nx, nz = bay_point(-front_half * .45 + .56, .60)
+        cube(f'Plate_{i}', (nx, 1.86, nz), (.13, .09, .02), AMBER, rotation=(0, -a, 0), edge=.006)
+
+        # Two stacked dwellings' windows, warm from inside, with a shared sill.
+        for row, (wy, wh) in enumerate(((1.12, .40), (2.16, .34))):
+            for k in (-1, 1):
+                wx, wz = bay_point(front_half * (.30 + k * .26), .58)
+                cube(f'Win_{i}_{row}_{k}', (wx, wy, wz), (.34, wh, .04), WARMWINDOW,
+                     rotation=(0, -a, 0), edge=.008)
+                cube(f'WinFrame_{i}_{row}_{k}', (wx, wy, wz), (.40, wh + .07, .03), DARK,
+                     rotation=(0, -a, 0), edge=.01)
+                sx, sz = bay_point(front_half * (.30 + k * .26), .66)
+                cube(f'WinSill_{i}_{row}_{k}', (sx, wy - wh - .09, sz), (.44, .05, .10), BRUSHED,
+                     rotation=(0, -a, 0), edge=.012)
+
+        # Service greeble: meter box, vent grille, riser pipes, cable run.
+        mx, mz = bay_point(front_half * .74, .58)
+        cube(f'Meter_{i}', (mx, 1.62, mz), (.20, .26, .09), BRUSHED, rotation=(0, -a, 0), edge=.02)
+        cube(f'MeterFace_{i}', (mx, 1.62, mz - .0), (.14, .18, .10), DARK, rotation=(0, -a, 0), edge=.01)
+        vx, vz = bay_point(front_half * .05, .58)
+        cube(f'Vent_{i}', (vx, 2.72, vz), (.42, .22, .06), DARK, rotation=(0, -a, 0), edge=.015)
+        for b in range(5):
+            cube(f'VentBar_{i}_{b}', (vx, 2.60 + b * .06, vz), (.38, .015, .08), BRUSHED,
+                 rotation=(0, -a, 0), edge=.004)
+        for pi, po in enumerate((-.72, -.60)):
+            px, pz = bay_point(front_half * po, .74)
+            cyl(f'Riser_{i}_{pi}', (px, LEVEL_HEIGHT / 2, pz), .055, LEVEL_HEIGHT, BRUSHED,
+                rotation=UP, verts=10)
+        cx, cz = bay_point(0, .80)
+        cube(f'CableTray_{i}', (cx, LEVEL_HEIGHT - .46, cz), (front_half * .9, .05, .13), DARK,
+             rotation=(0, -a, 0), edge=.015)
+
+        # Strip light over the walkway, hooded.
+        lx, lz = bay_point(0, 1.25)
+        cube(f'Strip_{i}', (lx, LEVEL_HEIGHT - .40, lz), (.78, .05, .17), WHITELIGHT,
+             rotation=(0, -a, 0), edge=.015)
+        cube(f'StripHood_{i}', (lx, LEVEL_HEIGHT - .30, lz), (.88, .08, .24), DARK,
+             rotation=(0, -a, 0), edge=.02)
+
+        # --- Structure --------------------------------------------------------
+        # A heavy column on every bay boundary, floor to ceiling, with collars.
+        ca = a + step / 2
+        for cr, crad in ((DECK_OUTER - .95, .30), (WELL_RADIUS + .55, .26)):
+            px, pz = math.cos(ca) * cr, math.sin(ca) * cr
+            cube(f'Column_{i}_{cr:.0f}', (px, LEVEL_HEIGHT / 2, pz), (crad, LEVEL_HEIGHT / 2, crad),
+                 CONCRETE, rotation=(0, -ca, 0), edge=.05)
+            for cy in (.42, LEVEL_HEIGHT - .42):
+                cube(f'Collar_{i}_{cr:.0f}_{cy:.1f}', (px, cy, pz), (crad + .07, .10, crad + .07),
+                     BRUSHED, rotation=(0, -ca, 0), edge=.02)
+
+        # --- Gallery railing --------------------------------------------------
         rx, rz = math.cos(a) * WELL_RADIUS, math.sin(a) * WELL_RADIUS
-        for h in (.56, 1.06):
-            cube(f'Rail_{i}_{h}', (rx, h, rz), (rail_half, .045, .045), BRUSHED,
+        cube(f'Kerb_{i}', (rx, .12, rz), (rail_half, .12, .09), CONCRETE, rotation=(0, -a, 0), edge=.02)
+        for h in (.60, 1.08):
+            cube(f'Rail_{i}_{h}', (rx, h, rz), (rail_half, .05, .05), BRUSHED,
                  rotation=(0, -a, 0), edge=.012)
-        cube(f'Kerb_{i}', (rx, .10, rz), (rail_half, .10, .07), DARK, rotation=(0, -a, 0), edge=.015)
-        for side in (-1, 1):
-            px = math.cos(a) * WELL_RADIUS + math.sin(a) * side * rail_half
-            pz = math.sin(a) * WELL_RADIUS - math.cos(a) * side * rail_half
-            cube(f'Post_{i}_{side}', (px, .58, pz), (.05, .58, .05), BRUSHED, edge=.012)
-
-        # A strip light over every second doorway.
-        if i % 2 == 0:
-            cube(f'Strip_{i}', (math.cos(a) * (DECK_OUTER - 1.5), LEVEL_HEIGHT - .38, math.sin(a) * (DECK_OUTER - 1.5)),
-                 (.62, .05, .16), WHITELIGHT, rotation=(0, -a, 0), edge=.015)
-            cube(f'StripHood_{i}', (math.cos(a) * (DECK_OUTER - 1.5), LEVEL_HEIGHT - .27, math.sin(a) * (DECK_OUTER - 1.5)),
-                 (.70, .07, .22), DARK, rotation=(0, -a, 0), edge=.02)
-
-        # Conduit and cable tray running the ceiling line.
-        cyl(f'Conduit_{i}', (math.cos(a) * (DECK_OUTER - 2.4), LEVEL_HEIGHT - .5, math.sin(a) * (DECK_OUTER - 2.4)),
-            .06, arc_half(DECK_OUTER - 2.4) * 2.1, BRUSHED, rotation=(0, -a + math.pi / 2, 0), verts=10)
+        for k in range(5):
+            offset = (k / 4 - .5) * 2 * rail_half
+            px = math.cos(a) * WELL_RADIUS + math.sin(a) * offset
+            pz = math.sin(a) * WELL_RADIUS - math.cos(a) * offset
+            cube(f'Baluster_{i}_{k}', (px, .60, pz), (.035, .48, .035), BRUSHED, edge=.008)
 
     join_all('HabLevel')
     export('hab_level_v4.glb')
 
 
 def build_stair():
-    """One spiral flight, rising a single level around the light well."""
+    """One flight of the great stair, rising a single level.
+
+    In the reference this is the silo's centrepiece: a heavy concrete helix
+    wrapping a substantial column, wide enough for a crowd, with a solid
+    balustrade rather than thin railings.
+    """
     clear_scene()
-    turn = math.radians(200) / STAIR_STEPS
+    turn = math.radians(190) / STAIR_STEPS
     rise = LEVEL_HEIGHT / STAIR_STEPS
+    tread_half = (STAIR_RADIUS - STAIR_COLUMN) / 2 + .75
+
     for i in range(STAIR_STEPS):
         a = i * turn
-        x, z = math.cos(a) * STAIR_RADIUS, math.sin(a) * STAIR_RADIUS
-        cube(f'Tread_{i}', (x, i * rise, z), (.90, .04, .30), DECKPLATE, rotation=(0, -a, 0), edge=.012)
-        cube(f'Riser_{i}', (x, i * rise - rise / 2, z), (.90, rise / 2, .03), DARK,
-             rotation=(0, -a, 0), edge=.006)
-        ox, oz = math.cos(a) * (STAIR_RADIUS + .88), math.sin(a) * (STAIR_RADIUS + .88)
-        cube(f'RailPost_{i}', (ox, i * rise + .52, oz), (.035, .52, .035), BRUSHED, edge=.01)
-        cube(f'RailTop_{i}', (ox, i * rise + 1.02, oz), (.05, .045, .33), BRUSHED,
-             rotation=(0, -a, 0), edge=.012)
-    # A slender spine, not a drum: the light well has to stay open all the way
-    # down or there is nothing to look down and nothing to fall through.
-    cyl('StairSpine', (0, LEVEL_HEIGHT / 2, 0), .42, LEVEL_HEIGHT, STEEL,
-        rotation=UP, verts=16, edge=.02)
-    for i in range(0, STAIR_STEPS, 6):
-        a = i * turn
-        cube(f'StairBrace_{i}', (math.cos(a) * (STAIR_RADIUS / 2), i * rise - .06, math.sin(a) * (STAIR_RADIUS / 2)),
-             (.06, .05, STAIR_RADIUS / 2), STEEL, rotation=(0, -a, 0), edge=.01)
+        r = STAIR_COLUMN + tread_half
+        x, z = math.cos(a) * r, math.sin(a) * r
+        cube(f'Tread_{i}', (x, i * rise, z), (tread_half, .09, .46), CONCRETE,
+             rotation=(0, -a, 0), edge=.02)
+        cube(f'Riser_{i}', (x, i * rise - rise / 2, z), (tread_half, rise / 2, .05), CONCRETE,
+             rotation=(0, -a, 0), edge=.01)
+        cube(f'Nose_{i}', (x, i * rise + .02, z - .0), (tread_half, .03, .48), DARK,
+             rotation=(0, -a, 0), edge=.008)
+
+        # Solid outer balustrade, capped with a steel handrail.
+        ox, oz = math.cos(a) * (STAIR_COLUMN + tread_half * 2 + .12), math.sin(a) * (STAIR_COLUMN + tread_half * 2 + .12)
+        cube(f'Balustrade_{i}', (ox, i * rise + .48, oz), (.16, .48, .50), CONCRETE,
+             rotation=(0, -a, 0), edge=.03)
+        cube(f'Handrail_{i}', (ox, i * rise + 1.00, oz), (.10, .05, .52), BRUSHED,
+             rotation=(0, -a, 0), edge=.015)
+        if i % 5 == 0:
+            cube(f'StairLamp_{i}', (math.cos(a) * (STAIR_COLUMN + .18), i * rise + 1.55, math.sin(a) * (STAIR_COLUMN + .18)),
+                 (.10, .16, .06), WHITELIGHT, rotation=(0, -a, 0), edge=.012)
+            cube(f'StairLampHood_{i}', (math.cos(a) * (STAIR_COLUMN + .10), i * rise + 1.55, math.sin(a) * (STAIR_COLUMN + .10)),
+                 (.06, .22, .12), DARK, rotation=(0, -a, 0), edge=.015)
+
+    # The core the helix wraps, banded like the reference's painted columns.
+    cyl('StairColumn', (0, LEVEL_HEIGHT / 2, 0), STAIR_COLUMN - .15, LEVEL_HEIGHT, CONCRETE,
+        rotation=UP, verts=32, edge=.03)
+    for band in (.5, LEVEL_HEIGHT - .5):
+        cyl(f'ColumnBand_{band:.1f}', (0, band, 0), STAIR_COLUMN - .08, .22, BRUSHED,
+            rotation=UP, verts=32, edge=.02)
     join_all('HabStair')
     export('hab_stair_v4.glb')
+
+
+def build_landing():
+    """A bridge from the great stair across to a gallery."""
+    clear_scene()
+    span = (WELL_RADIUS - (STAIR_COLUMN + 1.9)) / 2 + .4
+    cube('Landing_Deck', (0, -.09, 0), (1.05, .09, span), DECKPLATE, edge=.02)
+    cube('Landing_Soffit', (0, -.24, 0), (.95, .09, span * .9), CONCRETE, edge=.03)
+    for side in (-1, 1):
+        cube(f'Landing_Kerb_{side}', (side * 1.02, .10, 0), (.06, .10, span), DARK, edge=.015)
+        for h in (.58, 1.06):
+            cube(f'Landing_Rail_{side}_{h}', (side * 1.02, h, 0), (.045, .045, span), BRUSHED, edge=.012)
+        for k in range(4):
+            cube(f'Landing_Post_{side}_{k}', (side * 1.02, .58, (k / 3 - .5) * 2 * span * .9),
+                 (.035, .58, .035), BRUSHED, edge=.01)
+    join_all('HabLanding')
+    export('hab_landing_v4.glb')
 
 
 def build_hydroponics():
@@ -463,6 +554,24 @@ def build_resident():
     export('resident_v4.glb')
 
 
+def build_resident_still():
+    """A joined standing figure, for the crowds that line the galleries."""
+    clear_scene()
+    cube('Still_Hips', (0, .90, 0), (.17, .12, .12), CLOTH, edge=.04)
+    cube('Still_Torso', (0, 1.22, 0), (.20, .26, .13), CLOTH, edge=.05)
+    cube('Still_Chest', (0, 1.38, .02), (.185, .13, .12), CLOTH, edge=.05)
+    sphere('Still_Head', (0, 1.66, .01), .105, SKIN, scale=(.92, 1.04, .95))
+    sphere('Still_Hair', (0, 1.71, -.01), .105, HAIR, scale=(.95, .78, .98))
+    for side in (-1, 1):
+        cube(f'Still_Arm_{side}', (side * .245, 1.18, .01), (.055, .28, .06), CLOTH, edge=.02)
+        cube(f'Still_Forearm_{side}', (side * .25, .78, .06), (.048, .20, .055), SKIN, edge=.018)
+        cube(f'Still_Leg_{side}', (side * .10, .61, 0), (.062, .25, .07), CLOTH, edge=.02)
+        cube(f'Still_Shin_{side}', (side * .10, .18, 0), (.052, .20, .06), CLOTH, edge=.018)
+        cube(f'Still_Boot_{side}', (side * .10, .05, .03), (.06, .05, .10), DARK, edge=.018)
+    join_all('HabResidentStill')
+    export('resident_still_v4.glb')
+
+
 def build_access_hatch():
     """The hatch in the shelter floor, onto the silo's top landing."""
     clear_scene()
@@ -512,11 +621,13 @@ def build_supply_cache():
 build_shell()
 build_level()
 build_stair()
+build_landing()
 build_hydroponics()
 build_commons()
 build_secure_door()
 build_directory()
 build_resident()
+build_resident_still()
 build_access_hatch()
 build_supply_cache()
 print('HABITAT DONE')

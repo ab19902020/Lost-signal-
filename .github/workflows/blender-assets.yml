@@ -60,7 +60,8 @@ jobs:
             exterior_ground_v3.glb exterior_entrance_v3.glb perimeter_fence_v3.glb perimeter_gate.glb floodlight.glb dead_tree.glb concrete_barrier_v3.glb rubble_cluster_v3.glb \
             deer_v3.glb rabbit_v3.glb infected_v3.glb \
             hab_shell_v4.glb hab_level_v4.glb hab_stair_v4.glb hab_hydroponics_v4.glb \
-            hab_commons_v4.glb hab_secure_door_v4.glb hab_directory_v4.glb resident_v4.glb \
+            hab_commons_v4.glb hab_secure_door_v4.glb hab_directory_v4.glb hab_landing_v4.glb \
+            resident_v4.glb resident_still_v4.glb \
             access_hatch_v3.glb silo_cache_v3.glb; do
             test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
           done
