@@ -82,16 +82,41 @@ results.silo = await page.evaluate(async () => {
   settle(20);
   const arrival = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
 
+  // Walk down the stair. This is the check that the great stair is a stair:
+  // step onto the head of the flight and hold forward along the helix, and the
+  // player should end up a level or more below, still on their feet.
+  const head = ls.game.siloWorld;
+  ls.body.teleport(0, arrival.y, -(head.stairRadius + head.stairColumn) / 2);
+  settle(10);
+  const stairTop = +ls.body.position.y.toFixed(2);
+  let stairSteps = 0;
+  for (let i = 0; i < 260; i++) {
+    // Follow the helix: face along the tangent at wherever the player now is.
+    const p = ls.body.position;
+    ls.look(Math.atan2(-p.z, p.x), 0);   // clockwise: the direction the helix descends
+    ls.walkFrames(4);
+    if (ls.body.grounded) stairSteps++;
+  }
+  settle(20);   // let the last step land before reading
+  const stairFoot = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded,
+                      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+                      groundedFrames: stairSteps };
+
   // Step into the light well: the player should fall the full height of the
   // shaft and land at the bottom. The drop point is the open ring between the
-  // great stair and the galleries — the stair's own column is solid.
-  ls.body.teleport(8.4, ls.body.position.y, 0);
+  // great stair and the galleries, a quarter turn off the landings, which all
+  // stack on the same bearing.
+  ls.world('silo');
+  settle(20);
+  ls.body.teleport(0, ls.body.position.y, 9.0);
   settle(900);
   const overCentre = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
 
   return {
     present: true,
     arrival,
+    stairTop,
+    stairFoot,
     overCentre,
     colliders: ls.game.colliders.silo.boxes.length,
     interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,

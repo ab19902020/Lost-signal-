@@ -26,9 +26,9 @@ DECK_OUTER = 19.6        # 6.6 m of clear walkway, all the way round
 LEVEL_HEIGHT = 4.0
 LEVELS = 7               # residential levels
 SEGMENTS = 18            # homes per level: 126 in all
-STAIR_RADIUS = 5.2       # the great stair spirals down the middle of the shaft
-STAIR_COLUMN = 2.9
-STAIR_STEPS = 26         # per level
+STAIR_RADIUS = 5.4       # the great stair spirals down the middle of the shaft
+STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
+STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .62          # half-width of a doorway opening
 
@@ -312,6 +312,8 @@ GREENLIGHT = mat('HabGreenLight', (.10, .5, .24), 0, .3, (.20, 1.0, .48), 4.0)
 REDLIGHT = mat('HabRedLight', (.5, .07, .05), 0, .3, (1.0, .14, .09), 4.0)
 GROWLIGHT = mat('HabGrowLight', (.42, .18, .46), 0, .3, (.95, .35, 1.0), 6.0)
 WHITELIGHT = mat('HabWhiteLight', (.5, .52, .5), 0, .25, (1.0, .96, .88), 2.4)
+# Domestic light: warmer and softer than the strip lights on the walkways.
+WARMLAMP = mat('HabWarmLamp', (.5, .42, .30), 0, .30, (1.0, .82, .55), 3.2)
 
 
 def build_shell():
@@ -380,7 +382,10 @@ def build_level():
         # somewhere you walk into rather than a painted rectangle.
         ox, oz = math.cos(a) * (DECK_OUTER - .35), math.sin(a) * (DECK_OUTER - .35)
         panel_half = (front_half - DOOR_HALF) / 2
-        door_centre = -front_half * .45
+        # Centred in the bay. It used to sit off to one side, which put it a
+        # metre and a half away from the opening in the home's own front wall —
+        # an open door that led into a wall.
+        door_centre = 0
         for k in (-1, 1):
             offset = door_centre + k * (DOOR_HALF + panel_half)
             px = math.cos(a) * (DECK_OUTER - .35) + math.sin(a) * offset
@@ -475,67 +480,97 @@ def build_level():
 
 
 def build_stair():
-    """One flight of the great stair, rising a single level.
+    """One flight of the great stair, a full turn for a single level.
 
-    In the reference this is the silo's centrepiece: a heavy concrete helix
-    wrapping a substantial column, wide enough for a crowd, with a solid
-    balustrade rather than thin railings.
+    A monumental spiral: four metres of tread from a slim service core out to a
+    solid balustrade, wide enough for a crowd going both ways. A whole turn per
+    level means every flight starts and finishes on the same bearing, so the
+    landings stack one above the next and the stair is the same walk on every
+    floor rather than a helix you have to hunt around.
     """
     clear_scene()
-    turn = math.radians(190) / STAIR_STEPS
+    turn = math.tau / STAIR_STEPS
     rise = LEVEL_HEIGHT / STAIR_STEPS
-    tread_half = (STAIR_RADIUS - STAIR_COLUMN) / 2 + .75
+    inner, outer = STAIR_COLUMN, STAIR_RADIUS
+    band = (outer - inner) / 2              # radial half-depth of one tread
+    mid = inner + band
+    going = turn * outer / 2 * 1.06         # tangential half-width, sized at the
+                                            # outer edge so the wedges close up
 
     for i in range(STAIR_STEPS):
         a = i * turn
-        r = STAIR_COLUMN + tread_half
-        x, z = math.cos(a) * r, math.sin(a) * r
-        cube(f'Tread_{i}', (x, i * rise, z), (tread_half, .09, .46), CONCRETE,
+        x, z = math.cos(a) * mid, math.sin(a) * mid
+        cube(f'Tread_{i}', (x, i * rise, z), (band, .085, going), CONCRETE,
              rotation=(0, -a, 0), edge=.02)
-        cube(f'Riser_{i}', (x, i * rise - rise / 2, z), (tread_half, rise / 2, .05), CONCRETE,
+        cube(f'Riser_{i}', (x, i * rise - rise / 2, z), (band, rise / 2, .05), CONCRETE,
              rotation=(0, -a, 0), edge=.01)
-        cube(f'Nose_{i}', (x, i * rise + .02, z - .0), (tread_half, .03, .48), DARK,
+        cube(f'Nose_{i}', (x, i * rise + .02, z), (band, .03, going * 1.02), DARK,
              rotation=(0, -a, 0), edge=.008)
 
         # Solid outer balustrade, capped with a steel handrail.
-        ox, oz = math.cos(a) * (STAIR_COLUMN + tread_half * 2 + .12), math.sin(a) * (STAIR_COLUMN + tread_half * 2 + .12)
-        cube(f'Balustrade_{i}', (ox, i * rise + .48, oz), (.16, .48, .50), CONCRETE,
+        ox, oz = math.cos(a) * (outer + .16), math.sin(a) * (outer + .16)
+        cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, going * 1.04), CONCRETE,
              rotation=(0, -a, 0), edge=.03)
-        cube(f'Handrail_{i}', (ox, i * rise + 1.00, oz), (.10, .05, .52), BRUSHED,
+        cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, going * 1.06), BRUSHED,
              rotation=(0, -a, 0), edge=.015)
-        if i % 5 == 0:
-            cube(f'StairLamp_{i}', (math.cos(a) * (STAIR_COLUMN + .18), i * rise + 1.55, math.sin(a) * (STAIR_COLUMN + .18)),
-                 (.10, .16, .06), WHITELIGHT, rotation=(0, -a, 0), edge=.012)
-            cube(f'StairLampHood_{i}', (math.cos(a) * (STAIR_COLUMN + .10), i * rise + 1.55, math.sin(a) * (STAIR_COLUMN + .10)),
-                 (.06, .22, .12), DARK, rotation=(0, -a, 0), edge=.015)
+        # ...and a rail on the core side, because the inside of a four-metre
+        # tread is as long a drop as the outside.
+        ix, iz = math.cos(a) * (inner + .12), math.sin(a) * (inner + .12)
+        cube(f'InnerRail_{i}', (ix, i * rise + .98, iz), (.07, .045, going * 1.06), BRUSHED,
+             rotation=(0, -a, 0), edge=.012)
+        if i % 4 == 0:
+            cube(f'InnerPost_{i}', (ix, i * rise + .50, iz), (.045, .50, .045), BRUSHED, edge=.01)
+        if i % 9 == 0:
+            lx, lz = math.cos(a) * (inner + .02), math.sin(a) * (inner + .02)
+            cube(f'StairLamp_{i}', (lx, i * rise + 1.62, lz), (.07, .17, .10), WHITELIGHT,
+                 rotation=(0, -a, 0), edge=.012)
+            cube(f'StairLampHood_{i}', (lx, i * rise + 1.72, lz), (.10, .07, .16), DARK,
+                 rotation=(0, -a, 0), edge=.015)
 
-    # The core the helix wraps, banded like the reference's painted columns.
-    cyl('StairColumn', (0, LEVEL_HEIGHT / 2, 0), STAIR_COLUMN - .15, LEVEL_HEIGHT, CONCRETE,
-        rotation=UP, verts=32, edge=.03)
-    for band in (.5, LEVEL_HEIGHT - .5):
-        cyl(f'ColumnBand_{band:.1f}', (0, band, 0), STAIR_COLUMN - .08, .22, BRUSHED,
-            rotation=UP, verts=32, edge=.02)
+    # The service core the helix wraps: a slim shaft carrying the silo's risers,
+    # the way the reference does it, rather than a drum that fills the well.
+    cyl('StairCore', (0, LEVEL_HEIGHT / 2, 0), inner - .18, LEVEL_HEIGHT, CONCRETE,
+        rotation=UP, verts=24, edge=.03)
+    for i in range(7):
+        a = i * math.tau / 7 + .35
+        cyl(f'CorePipe_{i}', (math.cos(a) * (inner - .11), LEVEL_HEIGHT / 2, math.sin(a) * (inner - .11)),
+            .048, LEVEL_HEIGHT, BRUSHED, rotation=UP, verts=8)
+        for band_y in (.7, LEVEL_HEIGHT - .7):
+            cube(f'PipeClamp_{i}_{band_y:.1f}',
+                 (math.cos(a) * (inner - .11), band_y, math.sin(a) * (inner - .11)),
+                 (.07, .04, .07), DARK, rotation=(0, -a, 0), edge=.008)
+    for band_y in (.45, LEVEL_HEIGHT - .45):
+        cyl(f'CoreBand_{band_y:.1f}', (0, band_y, 0), inner - .12, .18, BRUSHED,
+            rotation=UP, verts=24, edge=.02)
     # A lit band at head height on every flight. Emissive costs nothing per
-    # frame and stops the column reading as a hole punched in the silo.
-    cyl('ColumnGlow', (0, LEVEL_HEIGHT * .62, 0), STAIR_COLUMN - .11, .09, WHITELIGHT,
-        rotation=UP, verts=32, edge=.01)
+    # frame and stops the core reading as a hole punched in the silo.
+    cyl('CoreGlow', (0, LEVEL_HEIGHT * .62, 0), inner - .15, .08, WHITELIGHT,
+        rotation=UP, verts=24, edge=.01)
     join_all('HabStair')
     export('hab_stair_v4.glb')
 
 
 def build_landing():
-    """A bridge from the great stair across to a gallery."""
+    """The platform where the stair meets a floor.
+
+    Not a catwalk: it is as wide as the stair is, so stepping off the bottom
+    tread puts you on a proper landing that carries you out to the walkway.
+    """
     clear_scene()
-    span = (WELL_RADIUS - (STAIR_COLUMN + 1.9)) / 2 + .4
-    cube('Landing_Deck', (0, -.09, 0), (1.05, .09, span), DECKPLATE, edge=.02)
-    cube('Landing_Soffit', (0, -.24, 0), (.95, .09, span * .9), CONCRETE, edge=.03)
+    span = (WELL_RADIUS + .3 - STAIR_RADIUS) / 2
+    half = 1.8
+    cube('Landing_Deck', (0, -.09, 0), (half, .09, span), DECKPLATE, edge=.02)
+    cube('Landing_Soffit', (0, -.26, 0), (half * .94, .10, span * .94), CONCRETE, edge=.03)
+    for r in range(3):
+        cube(f'Landing_Rib_{r}', (0, -.40, (r / 2 - .5) * span * 1.2), (half * .9, .08, .11),
+             DARK, edge=.02)
     for side in (-1, 1):
-        cube(f'Landing_Kerb_{side}', (side * 1.02, .10, 0), (.06, .10, span), DARK, edge=.015)
+        cube(f'Landing_Kerb_{side}', (side * half, .10, 0), (.07, .10, span), DARK, edge=.015)
         for h in (.58, 1.06):
-            cube(f'Landing_Rail_{side}_{h}', (side * 1.02, h, 0), (.045, .045, span), BRUSHED, edge=.012)
-        for k in range(4):
-            cube(f'Landing_Post_{side}_{k}', (side * 1.02, .58, (k / 3 - .5) * 2 * span * .9),
-                 (.035, .58, .035), BRUSHED, edge=.01)
+            cube(f'Landing_Rail_{side}_{h}', (side * half, h, 0), (.05, .05, span), BRUSHED, edge=.012)
+        for k in range(6):
+            cube(f'Landing_Post_{side}_{k}', (side * half, .58, (k / 5 - .5) * 2 * span * .92),
+                 (.04, .58, .04), BRUSHED, edge=.01)
     join_all('HabLanding')
     export('hab_landing_v4.glb')
 
@@ -612,8 +647,14 @@ def build_apartment():
     for i, ox in enumerate((-.6, -.1, .45)):
         cyl(f'Apt_Bowl_{i}', (.55 + ox, .80, front - .9 + (i % 2) * .22), .10, .06, BRUSHED,
             rotation=UP, verts=14)
-    cube('Apt_Lamp', (.55, height - .28, front - .9), (.34, .06, .34), WHITELIGHT, edge=.02)
-    cube('Apt_LampShade', (.55, height - .18, front - .9), (.40, .10, .40), DARK, edge=.03)
+    # Two lamps: one over the table, one over the sleeping end. A ten-metre
+    # room lit from one point is a lit corner and eight metres of dark.
+    for name, lz in (('Table', front - .9), ('Back', half_d - 2.6)):
+        cube(f'Apt_Lamp{name}', (.55, height - .28, lz), (.34, .06, .34), WARMLAMP, edge=.02)
+        cube(f'Apt_LampShade{name}', (.55, height - .18, lz), (.40, .10, .40), DARK, edge=.03)
+    # A reading light in the alcove, and the strip over the kitchen counter.
+    cube('Apt_AlcoveLight', (half_w - .28, 2.30, half_d - 2.0), (.05, .10, .34), WARMLAMP, edge=.012)
+    cube('Apt_CounterLight', (-half_w + .40, 1.98, front - .6), (.26, .04, 1.7), WARMLAMP, edge=.012)
 
     # --- Sleeping alcove, behind a curtain ----------------------------------
     # The back of the home is pinned to the rear wall, so a deeper bay gives
@@ -663,13 +704,20 @@ def build_apartment():
 
 
 def build_door():
-    """A single front door leaf, placed per bay so it can stand open."""
+    """A single front door leaf, placed per bay so it can stand open.
+
+    Built with its origin on the hinge rather than in the middle of the leaf,
+    so an open door swings on its jamb instead of pivoting about its centre.
+    """
     clear_scene()
-    cube('Door_Leaf', (0, 1.05, 0), (DOOR_HALF - .04, 1.05, .05), DOORPAINT, edge=.02)
-    cube('Door_Kick', (0, .18, -.01), (DOOR_HALF - .04, .18, .06), BRUSHED, edge=.015)
-    cube('Door_Rail', (0, 1.55, -.02), (DOOR_HALF - .10, .05, .05), BRUSHED, edge=.01)
-    cyl('Door_Handle', (DOOR_HALF - .22, 1.05, -.10), .032, .20, BRUSHED, rotation=UP, verts=10)
-    cube('Door_Plate', (DOOR_HALF - .22, 1.30, -.06), (.07, .11, .02), BRUSHED, edge=.006)
+    leaf = DOOR_HALF - .04
+    cube('Door_Leaf', (leaf, 1.05, 0), (leaf, 1.05, .05), DOORPAINT, edge=.02)
+    cube('Door_Kick', (leaf, .18, -.01), (leaf, .18, .06), BRUSHED, edge=.015)
+    cube('Door_Rail', (leaf, 1.55, -.02), (leaf - .06, .05, .05), BRUSHED, edge=.01)
+    cyl('Door_Handle', (leaf * 1.72, 1.05, -.10), .032, .20, BRUSHED, rotation=UP, verts=10)
+    cube('Door_Plate', (leaf * 1.72, 1.30, -.06), (.07, .11, .02), BRUSHED, edge=.006)
+    cube('Door_Hinge_lo', (.03, .55, .02), (.04, .09, .07), DARK, edge=.01)
+    cube('Door_Hinge_hi', (.03, 1.65, .02), (.04, .09, .07), DARK, edge=.01)
     join_all('HabDoor')
     export('hab_door_v4.glb')
 

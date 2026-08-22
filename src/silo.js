@@ -25,10 +25,10 @@ export const SILO = {
   levelHeight: 4.0,
   levels: 7,
   segments: 18,         // homes per level: 126 in all
-  stairRadius: 5.2,
-  stairColumn: 2.9,
-  stairSteps: 26,
-  stairTurn: THREE.MathUtils.degToRad(190),
+  stairRadius: 5.4,
+  stairColumn: 1.2,     // a slim service core, not a drum filling the well
+  stairSteps: 36,
+  stairTurn: Math.PI * 2,   // a full turn per level, so the landings stack
   apartmentBack: 29.6,  // rear wall of every home: ten metres deep
   doorHalf: 0.62,
 };
@@ -53,8 +53,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
     stairRadius, stairColumn, stairSteps, stairTurn, apartmentBack, doorHalf,
   } = SILO;
-  const treadHalf = (stairRadius - stairColumn) / 2 + 0.75;
-  const stairMid = stairColumn + treadHalf;
+  // A tread is deep in the radial direction and narrow along the helix. The
+  // collision used to pass those the other way round, which made every tread a
+  // five-metre slab lying across the shaft: the stair looked like a stair and
+  // could not be climbed like one.
+  const treadDepth = (stairRadius - stairColumn) / 2;      // radial half-extent
+  const stairMid = stairColumn + treadDepth;
+  const goingHalf = (stairTurn / stairSteps) * stairRadius / 2 * 1.06;
 
   const shaftHeight = levels * levelHeight;
   // Each ring piece is a flat slab at its own radius, so each needs its own
@@ -103,9 +108,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let i = 0; i < stairSteps; i++) {
       const angle = spin + (i * stairTurn) / stairSteps;
       const top = base + i * rise + 0.09;
-      colliders.addBox(ringBox(angle, stairMid, treadHalf, 0.48, top - 0.5, top), { climbable: true });
+      colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
+        { climbable: true });
+      // The balustrade: without it you walk off the outer edge of the stair.
+      colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
+        top, top + 1.05), {});
     }
-    // The column the helix wraps is solid; the shaft around it stays open.
+    // The core the helix wraps is solid; the shaft around it stays open.
     colliders.addBox(box(-(stairColumn - 0.15), base, -(stairColumn - 0.15),
       stairColumn - 0.15, base + levelHeight, stairColumn - 0.15), {});
   }
@@ -127,7 +136,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   };
 
   const homes = [];
-  for (let level = 0; level <= levels; level++) {
+  // Homes on the residential levels only; the top ring is the secure unit.
+  for (let level = 0; level < levels; level++) {
     const y = levelY(level);
     for (let bay = 0; bay < segments; bay++) {
       const angle = (bay * Math.PI * 2) / segments;
@@ -143,23 +153,39 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       // across the gallery. That spill is what makes the wall read as
       // dwellings rather than as a painted facade.
       if (open) {
-        const lamp = new THREE.PointLight(0xffcf94, 30, 10, 2);
-        lamp.position.set(Math.cos(angle) * (deckOuter + 2.2), y + 2.3,
-          Math.sin(angle) * (deckOuter + 2.2));
-        lamp.visible = false;
-        scene.add(lamp);
-        allLights.push({ light: lamp, base: 30, phase: level * 1.7 + bay, failing: false });
+        // Two: the front room and the sleeping end. One lamp at the door left
+        // eight metres of the home in the dark.
+        for (const [depth, base] of [[2.6, 34], [7.6, 26]]) {
+          const lamp = new THREE.PointLight(0xffc078, base, 11, 2);
+          lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 2.5,
+            Math.sin(angle) * (deckOuter + depth));
+          lamp.visible = false;
+          scene.add(lamp);
+          allLights.push({ light: lamp, base, phase: level * 1.7 + bay + depth, failing: false });
+        }
       }
 
-      // The door leaf: flat in the opening when shut, swung back against the
-      // wall when the home is open.
-      const doorOffset = -arcHalf(deckOuter - 0.35) * 0.45;
-      const dx = Math.cos(angle) * (deckOuter - 0.28) + Math.sin(angle) * doorOffset;
-      const dz = Math.sin(angle) * (deckOuter - 0.28) - Math.cos(angle) * doorOffset;
+      // The door leaf: flat in the opening when shut, swung back into the home
+      // when it stands open. Its origin is the hinge, so it is placed at the
+      // jamb rather than at the middle of the opening.
+      const doorOffset = 0;   // centred in the bay, lining up with the home behind it
+      const hinge = doorOffset - doorHalf + 0.04;
+      const dx = Math.cos(angle) * (deckOuter - 0.28) + Math.sin(angle) * hinge;
+      const dz = Math.sin(angle) * (deckOuter - 0.28) - Math.cos(angle) * hinge;
       if (assets.habDoor) {
         place(assets.habDoor, scene, [dx, y, dz],
-          [0, -angle + Math.PI / 2 + (open ? 1.85 : 0), 0], 1, { world: 'silo', collide: false });
+          [0, -angle + Math.PI / 2 - (open ? 1.85 : 0), 0], 1, { world: 'silo', collide: false });
       }
+
+      // The floor of the home itself. Without it the deck collision stopped at
+      // the facade and walking through an open door dropped you down the silo.
+      const homeMid = (deckOuter + apartmentBack) / 2;
+      const homeHalf = (apartmentBack - deckOuter) / 2;
+      colliders.addBox(ringBox(angle, homeMid, arcHalf(apartmentBack), homeHalf,
+        y - 0.3, y + 0.02), { climbable: true });
+      // ...and its ceiling, so an open door is not a way onto the roof.
+      colliders.addBox(ringBox(angle, homeMid, arcHalf(apartmentBack), homeHalf,
+        y + levelHeight - 0.4, y + levelHeight), {});
 
       // Home shell: side walls between neighbours, and the rear wall.
       const boundary = ((bay + 0.5) * Math.PI * 2) / segments;
@@ -185,17 +211,19 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   // A bridge from the stair to the gallery on every level: without one the
   // helix ends in mid-air and the galleries are unreachable.
-  const landingSpan = (wellRadius - (stairColumn + 1.9)) / 2 + 0.4;
-  const landingMid = stairColumn + 1.9 + landingSpan;
+  const landingSpan = (wellRadius + 0.3 - stairRadius) / 2;
+  const landingMid = stairRadius + landingSpan;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level);
-    const angle = level * stairTurn + stairTurn * 0.98;
+    // At the foot of that level's flight: the bottom tread stands at floor
+    // height, so stepping off it puts you straight onto the landing.
+    const angle = level * stairTurn;
     if (assets.habLanding) {
       place(assets.habLanding, scene,
         [Math.cos(angle) * landingMid, y, Math.sin(angle) * landingMid],
         [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
     }
-    colliders.addBox(ringBox(angle, landingMid, 1.1, landingSpan, y - 0.3, y + 0.02),
+    colliders.addBox(ringBox(angle, landingMid, 1.8, landingSpan, y - 0.3, y + 0.02),
       { climbable: true });
   }
 
@@ -365,7 +393,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // on the axis because a light inside the stair column lights everything
   // except the column, which is how the silo's spine came to be a black
   // cylinder. They are never culled, so the visible light count stays constant.
-  const fillRadius = stairMid + treadHalf + 1.6;
+  const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
     const fill = new THREE.PointLight(0x8fb0cc, 210, 46, 1.5);
@@ -438,5 +466,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     geometry.attributes.position.needsUpdate = true;
   }
 
-  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes };
+  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
+           stairRadius, stairColumn, stairTurn, levelHeight, levels };
 }

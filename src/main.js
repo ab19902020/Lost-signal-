@@ -193,6 +193,13 @@ async function prepare() {
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
+        // Walk under the same input path the player uses, from inside an
+        // evaluated block where synthetic key events are not available.
+        walkFrames: (count = 1, code = 'KeyW', dt = 1 / 60) => {
+          keys[code] = true;
+          for (let i = 0; i < count; i++) simulate(dt);
+          keys[code] = false;
+        },
         arm: () => { armed = true; game.setArmed(true); ammo = 5; reserve = 20; updateAmmo(); },
         aimAt: (target) => {
           const point = target.isVector3 ? target.clone() : new THREE.Vector3(target.x, target.y, target.z);

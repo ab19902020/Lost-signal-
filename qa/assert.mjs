@@ -48,6 +48,13 @@ if (physics.silo.present) {
   check(physics.silo.arrival.y - physics.silo.overCentre.y > 20,
     `stepping into the light well fell only ${(physics.silo.arrival.y - physics.silo.overCentre.y).toFixed(1)} m`);
   check(physics.silo.overCentre.grounded, 'the player never landed after falling down the well');
+  // The great stair has to be a stair. Its treads were once authored radially
+  // and collided tangentially, which looked right and could not be walked.
+  const descent = physics.silo.stairTop - physics.silo.stairFoot.y;
+  check(descent > 4, `walking the stair descended ${descent.toFixed(1)} m, less than one level`);
+  check(physics.silo.stairFoot.grounded, 'the player did not stay on their feet down the stair');
+  check(physics.silo.stairFoot.radius > 1.2 && physics.silo.stairFoot.radius < 6.0,
+    `walking the stair ended at radius ${physics.silo.stairFoot.radius}, off the flight`);
   check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
