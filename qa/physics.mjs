@@ -24,6 +24,8 @@ await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
 await page.waitForFunction(() => { const b = document.getElementById('start'); return b && !b.disabled; }, null, { timeout: 60000, polling: 100 });
 await page.evaluate(() => document.getElementById('start').click());
 await page.waitForTimeout(800);
+await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+  { timeout: 30000, polling: 100 });
 
 const setup = (x, z, yaw) => page.evaluate(([x, z, yaw]) => {
   globalThis.__ls.moveTo(x, z);

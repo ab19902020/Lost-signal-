@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import math
 import os
 from mathutils import Matrix, Vector
@@ -8,7 +9,7 @@ OUT = os.path.join(ROOT, 'public', 'assets', 'blender')
 TEX = os.path.join(ROOT, 'public', 'assets', 'textures')
 os.makedirs(OUT, exist_ok=True)
 
-# Silo 47 is a habitation silo: twelve residential levels and a secure unit at
+# Silo 47 is a habitation silo: seven residential levels and a secure unit at
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
@@ -16,16 +17,19 @@ ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
 # --- Silo dimensions, shared with the runtime -------------------------------
-SHELL_RADIUS = 26.6      # the shell stands back to leave room for dwellings
-WELL_RADIUS = 11.6       # the open shaft: most of the silo's width
-DECK_OUTER = 16.4        # gallery walkways are narrow rings around it
-LEVEL_HEIGHT = 3.5
-LEVELS = 14              # residential levels
-SEGMENTS = 18            # apartment bays per level
-STAIR_RADIUS = 4.6       # heavy spiral stair down the middle of the shaft
-STAIR_COLUMN = 2.7
-STAIR_STEPS = 22         # per level
-APARTMENT_BACK = 25.4    # rear wall of every home
+# Seven residential levels and a secure unit above them, around an open shaft.
+# Every level is an unbroken circular walkway — nothing stands on it — and the
+# outer wall of that walkway is nothing but front doors.
+SHELL_RADIUS = 30.8      # the concrete shell, behind the back wall of the homes
+WELL_RADIUS = 13.0       # the open shaft the walkways look down into
+DECK_OUTER = 19.6        # 6.6 m of clear walkway, all the way round
+LEVEL_HEIGHT = 4.0
+LEVELS = 7               # residential levels
+SEGMENTS = 18            # homes per level: 126 in all
+STAIR_RADIUS = 5.2       # the great stair spirals down the middle of the shaft
+STAIR_COLUMN = 2.9
+STAIR_STEPS = 26         # per level
+APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .62          # half-width of a doorway opening
 
 
@@ -136,7 +140,10 @@ def cyl(name, loc, radius, depth, material, rotation=(0, 0, 0), verts=18, edge=.
     o = bpy.context.object
     o.name = name
     o.data.materials.append(material)
-    return bevel(o, edge)
+    # Cylinders need the same world-scale projection as boxes. Without UVs an
+    # image material samples one texel, which is how the stair's column came to
+    # be a black cylinder in the middle of the silo.
+    return world_uv(bevel(o, edge))
 
 
 def sphere(name, loc, radius, material, scale=(1, 1, 1), segments=14):
@@ -150,6 +157,64 @@ def sphere(name, loc, radius, material, scale=(1, 1, 1), segments=14):
     for p in o.data.polygons:
         p.use_smooth = True
     return o
+
+
+def loft(name, rings, material, sides=10, subdiv=1, cap_start=True, cap_end=True):
+    """Build a tapering tube through a stack of horizontal cross-sections.
+
+    A ring is ((x, y, z), radius_x, radius_z). Consecutive rings are bridged
+    with quads and the result is subdivision-smoothed, which is how you get a
+    shoulder, a calf or a jawline out of a script — a stack of cylinders and
+    boxes never reads as a person no matter how many pieces you use.
+    """
+    bm = bmesh.new()
+    loops = []
+    for (cx, cy, cz), rx, rz in rings:
+        loop = []
+        for i in range(sides):
+            t = i * math.tau / sides
+            loop.append(bm.verts.new((cx + math.cos(t) * rx, cy, cz + math.sin(t) * rz)))
+        loops.append(loop)
+    for lower, upper in zip(loops, loops[1:]):
+        for i in range(sides):
+            j = (i + 1) % sides
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    if cap_start:
+        bm.faces.new(loops[0])
+    if cap_end:
+        bm.faces.new(loops[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    if subdiv:
+        bpy.context.view_layer.objects.active = o
+        mod = o.modifiers.new('LS_Subsurf', 'SUBSURF')
+        mod.levels = subdiv
+        mod.render_levels = subdiv
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+    return o
+
+
+def parent_to(child, parent):
+    """Nest one part under another, keeping it where it is.
+
+    Exported as a glTF node hierarchy, so a shin swings from the knee of the
+    thigh that carries it rather than from the figure's origin.
+    """
+    # The pivots are set immediately before this, and an object's matrix_world
+    # is only recomputed when the view layer is evaluated. Reading it stale
+    # bakes the wrong offset into the parent inverse and scatters the limbs.
+    bpy.context.view_layer.update()
+    child.parent = parent
+    child.matrix_parent_inverse = parent.matrix_world.inverted()
+    return child
 
 
 def text_obj(name, text, loc, size, material, rotation=(0, math.pi, 0), extrude=.005):
@@ -173,6 +238,7 @@ def set_pivot(o, pivot):
     offset = o.location - Vector(pivot)
     o.data.transform(Matrix.Translation(offset))
     o.location = Vector(pivot)
+    bpy.context.view_layer.update()
     return o
 
 
@@ -234,6 +300,9 @@ WARM = mat('HabWarmWood', (.30, .19, .11), 0, .68)
 # Lit from inside: a wall of these is what makes the silo read as lived in.
 WARMWINDOW = mat('HabWarmWindow', (.42, .27, .12), 0, .35, (1.0, .64, .30), 3.2)
 CLOTH = mat('HabCloth', (.22, .24, .21), 0, .86)
+BONE = mat('HabBone', (.68, .66, .60), 0, .88)
+JACKET = mat('HabJacket', (.25, .28, .30), 0, .82)
+TROUSER = mat('HabTrouser', (.17, .18, .21), 0, .86)
 SKIN = mat('HabSkin', (.52, .38, .30), 0, .62)
 HAIR = mat('HabHair', (.09, .07, .06), 0, .70)
 GLASS = mat('HabGlass', (.05, .07, .08), .10, .10)
@@ -242,7 +311,7 @@ AMBER = mat('HabAmber', (.5, .33, .07), 0, .3, (1.0, .66, .16), 4.0)
 GREENLIGHT = mat('HabGreenLight', (.10, .5, .24), 0, .3, (.20, 1.0, .48), 4.0)
 REDLIGHT = mat('HabRedLight', (.5, .07, .05), 0, .3, (1.0, .14, .09), 4.0)
 GROWLIGHT = mat('HabGrowLight', (.42, .18, .46), 0, .3, (.95, .35, 1.0), 6.0)
-WHITELIGHT = mat('HabWhiteLight', (.5, .52, .5), 0, .25, (1.0, .96, .88), 5.5)
+WHITELIGHT = mat('HabWhiteLight', (.5, .52, .5), 0, .25, (1.0, .96, .88), 2.4)
 
 
 def build_shell():
@@ -366,23 +435,28 @@ def build_level():
         cube(f'CableTray_{i}', (cx, LEVEL_HEIGHT - .46, cz), (front_half * .9, .05, .13), DARK,
              rotation=(0, -a, 0), edge=.015)
 
-        # Strip light over the walkway, hooded.
-        lx, lz = bay_point(0, 1.25)
-        cube(f'Strip_{i}', (lx, LEVEL_HEIGHT - .40, lz), (.78, .05, .17), WHITELIGHT,
-             rotation=(0, -a, 0), edge=.015)
-        cube(f'StripHood_{i}', (lx, LEVEL_HEIGHT - .30, lz), (.88, .08, .24), DARK,
-             rotation=(0, -a, 0), edge=.02)
+        # Strip lights across the width of the walkway. One row against the
+        # doors left the outer half of a six-metre ring in the dark.
+        for si, inset in enumerate((1.30, 3.40, 5.50)):
+            lx, lz = bay_point(0, inset)
+            span = arc_half(DECK_OUTER - inset) * .62
+            cube(f'Strip_{i}_{si}', (lx, LEVEL_HEIGHT - .42, lz), (span, .05, .17), WHITELIGHT,
+                 rotation=(0, -a, 0), edge=.015)
+            cube(f'StripHood_{i}_{si}', (lx, LEVEL_HEIGHT - .31, lz), (span + .10, .08, .24), DARK,
+                 rotation=(0, -a, 0), edge=.02)
 
         # --- Structure --------------------------------------------------------
-        # A heavy column on every bay boundary, floor to ceiling, with collars.
+        # The walkway is a clear circle: nothing stands on it. The structure
+        # that used to be a pair of columns in the middle of the deck is a
+        # pilaster built into the wall between two front doors instead, so you
+        # can walk the whole ring without stepping round anything.
         ca = a + step / 2
-        for cr, crad in ((DECK_OUTER - .95, .30), (WELL_RADIUS + .55, .26)):
-            px, pz = math.cos(ca) * cr, math.sin(ca) * cr
-            cube(f'Column_{i}_{cr:.0f}', (px, LEVEL_HEIGHT / 2, pz), (crad, LEVEL_HEIGHT / 2, crad),
-                 CONCRETE, rotation=(0, -ca, 0), edge=.05)
-            for cy in (.42, LEVEL_HEIGHT - .42):
-                cube(f'Collar_{i}_{cr:.0f}_{cy:.1f}', (px, cy, pz), (crad + .07, .10, crad + .07),
-                     BRUSHED, rotation=(0, -ca, 0), edge=.02)
+        px, pz = math.cos(ca) * (DECK_OUTER - .48), math.sin(ca) * (DECK_OUTER - .48)
+        cube(f'Pilaster_{i}', (px, LEVEL_HEIGHT / 2, pz), (.34, LEVEL_HEIGHT / 2, .22),
+             CONCRETE, rotation=(0, -ca, 0), edge=.05)
+        for cy in (.52, LEVEL_HEIGHT - .52):
+            cube(f'PilasterBand_{i}_{cy:.1f}', (px, cy, pz), (.40, .09, .26),
+                 BRUSHED, rotation=(0, -ca, 0), edge=.02)
 
         # --- Gallery railing --------------------------------------------------
         rx, rz = math.cos(a) * WELL_RADIUS, math.sin(a) * WELL_RADIUS
@@ -441,6 +515,10 @@ def build_stair():
     for band in (.5, LEVEL_HEIGHT - .5):
         cyl(f'ColumnBand_{band:.1f}', (0, band, 0), STAIR_COLUMN - .08, .22, BRUSHED,
             rotation=UP, verts=32, edge=.02)
+    # A lit band at head height on every flight. Emissive costs nothing per
+    # frame and stops the column reading as a hole punched in the silo.
+    cyl('ColumnGlow', (0, LEVEL_HEIGHT * .62, 0), STAIR_COLUMN - .11, .09, WHITELIGHT,
+        rotation=UP, verts=32, edge=.01)
     join_all('HabStair')
     export('hab_stair_v4.glb')
 
@@ -472,9 +550,12 @@ def build_apartment():
     every bay.
     """
     clear_scene()
-    width = 6.4          # along the gallery
-    depth = 8.4          # back from the facade
-    height = 3.1
+    # Sized from the bay: as wide as the narrow (front) end of the wedge, so
+    # the rectangle fits inside it at every depth, and as deep as the gap
+    # between the facade and the shell.
+    width = 2 * arc_half(DECK_OUTER, overlap=1.0) - .3
+    depth = APARTMENT_BACK - DECK_OUTER
+    height = LEVEL_HEIGHT - .5
     half_w = width / 2
     half_d = depth / 2
 
@@ -498,71 +579,75 @@ def build_apartment():
     cube('Apt_Skirting', (0, .09, half_d - .2), (half_w - .2, .09, .04), DARK, edge=.01)
 
     # --- Kitchen, down the left wall ----------------------------------------
-    cube('Apt_Counter', (-half_w + .55, .90, -.6), (.42, .06, 2.1), BRUSHED, edge=.02)
-    cube('Apt_CounterBody', (-half_w + .55, .44, -.6), (.40, .44, 2.05), PAINT, edge=.03)
+    front = -half_d + 4.2
+    cube('Apt_Counter', (-half_w + .55, .90, front - .6), (.42, .06, 2.1), BRUSHED, edge=.02)
+    cube('Apt_CounterBody', (-half_w + .55, .44, front - .6), (.40, .44, 2.05), PAINT, edge=.03)
     for d in range(3):
-        cube(f'Apt_Drawer_{d}', (-half_w + .14, .40 + d * .30, -1.4 + d * .1), (.02, .12, .55),
+        cube(f'Apt_Drawer_{d}', (-half_w + .14, .40 + d * .30, front - 1.4 + d * .1), (.02, .12, .55),
              DARK, edge=.01)
-    cube('Apt_Sink', (-half_w + .55, .93, .35), (.30, .05, .40), STEEL, edge=.015)
-    cyl('Apt_Tap', (-half_w + .78, 1.10, .35), .025, .34, BRUSHED, rotation=UP, verts=10)
-    cube('Apt_Hob', (-half_w + .55, .97, -1.5), (.28, .03, .34), DARK, edge=.01)
+    cube('Apt_Sink', (-half_w + .55, .93, front + .35), (.30, .05, .40), STEEL, edge=.015)
+    cyl('Apt_Tap', (-half_w + .78, 1.10, front + .35), .025, .34, BRUSHED, rotation=UP, verts=10)
+    cube('Apt_Hob', (-half_w + .55, .97, front - 1.5), (.28, .03, .34), DARK, edge=.01)
     for r in range(2):
         for c in range(2):
-            cyl(f'Apt_Ring_{r}_{c}', (-half_w + .40 + c * .30, .99, -1.66 + r * .30),
+            cyl(f'Apt_Ring_{r}_{c}', (-half_w + .40 + c * .30, .99, front - 1.66 + r * .30),
                 .09, .02, STEEL, rotation=UP, verts=14)
-    cube('Apt_Splashback', (-half_w + .20, 1.45, -.6), (.04, .50, 2.05), STEEL, edge=.01)
+    cube('Apt_Splashback', (-half_w + .20, 1.45, front - .6), (.04, .50, 2.05), STEEL, edge=.01)
     for shelf in range(2):
-        cube(f'Apt_Shelf_{shelf}', (-half_w + .42, 2.05 + shelf * .42, -.6), (.30, .04, 1.9),
+        cube(f'Apt_Shelf_{shelf}', (-half_w + .42, 2.05 + shelf * .42, front - .6), (.30, .04, 1.9),
              WARM, edge=.012)
         for j in range(6):
-            cyl(f'Apt_Jar_{shelf}_{j}', (-half_w + .42, 2.19 + shelf * .42, -1.9 + j * .55),
+            cyl(f'Apt_Jar_{shelf}_{j}', (-half_w + .42, 2.19 + shelf * .42, front - 1.9 + j * .55),
                 .07, .22, GLASS if j % 2 else BRUSHED, rotation=UP, verts=10)
 
     # --- The table the family eats at ---------------------------------------
-    cube('Apt_Table', (.55, .74, -.9), (1.05, .05, .62), WARM, edge=.02)
+    cube('Apt_Table', (.55, .74, front - .9), (1.05, .05, .62), WARM, edge=.02)
     for tx in (-.85, .85):
         for tz in (-.45, .45):
-            cube(f'Apt_TableLeg_{tx}_{tz}', (.55 + tx, .36, -.9 + tz), (.06, .36, .06), DARK, edge=.012)
+            cube(f'Apt_TableLeg_{tx}_{tz}', (.55 + tx, .36, front - .9 + tz), (.06, .36, .06), DARK, edge=.012)
     for side, sz in ((-1, -.95), (1, .95)):
-        cube(f'Apt_Bench_{side}', (.55, .43, -.9 + sz), (1.0, .05, .20), WARM, edge=.015)
+        cube(f'Apt_Bench_{side}', (.55, .43, front - .9 + sz), (1.0, .05, .20), WARM, edge=.015)
         for bx in (-.75, .75):
-            cube(f'Apt_BenchLeg_{side}_{bx}', (.55 + bx, .21, -.9 + sz), (.05, .21, .16), DARK, edge=.01)
+            cube(f'Apt_BenchLeg_{side}_{bx}', (.55 + bx, .21, front - .9 + sz), (.05, .21, .16), DARK, edge=.01)
     for i, ox in enumerate((-.6, -.1, .45)):
-        cyl(f'Apt_Bowl_{i}', (.55 + ox, .80, -.9 + (i % 2) * .22), .10, .06, BRUSHED,
+        cyl(f'Apt_Bowl_{i}', (.55 + ox, .80, front - .9 + (i % 2) * .22), .10, .06, BRUSHED,
             rotation=UP, verts=14)
-    cube('Apt_Lamp', (.55, height - .28, -.9), (.34, .06, .34), WHITELIGHT, edge=.02)
-    cube('Apt_LampShade', (.55, height - .18, -.9), (.40, .10, .40), DARK, edge=.03)
+    cube('Apt_Lamp', (.55, height - .28, front - .9), (.34, .06, .34), WHITELIGHT, edge=.02)
+    cube('Apt_LampShade', (.55, height - .18, front - .9), (.40, .10, .40), DARK, edge=.03)
 
     # --- Sleeping alcove, behind a curtain ----------------------------------
-    cube('Apt_Divider', (half_w - 2.5, height / 2, 1.1), (.10, height / 2, .9), PAINT, edge=.03)
-    cube('Apt_Curtain', (half_w - 2.5, 1.55, 2.4), (.06, 1.55, 1.5), CLOTH, edge=.02)
+    # The back of the home is pinned to the rear wall, so a deeper bay gives
+    # the family more living room rather than a corridor of dead floor.
+    rear = half_d - 4.2
+    cube('Apt_Divider', (half_w - 2.5, height / 2, rear + 1.1), (.10, height / 2, .9), PAINT, edge=.03)
+    cube('Apt_Curtain', (half_w - 2.5, 1.55, rear + 2.4), (.06, 1.55, 1.5), CLOTH, edge=.02)
     for bunk in range(2):
         y = .55 + bunk * 1.15
-        cube(f'Apt_BunkFrame_{bunk}', (half_w - 1.2, y, 2.3), (1.05, .07, 1.85), STEEL, edge=.02)
-        cube(f'Apt_Mattress_{bunk}', (half_w - 1.2, y + .14, 2.3), (.95, .10, 1.75), CLOTH, edge=.05)
-        cube(f'Apt_Pillow_{bunk}', (half_w - 1.2, y + .24, 3.7), (.42, .09, .28), BONE, edge=.04)
-        cube(f'Apt_Blanket_{bunk}', (half_w - 1.2, y + .22, 1.7), (.93, .06, .90), PAINT, edge=.04)
+        cube(f'Apt_BunkFrame_{bunk}', (half_w - 1.2, y, rear + 2.3), (1.05, .07, 1.85), STEEL, edge=.02)
+        cube(f'Apt_Mattress_{bunk}', (half_w - 1.2, y + .14, rear + 2.3), (.95, .10, 1.75), CLOTH, edge=.05)
+        cube(f'Apt_Pillow_{bunk}', (half_w - 1.2, y + .24, rear + 3.7), (.42, .09, .28), BONE, edge=.04)
+        cube(f'Apt_Blanket_{bunk}', (half_w - 1.2, y + .22, rear + 1.7), (.93, .06, .90), PAINT, edge=.04)
     for px in (half_w - 2.2, half_w - .25):
-        cube(f'Apt_BunkPost_{px:.1f}', (px, 1.35, 1.4), (.06, 1.35, .06), STEEL, edge=.015)
-        cube(f'Apt_BunkPost_b_{px:.1f}', (px, 1.35, 3.9), (.06, 1.35, .06), STEEL, edge=.015)
-    cube('Apt_Ladder_Rail', (half_w - 2.15, 1.0, 1.5), (.04, 1.0, .04), BRUSHED, edge=.01)
+        cube(f'Apt_BunkPost_{px:.1f}', (px, 1.35, rear + 1.4), (.06, 1.35, .06), STEEL, edge=.015)
+        cube(f'Apt_BunkPost_b_{px:.1f}', (px, 1.35, rear + 3.9), (.06, 1.35, .06), STEEL, edge=.015)
+    cube('Apt_Ladder_Rail', (half_w - 2.15, 1.0, rear + 1.5), (.04, 1.0, .04), BRUSHED, edge=.01)
     for r in range(3):
-        cube(f'Apt_Ladder_Rung_{r}', (half_w - 1.75, .55 + r * .40, 1.5), (.36, .03, .03),
+        cube(f'Apt_Ladder_Rung_{r}', (half_w - 1.75, .55 + r * .40, rear + 1.5), (.36, .03, .03),
              BRUSHED, edge=.008)
 
     # --- Living, and the small things that make it a home -------------------
-    cube('Apt_Sofa_Base', (-1.4, .32, 2.6), (1.0, .32, .48), PAINT, edge=.06)
-    cube('Apt_Sofa_Back', (-1.4, .72, 3.0), (1.0, .40, .16), PAINT, edge=.06)
+    cube('Apt_Sofa_Base', (-1.4, .32, rear + 2.6), (1.0, .32, .48), PAINT, edge=.06)
+    cube('Apt_Sofa_Back', (-1.4, .72, rear + 3.0), (1.0, .40, .16), PAINT, edge=.06)
     for cx in (-.5, .5):
-        cube(f'Apt_Cushion_{cx}', (-1.4 + cx, .68, 2.5), (.42, .10, .40), CLOTH, edge=.05)
-    cube('Apt_Rug', (-1.0, .02, 1.2), (1.5, .02, 1.1), CLOTH, edge=.01)
-    cube('Apt_Chest', (-half_w + .6, .40, 3.4), (.40, .40, .85), WARM, edge=.03)
+        cube(f'Apt_Cushion_{cx}', (-1.4 + cx, .68, rear + 2.5), (.42, .10, .40), CLOTH, edge=.05)
+    cube('Apt_Rug', (-1.0, .02, rear + 1.2), (1.5, .02, 1.1), CLOTH, edge=.01)
+    cube('Apt_Chest', (-half_w + .6, .40, rear + 3.4), (.40, .40, .85), WARM, edge=.03)
     for i in range(3):
-        cube(f'Apt_Crate_{i}', (-half_w + .7, .30 + i * .55, 2.1), (.34, .26, .40),
+        cube(f'Apt_Crate_{i}', (-half_w + .7, .30 + i * .55, rear + 2.1), (.34, .26, .40),
              STEEL if i % 2 else PAINT, edge=.03)
-    cube('Apt_Shelf_Tall', (half_w - .5, 1.30, -1.9), (.28, 1.30, .70), WARM, edge=.03)
+    cube('Apt_Shelf_Tall', (half_w - .5, 1.30, front - 1.9), (.28, 1.30, .70), WARM, edge=.03)
     for b in range(4):
-        cube(f'Apt_Books_{b}', (half_w - .5, .38 + b * .62, -1.9 + (b % 2) * .2),
+        cube(f'Apt_Books_{b}', (half_w - .5, .38 + b * .62, front - 1.9 + (b % 2) * .2),
              (.22, .16, .46), DOORPAINT if b % 2 else AMBER, edge=.01)
     # A child's drawing pinned by the door, and boots left in the entrance.
     cube('Apt_Drawing', (-DOOR_HALF - .5, 1.65, -half_d + .22), (.24, .30, .01), BONE, edge=.004)
@@ -666,45 +751,165 @@ def build_directory():
     export('hab_directory_v4.glb')
 
 
+# --- People ------------------------------------------------------------------
+# The residents are the thing you stand closest to and look at longest, so they
+# are built as lofted bodies rather than assembled from primitives: a torso that
+# narrows at the waist and broadens across the chest, limbs that taper, a skull
+# with a jaw. Every part is a smooth surface, and the joints nest, so a knee
+# bends at the knee.
+
+def _leg(prefix, side, jointed):
+    # Every part runs past its joint and into the next one. Subdivision pulls a
+    # capped tube's ends inward, so parts that merely met at the knee left a
+    # visible gap there; overlapping them means the shrink happens inside the
+    # neighbouring limb where nobody sees it.
+    hip_x = side * .105
+    thigh = loft(f'{prefix}_Leg_{side}', [
+        ((hip_x, 1.04, 0), .112, .120),
+        ((hip_x, .94, 0), .122, .132),
+        ((hip_x, .84, 0), .114, .124),
+        ((hip_x, .68, .004), .096, .106),
+        ((hip_x, .56, .006), .080, .089),
+        ((hip_x, .47, .006), .075, .084),
+    ], TROUSER, sides=10)
+    shin = loft(f'{prefix}_Shin_{side}', [
+        ((hip_x, .63, .004), .074, .083),
+        ((hip_x, .52, .002), .079, .088),
+        ((hip_x, .43, -.008), .083, .095),
+        ((hip_x, .30, .002), .060, .070),
+        ((hip_x, .18, .010), .049, .057),
+        ((hip_x, .11, .012), .046, .054),
+    ], TROUSER, sides=10)
+    boot = loft(f'{prefix}_Boot_{side}', [
+        ((hip_x, .26, .008), .054, .060),
+        ((hip_x, .16, .012), .062, .072),
+        ((hip_x, .085, .028), .072, .112),
+        ((hip_x, .035, .048), .074, .150),
+        ((hip_x, .006, .052), .066, .148),
+    ], DARK, sides=10)
+    if jointed:
+        set_pivot(thigh, (hip_x, .94, 0))
+        set_pivot(shin, (hip_x, .54, 0))
+        parent_to(boot, shin)
+        parent_to(shin, thigh)
+    return thigh
+
+
+def _arm(prefix, side, jointed):
+    sx = side * .205
+    upper = loft(f'{prefix}_Arm_{side}', [
+        ((sx * .92, 1.51, 0), .060, .064),
+        ((sx, 1.44, 0), .072, .076),
+        ((sx * 1.03, 1.34, 0), .065, .067),
+        ((sx * 1.06, 1.20, .004), .056, .058),
+        ((sx * 1.08, 1.10, .006), .051, .053),
+        ((sx * 1.09, 1.03, .006), .049, .051),
+    ], JACKET, sides=8)
+    fore = loft(f'{prefix}_Forearm_{side}', [
+        ((sx * 1.07, 1.17, .006), .049, .051),
+        ((sx * 1.08, 1.09, .006), .053, .055),
+        ((sx * 1.09, 1.00, .002), .048, .050),
+        ((sx * 1.10, .90, .004), .039, .041),
+        ((sx * 1.10, .82, .006), .034, .036),
+    ], SKIN, sides=8)
+    hand = loft(f'{prefix}_Hand_{side}', [
+        ((sx * 1.10, .88, .006), .034, .036),
+        ((sx * 1.10, .79, .012), .039, .053),
+        ((sx * 1.10, .71, .014), .036, .051),
+        ((sx * 1.10, .655, .008), .020, .032),
+    ], SKIN, sides=8)
+    cuff = loft(f'{prefix}_Cuff_{side}', [
+        ((sx * 1.08, 1.14, .006), .058, .060),
+        ((sx * 1.09, 1.02, .004), .054, .056),
+    ], JACKET, sides=8, subdiv=0)
+    if jointed:
+        set_pivot(upper, (sx, 1.44, 0))
+        set_pivot(fore, (sx * 1.08, 1.10, 0))
+        parent_to(hand, fore)
+        parent_to(cuff, fore)
+        parent_to(fore, upper)
+    return upper
+
+
+def _head(prefix, jointed):
+    head = loft(f'{prefix}_Head', [
+        ((0, 1.455, 0), .062, .066),
+        ((0, 1.520, 0), .066, .070),
+        ((0, 1.560, .004), .076, .086),
+        ((0, 1.600, .008), .088, .101),
+        ((0, 1.648, .005), .098, .110),
+        ((0, 1.698, 0), .099, .108),
+        ((0, 1.740, -.005), .082, .092),
+        ((0, 1.768, -.008), .046, .053),
+    ], SKIN, sides=12)
+    hair = loft(f'{prefix}_Hair', [
+        ((0, 1.618, -.020), .104, .116),
+        ((0, 1.660, -.016), .109, .120),
+        ((0, 1.702, -.013), .108, .117),
+        ((0, 1.744, -.014), .088, .098),
+        ((0, 1.776, -.016), .050, .058),
+    ], HAIR, sides=12)
+    brow = cube(f'{prefix}_Brow', (0, 1.665, .090), (.066, .011, .024), HAIR, edge=.006)
+    eyes = [sphere(f'{prefix}_Eye_{k}', (k * .036, 1.641, .088), .0145, DARK, segments=8)
+            for k in (-1, 1)]
+    nose = loft(f'{prefix}_Nose', [
+        ((0, 1.646, .086), .017, .022),
+        ((0, 1.619, .099), .021, .029),
+        ((0, 1.601, .090), .016, .020),
+    ], SKIN, sides=8)
+    if jointed:
+        set_pivot(head, (0, 1.50, 0))
+        for part in (hair, brow, nose, *eyes):
+            parent_to(part, head)
+    return head
+
+
+def humanoid(prefix, jointed):
+    """One person, 1.76 m tall. Jointed for the ones that walk about."""
+    torso = loft(f'{prefix}_Torso', [
+        ((0, .80, 0), .150, .114),
+        ((0, .88, 0), .168, .126),
+        ((0, .99, 0), .157, .117),
+        ((0, 1.10, -.002), .148, .107),
+        ((0, 1.22, .004), .170, .120),
+        ((0, 1.33, .006), .194, .131),
+        ((0, 1.405, .002), .213, .126),
+        ((0, 1.455, 0), .158, .112),
+        ((0, 1.500, 0), .080, .082),
+        ((0, 1.545, 0), .066, .068),
+    ], JACKET, sides=12)
+    belt = loft(f'{prefix}_Belt', [
+        ((0, 1.055, -.002), .148, .108),
+        ((0, 1.125, -.002), .150, .110),
+    ], DARK, sides=12, subdiv=0)
+    collar = loft(f'{prefix}_Collar', [
+        ((0, 1.455, 0), .120, .095),
+        ((0, 1.515, 0), .085, .080),
+    ], DARK, sides=12, subdiv=0)
+    badge = cube(f'{prefix}_Badge', (.125, 1.30, .120), (.038, .052, .008), AMBER, edge=.006)
+
+    head = _head(prefix, jointed)
+    arms = [_arm(prefix, side, jointed) for side in (-1, 1)]
+    legs = [_leg(prefix, side, jointed) for side in (-1, 1)]
+
+    if jointed:
+        set_pivot(torso, (0, .92, 0))
+        for part in (belt, collar, badge, head, *arms):
+            parent_to(part, torso)
+    return torso, legs
+
+
 def build_resident():
     """A resident. Ten of these walk the galleries; three hundred live here."""
     clear_scene()
-    cube('Resident_Hips', (0, .90, 0), (.17, .12, .12), CLOTH, edge=.04)
-    torso = cube('Resident_Torso', (0, 1.22, 0), (.20, .26, .13), CLOTH, edge=.05)
-    set_pivot(torso, (0, .98, 0))
-    cube('Resident_Chest', (0, 1.38, .02), (.185, .13, .12), CLOTH, edge=.05)
-    cube('Resident_Collar', (0, 1.50, 0), (.13, .05, .11), DARK, edge=.02)
-    cube('Resident_Badge', (.12, 1.34, .13), (.05, .07, .01), AMBER, edge=.006)
-
-    head = sphere('Resident_Head', (0, 1.68, .01), .105, SKIN, scale=(.92, 1.04, .95))
-    set_pivot(head, (0, 1.56, 0))
-    sphere('Resident_Hair', (0, 1.73, -.01), .105, HAIR, scale=(.95, .78, .98))
-    for side in (-1, 1):
-        sphere(f'Resident_Eye_{side}', (side * .04, 1.70, .095), .015, DARK)
-        arm = cube(f'Resident_Arm_{side}', (side * .245, 1.24, .01), (.055, .22, .06), CLOTH, edge=.02)
-        set_pivot(arm, (side * .24, 1.45, 0))
-        fore = cube(f'Resident_Forearm_{side}', (side * .25, .82, .02), (.048, .20, .055), SKIN, edge=.018)
-        set_pivot(fore, (side * .25, 1.02, .01))
-        limb(f'Resident_Leg_{side}', (side * .10, .86, 0), (.062, .25, .07), CLOTH, edge=.02)
-        limb(f'Resident_Shin_{side}', (side * .10, .38, 0), (.052, .20, .06), CLOTH, edge=.018)
-        cube(f'Resident_Boot_{side}', (side * .10, .05, .03), (.06, .05, .10), DARK, edge=.018)
+    humanoid('Resident', jointed=True)
     export('resident_v4.glb')
 
 
 def build_resident_still():
     """A joined standing figure, for the crowds that line the galleries."""
     clear_scene()
-    cube('Still_Hips', (0, .90, 0), (.17, .12, .12), CLOTH, edge=.04)
-    cube('Still_Torso', (0, 1.22, 0), (.20, .26, .13), CLOTH, edge=.05)
-    cube('Still_Chest', (0, 1.38, .02), (.185, .13, .12), CLOTH, edge=.05)
-    sphere('Still_Head', (0, 1.66, .01), .105, SKIN, scale=(.92, 1.04, .95))
-    sphere('Still_Hair', (0, 1.71, -.01), .105, HAIR, scale=(.95, .78, .98))
-    for side in (-1, 1):
-        cube(f'Still_Arm_{side}', (side * .245, 1.18, .01), (.055, .28, .06), CLOTH, edge=.02)
-        cube(f'Still_Forearm_{side}', (side * .25, .78, .06), (.048, .20, .055), SKIN, edge=.018)
-        cube(f'Still_Leg_{side}', (side * .10, .61, 0), (.062, .25, .07), CLOTH, edge=.02)
-        cube(f'Still_Shin_{side}', (side * .10, .18, 0), (.052, .20, .06), CLOTH, edge=.018)
-        cube(f'Still_Boot_{side}', (side * .10, .05, .03), (.06, .05, .10), DARK, edge=.018)
+    humanoid('Still', jointed=False)
     join_all('HabResidentStill')
     export('resident_still_v4.glb')
 

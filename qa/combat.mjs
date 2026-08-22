@@ -28,6 +28,8 @@ await page.waitForFunction(() => {
 }, null, { timeout: 60000, polling: 100 });
 await page.evaluate(() => document.getElementById('start').click());
 await page.waitForTimeout(400);
+await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+  { timeout: 30000, polling: 100 });
 
 const results = await page.evaluate(async () => {
   const ls = globalThis.__ls;

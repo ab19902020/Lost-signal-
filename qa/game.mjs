@@ -35,6 +35,8 @@ await page.waitForFunction(() => {
 console.error('boot:', await page.textContent('#engineState'));
 await page.click('#start').catch(e => errors.push('click failed ' + e.message));
 await page.waitForTimeout(1500);
+await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+  { timeout: 30000, polling: 100 });
 for (const a of actions) {
   if (a.startsWith('key:')) { await page.keyboard.down(a.slice(4)); await page.waitForTimeout(500); await page.keyboard.up(a.slice(4)); }
   else if (a.startsWith('wait:')) await page.waitForTimeout(+a.slice(5));

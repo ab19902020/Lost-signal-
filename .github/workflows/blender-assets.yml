@@ -36,17 +36,26 @@ jobs:
           blender --version
           blender -b --python-expr "import numpy; print('Blender numpy', numpy.__version__)"
 
+      - name: Lint the generator scripts
+        run: |
+          python3 -m pip install --quiet pyflakes
+          # Blender exits 0 on an uncaught Python error, so a typo silently
+          # drops an asset. Catch undefined names before we spend a minute
+          # rendering the ones that still work.
+          python3 -m pyflakes blender/*.py | grep -E 'undefined name' && {
+            echo 'Generator script references an undefined name'; exit 1; } || true
+
       - name: Generate Blender furniture kit
-        run: blender -b --python blender/generate_bunker_v2.py
+        run: blender -b --python-exit-code 1 --python blender/generate_bunker_v2.py
 
       - name: Generate Blender environment kit
-        run: blender -b --python blender/generate_environment_v3.py
+        run: blender -b --python-exit-code 1 --python blender/generate_environment_v3.py
 
       - name: Generate Blender creature kit
-        run: blender -b --python blender/generate_creatures_v3.py
+        run: blender -b --python-exit-code 1 --python blender/generate_creatures_v3.py
 
       - name: Generate Blender habitation silo kit
-        run: blender -b --python blender/generate_habitat_v4.py
+        run: blender -b --python-exit-code 1 --python blender/generate_habitat_v4.py
 
       - name: Detach placeholder images so the shared textures load
         run: node tools/externalize-glb-images.mjs

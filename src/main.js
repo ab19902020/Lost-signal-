@@ -90,11 +90,21 @@ function fail(error) {
 
 // One quality tier decides pixel ratio, shadow resolution and how much of the
 // post stack we can afford, so a phone and a desktop run the same code path.
+const TIERS = {
+  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026, ao: false },
+  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03, ao: false },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032, ao: true },
+};
 const quality = (() => {
+  // ?quality=high forces a tier. A headless browser reports four cores and a
+  // coarse pointer, so without this the screenshots that decide how the game
+  // looks are always taken on the lowest settings.
+  const forced = TIERS[new URLSearchParams(location.search).get('quality')];
+  if (forced) return forced;
   const cores = navigator.hardwareConcurrency || 4;
-  if (coarse || cores <= 4) return { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026, ao: false };
-  if (cores <= 8) return { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03, ao: false };
-  return { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032, ao: true };
+  if (coarse || cores <= 4) return TIERS.mobile;
+  if (cores <= 8) return TIERS.balanced;
+  return TIERS.high;
 })();
 
 function createRenderer() {

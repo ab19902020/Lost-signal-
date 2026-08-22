@@ -252,6 +252,42 @@ function findSpawn(colliders, radius, bounds, avoid) {
 }
 
 // Place residents around a gallery ring at a given height.
+// Ten identical people on one gallery reads as a copy-paste, not a community.
+// Each resident gets their own jacket, trousers, hair and skin tone, cloned off
+// the shared materials so the change is per-figure.
+const JACKETS = [0x3f4a52, 0x4a4038, 0x2f4442, 0x53433f, 0x38414f, 0x4d4a3a, 0x424a44, 0x554440];
+const TROUSERS = [0x2b2f36, 0x35302b, 0x232a2c, 0x3a352f, 0x2a2d33];
+const HAIRS = [0x171310, 0x2e2118, 0x4a3626, 0x6b6259, 0x0f0d0c, 0x3d2b1c];
+const SKINS = [0x8a6650, 0xb08968, 0x6b4a36, 0xc79c78, 0x53382a, 0x9c7355];
+
+export function dressPerson(root, index) {
+  const pick = (list, salt) => list[(index * 7 + salt) % list.length];
+  const swatch = {
+    HabJacket: pick(JACKETS, 0),
+    HabTrouser: pick(TROUSERS, 3),
+    HabHair: pick(HAIRS, 5),
+    HabSkin: pick(SKINS, 1),
+  };
+  const cloned = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const materials = Array.isArray(o.material) ? o.material : [o.material];
+    const swapped = materials.map((m) => {
+      const colour = m && swatch[m.name];
+      if (colour === undefined) return m;
+      let copy = cloned.get(m.name);
+      if (!copy) {
+        copy = m.clone();
+        copy.color.setHex(colour);
+        cloned.set(m.name, copy);
+      }
+      return copy;
+    });
+    o.material = Array.isArray(o.material) ? swapped : swapped[0];
+  });
+  return root;
+}
+
 export function populateSilo({ scene, colliders, assets, walkable, count = 10 }) {
   const residents = [];
   const agents = [];
@@ -264,7 +300,7 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 10 })
   for (let i = 0; i < count; i++) {
     const ring = walkable[walkable.length - 1 - (i % occupied)];
     const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
-    const root = cloneGLTF(assets.resident);
+    const root = dressPerson(cloneGLTF(assets.resident), i);
     root.position.set(Math.cos(angle) * ring.radius, ring.y, Math.sin(angle) * ring.radius);
     root.rotation.y = Math.atan2(-Math.cos(angle), -Math.sin(angle));
     root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });

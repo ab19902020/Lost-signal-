@@ -1,30 +1,35 @@
 import * as THREE from 'three';
+import { dressPerson } from './creatures.js';
 
 // Silo 47 — a habitation silo, not a weapons one.
 //
-// Twelve residential levels and a secure unit on top, stacked around an open
+// Seven residential levels and a secure unit on top, stacked around an open
 // light well with a spiral stair running down it. Three hundred people live
 // here. Nobody in the silo knows why the world above ended.
 //
+// Every level is one unbroken circular walkway, six and a half metres wide,
+// with nothing standing on it — you can walk the whole ring without stepping
+// round anything — and its outer wall is nothing but front doors.
+//
 // The Blender kit is one level ring, one stair flight and one shell, joined
-// into single meshes and instanced up the shaft — twelve galleries built from
+// into single meshes and instanced up the shaft — eight galleries built from
 // two hundred separate objects each would be thousands of draw calls. What is
 // authored here is collision and light: a joined ring's bounding box would fill
 // the whole level including the open well, so decks are per-bay boxes with a
 // real hole in the middle, and the stair gets one box per tread.
 
 export const SILO = {
-  shellRadius: 26.6,      // the shell stands back to leave room for dwellings
-  wellRadius: 11.6,     // the open shaft is most of the silo's width
-  deckOuter: 16.4,      // galleries are narrow rings around it
-  levelHeight: 3.5,
-  levels: 14,
-  segments: 18,
-  stairRadius: 4.6,
-  stairColumn: 2.7,
-  stairSteps: 22,
+  shellRadius: 30.8,    // the concrete shell, behind the back wall of the homes
+  wellRadius: 13.0,     // the open shaft the walkways look down into
+  deckOuter: 19.6,      // 6.6 m of clear walkway, all the way round
+  levelHeight: 4.0,
+  levels: 7,
+  segments: 18,         // homes per level: 126 in all
+  stairRadius: 5.2,
+  stairColumn: 2.9,
+  stairSteps: 26,
   stairTurn: THREE.MathUtils.degToRad(190),
-  apartmentBack: 25.4,    // rear wall of every home
+  apartmentBack: 29.6,  // rear wall of every home: ten metres deep
   doorHalf: 0.62,
 };
 
@@ -110,6 +115,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // meshes, so two hundred and fifty of them cost draw calls rather than scene
   // graphs, and frustum culling means only the ones you are looking at are
   // drawn at all.
+  // Every light in the silo goes on this list; only the nearest handful are
+  // ever visible, so the shader's light count never changes.
+  const allLights = [];
   const apartmentMid = (deckOuter + apartmentBack) / 2;
   const apartmentDepth = (apartmentBack - deckOuter) / 2;
   const doorwayAngle = (level, bay) => {
@@ -129,6 +137,18 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         homes.push(place(assets.habApartment, scene,
           [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
           [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false }));
+      }
+
+      // A home that stands open has its lamp on, and the light falls out
+      // across the gallery. That spill is what makes the wall read as
+      // dwellings rather than as a painted facade.
+      if (open) {
+        const lamp = new THREE.PointLight(0xffcf94, 30, 10, 2);
+        lamp.position.set(Math.cos(angle) * (deckOuter + 2.2), y + 2.3,
+          Math.sin(angle) * (deckOuter + 2.2));
+        lamp.visible = false;
+        scene.add(lamp);
+        allLights.push({ light: lamp, base: 30, phase: level * 1.7 + bay, failing: false });
       }
 
       // The door leaf: flat in the opening when shut, swung back against the
@@ -261,23 +281,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
   }
 
-  // Every open home gets a lamp, culled with the gallery strips so the count
-  // stays constant. A lit doorway is what makes the wall read as dwellings.
-  const homeLights = [];
-  for (let level = 0; level <= levels; level++) {
-    for (let bay = 0; bay < segments; bay += 2) {
-      const angle = (bay * Math.PI * 2) / segments;
-      const light = new THREE.PointLight(0xffcf94, 26, 9, 2);
-      light.position.set(Math.cos(angle) * (deckOuter + 2.4), levelY(level) + 2.4,
-        Math.sin(angle) * (deckOuter + 2.4));
-      light.visible = false;
-      scene.add(light);
-      const entry = { light, base: 26, phase: level + bay, failing: false };
-      homeLights.push(entry);
-      allLights.push(entry);
-    }
-  }
-
   // The galleries have to look occupied. Ten residents walk and talk; these are
   // the rest of the three hundred, joined into one mesh each so a populated
   // silo costs draw calls rather than skeletons.
@@ -293,6 +296,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
           [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
           [0, Math.atan2(-Math.cos(angle), -Math.sin(angle)) + (i % 2 ? 0.4 : -0.3), 0], 1,
           { world: 'silo', collide: false });
+        dressPerson(figure, level * 5 + i);
         crowd.push(figure);
       }
     }
@@ -302,14 +306,25 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A silo is lit level by level. Strip lights over the doors give each gallery
   // its own band of light, and the well between them stays dim, which is what
   // sells the drop.
-  scene.add(new THREE.HemisphereLight(0x6f8ea8, 0x14181c, 1.05));
-  scene.add(new THREE.AmbientLight(0x46586a, 0.5));
+  scene.add(new THREE.HemisphereLight(0x7c9cb6, 0x181d22, 1.3));
+  scene.add(new THREE.AmbientLight(0x50647a, 0.62));
+
+  // A hemisphere light barely touches a vertical wall — its contribution is
+  // driven by how much of the surface faces up — so the shaft's tall surfaces,
+  // the stair's column above all, fell to black between point lights. Two
+  // opposed directionals light every vertical face regardless of distance, at
+  // the cost of two lights rather than one per level.
+  for (const [dx, dz] of [[1, 0.35], [-1, -0.35]]) {
+    const wash = new THREE.DirectionalLight(0x9fb8cf, 0.42);
+    wash.position.set(dx * 40, shaftHeight * 0.6, dz * 40);
+    wash.target.position.set(0, shaftHeight * 0.35, 0);
+    scene.add(wash, wash.target);
+  }
 
   // Fifty-two point lights would be compiled into every shader in the scene.
   // They are all created, but only the nearest handful are ever visible, and
   // the visible count is held constant so the material shaders never recompile.
   const strips = [];
-  const allLights = [];
   const LIT_AT_ONCE = 14;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
@@ -331,7 +346,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     _lightSort.length = 0;
     for (const strip of allLights) {
       // Vertical distance dominates: the gallery you are on matters far more
-      // than one twelve levels down on the same bearing.
+      // than one seven levels down on the same bearing.
       const dy = strip.light.position.y - playerPosition.y;
       const dx = strip.light.position.x - playerPosition.x;
       const dz = strip.light.position.z - playerPosition.z;
@@ -345,23 +360,23 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   }
 
   // Culled lights leave the far side of the well black, which reads as a void
-  // rather than as a silo. A handful of wide, always-on lights up the shaft
-  // give the opposite gallery enough to be seen by. They are never culled, so
-  // the visible light count stays constant.
-  for (let i = 0; i <= 3; i++) {
-    const fill = new THREE.PointLight(0x7ea6c8, 180, 52, 1.5);
-    fill.position.set(0, (shaftHeight / 3) * i + levelHeight, 0);
+  // rather than as a silo. A ring of wide, always-on lights stands in the open
+  // shaft between the stair and the galleries. They hang out here rather than
+  // on the axis because a light inside the stair column lights everything
+  // except the column, which is how the silo's spine came to be a black
+  // cylinder. They are never culled, so the visible light count stays constant.
+  const fillRadius = stairMid + treadHalf + 1.6;
+  for (let i = 0; i < 6; i++) {
+    const angle = (i * Math.PI * 2) / 6;
+    const fill = new THREE.PointLight(0x8fb0cc, 210, 46, 1.5);
+    fill.position.set(Math.cos(angle) * fillRadius,
+      (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
+      Math.sin(angle) * fillRadius);
     scene.add(fill);
   }
 
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
-  // Light down the stair itself, so the helix reads as the silo's spine.
-  for (let i = 0; i <= 3; i++) {
-    const spine = new THREE.PointLight(0xcfe0ee, 90, 26, 1.7);
-    spine.position.set(0, (shaftHeight / 3) * i + levelHeight * 0.5, 0);
-    scene.add(spine);
-  }
 
   const crown = new THREE.SpotLight(0xd6e6f2, 2400, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);

@@ -46,7 +46,7 @@ cameras) never block, because the test is a vertical span rather than a footprin
 ## The world
 
 Three connected spaces: the blast chamber, the ruined surface compound above it,
-and Silo 47 below — a habitation silo of twelve residential levels and a secure
+and Silo 47 below — a habitation silo of seven residential levels and a secure
 unit on top, built around an open light well, home to three hundred people.
 Nobody in it knows why the world above ended.
 
