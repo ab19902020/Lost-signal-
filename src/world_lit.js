@@ -80,6 +80,7 @@ export function createGameWorld(assets) {
   bunker.fog = new THREE.FogExp2(0x171b19, 0.019);
   gradeMaterials(bunker);
   gradeMaterials(outside);
+  if (game.silo) gradeMaterials(game.silo);
 
   // --- Shelter ambience -----------------------------------------------------
   // A weak sky/ground term stands in for concrete bounce. Everything else in

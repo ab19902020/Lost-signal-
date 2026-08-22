@@ -101,6 +101,14 @@ function retileUVs(mesh) {
   if (!uv || geometry.userData.lsRetiled) return;
   geometry.userData.lsRetiled = true;
 
+  // A world-scale cube projection from Blender already runs past the unit
+  // square. Rescaling that would tile it a second time.
+  let maxUV = 0;
+  for (let i = 0; i < uv.count; i++) {
+    maxUV = Math.max(maxUV, Math.abs(uv.getX(i)), Math.abs(uv.getY(i)));
+    if (maxUV > 1.05) return;
+  }
+
   geometry.computeBoundingBox();
   _tileBox.copy(geometry.boundingBox);
   _tileBox.getSize(_tileSize);

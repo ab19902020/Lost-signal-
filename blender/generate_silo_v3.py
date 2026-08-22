@@ -86,6 +86,30 @@ def bevel(o, width=.03, segments=2):
     return o
 
 
+def has_image(material):
+    if not material or not material.use_nodes:
+        return False
+    return any(n.type == 'TEX_IMAGE' for n in material.node_tree.nodes)
+
+
+def world_uv(o, tile=2.2):
+    """Project UVs from world coordinates so texel density and aspect are right.
+
+    Blender's box unwrap gives every face the full 0..1 range whatever its size,
+    so a 2 m x 17 m wall panel stretches its tiles into vertical streaks. A cube
+    projection measured in metres fixes both density and aspect at the source.
+    """
+    if o.type != 'MESH' or not any(has_image(m) for m in o.data.materials):
+        return o
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.cube_project(cube_size=tile, correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return o
+
+
 def cube(name, loc, half, material, rotation=(0, 0, 0), edge=.03):
     bpy.ops.mesh.primitive_cube_add(location=loc, rotation=rotation)
     o = bpy.context.object
@@ -93,7 +117,7 @@ def cube(name, loc, half, material, rotation=(0, 0, 0), edge=.03):
     o.scale = half
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     o.data.materials.append(material)
-    return bevel(o, edge)
+    return world_uv(bevel(o, edge))
 
 
 def cyl(name, loc, radius, depth, material, rotation=(0, 0, 0), verts=24, edge=.01):
