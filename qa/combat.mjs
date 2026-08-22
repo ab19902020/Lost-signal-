@@ -65,9 +65,13 @@ const results = await page.evaluate(async () => {
     ls.arm();
     let shots = 0;
     const mark = { x: ls.body.position.x, z: ls.body.position.z - 4 };
-    while (hare.userData.alive !== false && shots < 4) {
+    while (hare.userData.alive !== false && shots < 6) {
       hare.position.set(mark.x, 0, mark.z);
-      ls.aimAt({ x: mark.x, y: 0.2, z: mark.z });
+      // Aim at the animal's actual centre rather than a guessed height: a hare
+      // is twenty centimetres wide and the guess made the check flaky.
+      hare.updateWorldMatrix(true, true);
+      const bounds = ls.bounds(hare);
+      ls.aimAt({ x: mark.x, y: (bounds.min.y + bounds.max.y) / 2, z: mark.z });
       ls.simulate(1);
       hare.position.set(mark.x, 0, mark.z);
       ls.fire();
@@ -75,6 +79,11 @@ const results = await page.evaluate(async () => {
       ls.simulate(4);
     }
     out.hareDown = hare.userData.alive === false;
+    out.hareDebug = {
+      pos: [+hare.position.x.toFixed(2), +hare.position.y.toFixed(2), +hare.position.z.toFixed(2)],
+      player: [+ls.body.position.x.toFixed(2), +ls.body.position.z.toFixed(2)],
+      parented: !!hare.parent,
+    };
   }
 
   // The silo: residents should be walking their galleries, and standing next to
@@ -95,7 +104,15 @@ const results = await page.evaluate(async () => {
     const target = residents[0];
     ls.body.teleport(target.position.x + 0.9, target.position.y, target.position.z);
     ls.simulate(3);
-    out.speakPrompt = (document.getElementById('prompt').textContent || '').includes('RESIDENT');
+    const prompt = document.getElementById('prompt');
+    out.speakPrompt = (prompt.textContent || '').includes('RESIDENT');
+    out.promptDebug = {
+      text: prompt.textContent,
+      on: prompt.classList.contains('on'),
+      distance: +target.position.distanceTo(ls.game.player.position).toFixed(2),
+      playerY: +ls.body.position.y.toFixed(2),
+      targetY: +target.position.y.toFixed(2),
+    };
   }
   out.ammoAfter = ls.state().ammo;
   return out;

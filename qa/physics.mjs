@@ -110,9 +110,10 @@ results.textures = await page.evaluate(() => {
 
 results.world = await page.evaluate(() => ({
   wildlife: globalThis.__ls.game.wildlife.length,
-  zombies: globalThis.__ls.game.zombies.length,
+  residents: globalThis.__ls.game.residents?.residents.length ?? 0,
   bunkerColliders: globalThis.__ls.game.colliders.bunker.boxes.length,
   outsideColliders: globalThis.__ls.game.colliders.outside.boxes.length,
+  siloColliders: globalThis.__ls.game.colliders.silo.boxes.length,
 }));
 
 console.log(JSON.stringify(results, null, 1));

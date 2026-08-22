@@ -55,6 +55,7 @@ check(Math.abs(combat.collapsedRoll) > 1.4, 'a downed animal did not collapse');
 check(combat.residents >= 10, `the silo has ${combat.residents} residents, expected at least 10`);
 check(combat.residentsMoved > 0, 'no resident moved along their gallery');
 check(combat.residentLevels > 1, 'every resident is on the same level');
+check(combat.residentLevels <= 6, 'residents are spread too thin to meet');
 check(combat.residentLines === combat.residents, 'a resident has nothing to say');
 check(combat.speakPrompt, 'standing beside a resident offered no way to speak to them');
 

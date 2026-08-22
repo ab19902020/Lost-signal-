@@ -95,9 +95,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const top = base + i * rise + 0.04;
       colliders.addBox(ringBox(angle, stairRadius, 0.9, 0.32, top - 0.5, top), { climbable: true });
     }
-    // The stair's own central column is solid.
-    colliders.addBox(box(-(stairRadius - 0.95), base, -(stairRadius - 0.95),
-      stairRadius - 0.95, base + levelHeight, stairRadius - 0.95), {});
+    // Only the spine is solid; the well around it stays open the whole drop.
+    colliders.addBox(box(-0.5, base, -0.5, 0.5, base + levelHeight, 0.5), {});
   }
 
   // --- Fittings -------------------------------------------------------------

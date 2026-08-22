@@ -349,8 +349,14 @@ def build_stair():
         cube(f'RailPost_{i}', (ox, i * rise + .52, oz), (.035, .52, .035), BRUSHED, edge=.01)
         cube(f'RailTop_{i}', (ox, i * rise + 1.02, oz), (.05, .045, .33), BRUSHED,
              rotation=(0, -a, 0), edge=.012)
-    cyl('StairColumn', (0, LEVEL_HEIGHT / 2, 0), STAIR_RADIUS - .95, LEVEL_HEIGHT, STEEL,
-        rotation=UP, verts=28, edge=.02)
+    # A slender spine, not a drum: the light well has to stay open all the way
+    # down or there is nothing to look down and nothing to fall through.
+    cyl('StairSpine', (0, LEVEL_HEIGHT / 2, 0), .42, LEVEL_HEIGHT, STEEL,
+        rotation=UP, verts=16, edge=.02)
+    for i in range(0, STAIR_STEPS, 6):
+        a = i * turn
+        cube(f'StairBrace_{i}', (math.cos(a) * (STAIR_RADIUS / 2), i * rise - .06, math.sin(a) * (STAIR_RADIUS / 2)),
+             (.06, .05, STAIR_RADIUS / 2), STEEL, rotation=(0, -a, 0), edge=.01)
     join_all('HabStair')
     export('hab_stair_v4.glb')
 

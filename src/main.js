@@ -191,6 +191,7 @@ async function prepare() {
           pitch = Math.atan2(to.y, Math.hypot(to.x, to.z));
         },
         fire: () => fire(),
+        bounds: (object) => new THREE.Box3().setFromObject(object),
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
         state: () => ({ health, ammo, reserve, armed,
           survival: survival.snapshot, blackout: survival.blackout,

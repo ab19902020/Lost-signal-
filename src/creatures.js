@@ -257,8 +257,12 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 10 })
   const agents = [];
   if (!assets.resident || !walkable?.length) return { residents, agents, update: () => {} };
 
+  // Spread over the upper galleries rather than one per level: a silo of three
+  // hundred should look inhabited from the first landing you reach, not offer
+  // one person every forty metres of stair.
+  const occupied = Math.min(4, walkable.length);
   for (let i = 0; i < count; i++) {
-    const ring = walkable[Math.floor((i / count) * walkable.length) % walkable.length];
+    const ring = walkable[walkable.length - 1 - (i % occupied)];
     const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
     const root = cloneGLTF(assets.resident);
     root.position.set(Math.cos(angle) * ring.radius, ring.y, Math.sin(angle) * ring.radius);
