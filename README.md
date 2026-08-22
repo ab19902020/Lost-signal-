@@ -43,6 +43,17 @@ cameras) never block, because the test is a vertical span rather than a footprin
 - R: reload
 - N: toggle infrared while a CCTV feed is open
 
+## The shelter
+
+Three connected spaces: the blast chamber, the surface compound above it and
+Silo 47-A below. Life support drains against an in-game day — refuel the
+generator, change the filters, and find food and water before they run out. An
+open blast door draws the infected to the entrance and eventually inside, which
+is what the CCTV console is for. The hatch in the floor needs unsealing, and
+launch control needs two keys.
+
+Press **H** in game for the field manual.
+
 ## Visual QA
 
 Rendering bugs have to be looked at, so `qa/` drives the real game in headless

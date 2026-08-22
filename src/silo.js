@@ -112,28 +112,28 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // --- Lighting ------------------------------------------------------------
   // A silo is lit from the gantry down: hard pools on the missile skin, deep
   // shadow in the trench, and one failing amber lamp at the service level.
-  scene.add(new THREE.HemisphereLight(0x66757e, 0x141716, 0.85));
-  scene.add(new THREE.AmbientLight(0x505a5f, 0.4));
+  scene.add(new THREE.HemisphereLight(0x5b6870, 0x141716, 0.6));
+  scene.add(new THREE.AmbientLight(0x495256, 0.26));
 
   const lamps = [];
   for (let i = 0; i < 4; i++) {
     const angle = (i * Math.PI * 2) / 4 + Math.PI / 8;
-    const lamp = new THREE.PointLight(0xd8e2e0, 210, 18, 2);
-    lamp.position.set(Math.cos(angle) * (radius - 1.1), catwalkY + 2.4, Math.sin(angle) * (radius - 1.1));
+    const lamp = new THREE.PointLight(0xd8e2e0, 42, 13, 2);
+    lamp.position.set(Math.cos(angle) * (radius - 0.5), catwalkY + 3.1, Math.sin(angle) * (radius - 0.5));
     scene.add(lamp);
-    lamps.push({ light: lamp, base: 210, phase: i * 1.9, failing: i === 1 });
+    lamps.push({ light: lamp, base: 42, phase: i * 1.9, failing: i === 1 });
   }
 
   // Work lights at the mount, so the floor of the shaft is somewhere you can
   // actually see the missile you walked all the way down to.
   for (let i = 0; i < 3; i++) {
     const angle = (i * Math.PI * 2) / 3 + 0.6;
-    const work = new THREE.PointLight(0xffd9a8, 38, 11, 2);
+    const work = new THREE.PointLight(0xffd9a8, 24, 9, 2);
     work.position.set(Math.cos(angle) * 3.4, 2.1, Math.sin(angle) * 3.4);
     scene.add(work);
   }
 
-  const floodTop = new THREE.SpotLight(0xbfd2e2, 2600, 30, 0.8, 0.55, 2);
+  const floodTop = new THREE.SpotLight(0xbfd2e2, 1500, 30, 0.78, 0.6, 2);
   floodTop.position.set(0, height - 0.6, 0);
   floodTop.target.position.set(0, 0, 0);
   scene.add(floodTop, floodTop.target);
