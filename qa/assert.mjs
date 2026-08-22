@@ -41,6 +41,10 @@ check(combat.healthDropped, 'an intruder inside the shelter did no harm');
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed:`);
   for (const failure of failures) console.error(`  - ${failure}`);
+  // Print what the run actually measured, so a failure is diagnosable from
+  // the CI log alone.
+  console.error('\nphysics:', JSON.stringify(physics));
+  console.error('combat:', JSON.stringify(combat));
   process.exit(1);
 }
 console.log('\nAll gameplay checks passed.');

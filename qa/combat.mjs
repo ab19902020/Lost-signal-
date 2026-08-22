@@ -53,6 +53,9 @@ const results = await page.evaluate(async () => {
   if (hare) {
     // A hare bolts the moment the player is close, so re-acquire between
     // shots rather than assuming the first one connects.
+    // Re-arm first: this check is about whether a round kills a hare, not
+    // about how many rounds the infected before it used up.
+    ls.arm();
     let hareShots = 0;
     const mark = { x: ls.body.position.x, z: ls.body.position.z - 4 };
     while (hare.userData.alive !== false && hareShots < 4) {
