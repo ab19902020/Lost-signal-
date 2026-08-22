@@ -1,6 +1,8 @@
 name: Validate Lost Signal Build
 
 on:
+  push:
+    branches: [main, 'claude/**']
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,6 +20,18 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+      - name: Install Chromium for the visual QA harness
+        run: npx playwright install --with-deps chromium
+
+      - name: Boot the game and assert it plays
+        run: |
+          npm run dev -- --port 5173 --host 127.0.0.1 &
+          for i in $(seq 1 40); do
+            curl -sf -o /dev/null "http://127.0.0.1:5173/Lost-signal-/" && break
+            sleep 1
+          done
+          node qa/assert.mjs "http://127.0.0.1:5173/Lost-signal-/"
+
       - name: Verify Blender bunker assets are present
         run: |
           test -f public/assets/blender/desk_station.glb

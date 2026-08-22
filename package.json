@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "qa:game": "node qa/game.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/game.png",
     "qa:physics": "node qa/physics.mjs http://127.0.0.1:5173/Lost-signal-/",
+    "qa": "node qa/assert.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },

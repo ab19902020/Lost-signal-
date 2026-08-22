@@ -51,13 +51,20 @@ const results = await page.evaluate(async () => {
   // A hare should die to a single round.
   const hare = ls.game.wildlife.find(w => w.userData.kind === 'rabbit' && w.userData.alive !== false);
   if (hare) {
-    // aimAt only sets yaw/pitch; the camera picks them up on the next
-    // simulated frame, so the shot has to come after one.
-    hare.position.set(ls.body.position.x, 0, ls.body.position.z - 4);
-    ls.aimAt(hare.position.clone().setY(0.20));
-    ls.simulate(1);
-    ls.fire();
-    ls.simulate(6);
+    // A hare bolts the moment the player is close, so re-acquire between
+    // shots rather than assuming the first one connects.
+    let hareShots = 0;
+    while (hare.userData.alive !== false && hareShots < 4) {
+      hare.position.set(ls.body.position.x, 0, ls.body.position.z - 4);
+      // aimAt only sets yaw/pitch; the camera picks them up on the next
+      // simulated frame, so the shot has to come after one.
+      ls.aimAt(hare.position.clone().setY(0.20));
+      ls.simulate(1);
+      ls.fire();
+      hareShots++;
+      ls.simulate(4);
+    }
+    out.hareShots = hareShots;
     out.hareDown = hare.userData.alive === false;
   }
 
@@ -71,9 +78,13 @@ const results = await page.evaluate(async () => {
   // And it should be able to hurt you once it is inside.
   const intruder = ls.game.creatures.breached[0];
   if (intruder) {
-    intruder.root.position.set(ls.body.position.x, 0, ls.body.position.z - 1);
     const before = ls.state().health;
-    ls.simulate(120);
+    // Hold it at arm's length for long enough to clear a full attack cycle,
+    // whatever phase its cooldown happened to be in when it came through.
+    for (let i = 0; i < 6; i++) {
+      intruder.root.position.set(ls.body.position.x, 0, ls.body.position.z - 1);
+      ls.simulate(60);
+    }
     out.intruder = {
       alive: intruder.root.userData.alive,
       state: intruder.state,

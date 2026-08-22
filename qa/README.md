@@ -9,9 +9,16 @@ game in headless Chromium and save what it actually draws.
 
 ```
 npm run dev                       # in one shell
+npm run qa                        # every check, pass/fail (what CI runs)
 npm run qa:game                   # screenshot the game as the player sees it
-npm run qa:physics                # collision / crouch / sprint assertions
+npm run qa:physics                # raw collision / crouch / texture readings
 ```
+
+`npm run qa` fails the build on the regressions this project has actually
+shipped: a player walking through a wall, a crouch that never stands back up,
+a texture falling back to a 1x1 placeholder, a rifle that fires blanks, a
+creature that snaps to a right angle instead of collapsing, and a blast door
+left open with no consequence.
 
 Both take the dev-server URL as their first argument, so they work against a
 `vite preview` build too. Set `CHROMIUM_PATH` if Playwright's bundled browser is
