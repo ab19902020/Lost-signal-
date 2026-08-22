@@ -108,12 +108,18 @@ function retileUVs(mesh) {
   const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld);
   const extents = [_tileSize.x * scale.x, _tileSize.y * scale.y, _tileSize.z * scale.z]
     .sort((a, b) => b - a);
-  const repeatU = Math.max(1, Math.round(extents[0] / TILE_METRES));
-  const repeatV = Math.max(1, Math.round(extents[1] / TILE_METRES));
-  if (repeatU === 1 && repeatV === 1) return;
+
+  // A box unwrap gives every face its own 0..1 island, so there is no single
+  // world axis that maps to U. Scaling both axes by the same factor — derived
+  // from the surface's area — keeps the texture square. Scaling them
+  // independently by sorted extents smeared tall thin surfaces like the silo's
+  // wall panels into vertical streaks.
+  const repeat = THREE.MathUtils.clamp(
+    Math.round(Math.sqrt(extents[0] * extents[1]) / TILE_METRES), 1, 24);
+  if (repeat === 1) return;
 
   for (let i = 0; i < uv.count; i++) {
-    uv.setXY(i, uv.getX(i) * repeatU, uv.getY(i) * repeatV);
+    uv.setXY(i, uv.getX(i) * repeat, uv.getY(i) * repeat);
   }
   uv.needsUpdate = true;
 }

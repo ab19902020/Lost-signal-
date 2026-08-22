@@ -271,8 +271,12 @@ def build_stairs():
         cube(f'Stair_Riser_{i}', (0, CATWALK_Y - (i + 1) * rise + rise / 2, i * run + run / 2),
              (.72, rise / 2, .02), DARK, edge=.006)
     for side in (-1, 1):
+        # The stringer is a beam lying along the slope, so its half-extents are
+        # measured along its own axis and then rotated — not the flight's
+        # bounding box, which would inflate into a ten-metre diagonal slab.
+        span = math.hypot(CATWALK_Y, steps * run) / 2 + .2
         cube(f'Stair_Stringer_{side}', (side * .76, CATWALK_Y / 2, steps * run / 2),
-             (.06, CATWALK_Y / 2 + .1, steps * run / 2 + .2), DARK,
+             (.06, .11, span), DARK,
              rotation=(math.atan2(CATWALK_Y, steps * run), 0, 0), edge=.02)
         for i in range(0, steps, 4):
             cube(f'Stair_Post_{side}_{i}', (side * .76, CATWALK_Y - (i + 1) * rise + .55, i * run),

@@ -86,7 +86,7 @@ export function createGameWorld(assets) {
   place(assets.pipes, bunker, [-6.25,.14,1.8], [0,0,0]);
 
   const ventilation = place(assets.ventilation, bunker, [5.20,0,-4.85], [0,-Math.PI/2,0], .88);
-  addInteraction(ventilation,'AIR FILTRATION UNIT','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:generator')));
+  addInteraction(ventilation,'AIR FILTRATION UNIT','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:filtration')));
 
   place(assets.electrical, bunker, [-4.85,.10,6.88], [0,0,0], .90);
   place(assets.lockers, bunker, [-2.55,0,6.55], [0,0,0], .84);

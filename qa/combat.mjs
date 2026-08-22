@@ -54,12 +54,15 @@ const results = await page.evaluate(async () => {
     // A hare bolts the moment the player is close, so re-acquire between
     // shots rather than assuming the first one connects.
     let hareShots = 0;
+    const mark = { x: ls.body.position.x, z: ls.body.position.z - 4 };
     while (hare.userData.alive !== false && hareShots < 4) {
-      hare.position.set(ls.body.position.x, 0, ls.body.position.z - 4);
       // aimAt only sets yaw/pitch; the camera picks them up on the next
-      // simulated frame, so the shot has to come after one.
-      ls.aimAt(hare.position.clone().setY(0.20));
+      // simulated frame. The hare bolts in that frame, so it is put back on
+      // the mark the shot is actually lined up with.
+      hare.position.set(mark.x, 0, mark.z);
+      ls.aimAt({ x: mark.x, y: 0.2, z: mark.z });
       ls.simulate(1);
+      hare.position.set(mark.x, 0, mark.z);
       ls.fire();
       hareShots++;
       ls.simulate(4);

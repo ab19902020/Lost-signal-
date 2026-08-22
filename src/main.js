@@ -9,6 +9,7 @@ import { loadGameAssets } from './assets.js';
 import { createGameWorld } from './world.js';
 import { CharacterBody } from './physics.js';
 import { GradeShader, CameraFeedShader } from './grade.js';
+import { Survival, loadRun, saveRun, clearRun } from './survival.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -26,6 +27,10 @@ const motionEl = document.getElementById('motion');
 const staminaBar = document.getElementById('staminaBar');
 const staminaFill = document.getElementById('staminaFill');
 const taskListEl = document.getElementById('taskList');
+const dayEl = document.getElementById('dayStat');
+const powerEl = document.getElementById('powerStat');
+const waterEl = document.getElementById('waterStat');
+const airEl = document.getElementById('airStat');
 
 let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -39,8 +44,10 @@ let armed = false;
 let ammo = 5;
 let reserve = 20;
 let reloading = false;
-let foodDays = 8;
 let health = 100;
+const survival = new Survival();
+let saveTimer = 0;
+let recovery = 0;
 const keys_found = new Set();
 let hatchOpen = false;
 let hurtFlash = 0;
@@ -54,6 +61,11 @@ const clock = new THREE.Clock();
 const keys = {};
 const ray = new THREE.Raycaster();
 let msgTimer = 0;
+
+// The world the player is standing in: shelter, surface compound or silo.
+function activeScene() {
+  return game.scenes?.[currentWorld] || game.bunker;
+}
 
 function updateOrientation() {
   document.body.classList.toggle('portrait', innerHeight > innerWidth);
@@ -163,13 +175,19 @@ async function prepare() {
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
         arm: () => { armed = true; game.setArmed(true); ammo = 5; reserve = 20; updateAmmo(); },
         aimAt: (target) => {
-          const to = target.clone().sub(game.camera.getWorldPosition(new THREE.Vector3()));
+          const point = target.isVector3 ? target.clone() : new THREE.Vector3(target.x, target.y, target.z);
+          const to = point.sub(game.camera.getWorldPosition(new THREE.Vector3()));
           yaw = Math.atan2(-to.x, -to.z);
           pitch = Math.atan2(to.y, Math.hypot(to.x, to.z));
         },
         fire: () => fire(),
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
-        state: () => ({ health, foodDays, ammo, reserve, armed, doorOpen: game.doorOpen(), breached: game.creatures.breached.length }),
+        state: () => ({ health, ammo, reserve, armed, keys: keys_found.size,
+          survival: survival.snapshot, blackout: survival.blackout,
+          doorOpen: game.doorOpen(), hatchOpen: game.hatchOpen?.() ?? false,
+          breached: game.creatures.breached.length, objectives: [...completed] }),
+        newRun: () => clearRun(),
+        survival,
         debug: () => ({ started, modal, cctv, keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
           climbable,
@@ -180,7 +198,7 @@ async function prepare() {
           started = false;
           const cam = game.camera;
           cam.parent?.remove(cam);
-          (currentWorld === 'outside' ? game.outside : game.bunker).add(cam);
+          activeScene().add(cam);
           cam.position.set(px, py, pz);
           cam.rotation.set(0, 0, 0);
           cam.lookAt(tx, ty, tz);
@@ -207,7 +225,18 @@ async function prepare() {
 function wireGameEvents() {
   addEventListener('lostsignal:computer', () => openModal('computer'));
   addEventListener('lostsignal:radio', () => { openModal('radio'); setRadioNoise(0.2); });
-  addEventListener('lostsignal:generator', () => flash('GENERATOR 61% LOAD // FUEL 73%'));
+  addEventListener('lostsignal:generator', () => {
+    const result = survival.refuel();
+    flash(result.reason, 2600);
+    updateStats();
+    if (result.ok) clickSound(180, .3, .06);
+  });
+  addEventListener('lostsignal:filtration', () => {
+    const result = survival.serviceFilters();
+    flash(result.reason, 2600);
+    updateStats();
+    if (result.ok) clickSound(340, .18, .05);
+  });
   addEventListener('lostsignal:vaultopen', () => {
     flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE');
     window.dispatchEvent(new CustomEvent('lostsignal:vaultkey'));
@@ -278,11 +307,11 @@ function wireGameEvents() {
     if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
     cacheEmptied = true;
     reserve += 24;
-    foodDays += 6;
+    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
     keys_found.add('B');
     updateAmmo();
-    foodEl.textContent = `${foodDays} DAYS`;
-    flash('+24 ROUNDS · +6 DAYS RATIONS · LAUNCH KEY B', 3400);
+    updateStats();
+    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS · LAUNCH KEY B', 4000);
     clickSound(520, .12, .05);
     completeObjective('cache');
     checkKeys();
@@ -310,6 +339,7 @@ function wireGameEvents() {
   addEventListener('lostsignal:attack', () => {
     if (!started) return;
     health = Math.max(0, health - (8 + Math.random() * 6));
+    recovery = 0;
     hurtFlash = 1;
     updateHealth();
     hurtSound();
@@ -450,8 +480,8 @@ function use() {
   if (downed) {
     downed.userData.harvested = true;
     const gain = downed.userData.kind === 'deer' ? 3 : 1;
-    foodDays += gain;
-    foodEl.textContent = `${foodDays} DAYS`;
+    survival.resupply({ food: gain });
+    updateStats();
     downed.parent?.remove(downed);
     flash(`${downed.userData.kind.toUpperCase()} HARVESTED — +${gain} DAYS FOOD`, 2200);
   }
@@ -469,7 +499,7 @@ function fire() {
 
   // fire() runs from an input event, so the camera still holds last frame's
   // matrix. Aiming off by a frame of mouse movement is a miss at range.
-  const world = currentWorld === 'outside' ? game.outside : game.bunker;
+  const world = activeScene();
   world.updateMatrixWorld();
 
   ray.setFromCamera({ x: 0, y: 0 }, game.camera);
@@ -499,7 +529,7 @@ function fire() {
     flash('THE SHOT ECHOES THROUGH THE SHELTER', 900);
   }
 
-  if (ammo === 0 && reserve > 0) setTimeout(reload, 450);
+  if (ammo === 0 && reserve > 0) queuedReload = 0.45;
 }
 
 function resolveHit(target, point) {
@@ -524,23 +554,96 @@ function resolveHit(target, point) {
   flash('INFECTED HIT', 700);
 }
 
+let reloadTimer = 0;
+let queuedReload = 0;
+
 function reload() {
   if (reloading || ammo >= 5 || reserve <= 0) return;
   reloading = true;
+  reloadTimer = 1.2;
   game.playGun('reload');
   flash('RELOADING…', 1200);
-  clickSound(170,.1,.04);
-  setTimeout(() => {
-    const take = Math.min(5 - ammo, reserve);
-    ammo += take;
-    reserve -= take;
-    reloading = false;
-    updateAmmo();
-    clickSound(310,.08,.04);
-  }, 1200);
+  clickSound(170, .1, .04);
+}
+
+function updateReload(dt) {
+  if (queuedReload > 0) {
+    queuedReload -= dt;
+    if (queuedReload <= 0) reload();
+  }
+  if (!reloading) return;
+  reloadTimer -= dt;
+  if (reloadTimer > 0) return;
+  const take = Math.min(5 - ammo, reserve);
+  ammo += take;
+  reserve -= take;
+  reloading = false;
+  updateAmmo();
+  clickSound(310, .08, .04);
 }
 
 function updateAmmo() { ammoEl.textContent = `${ammo} / ${reserve}`; }
+
+// A flat generator is not a number going red: the shelter goes dark, and the
+// only thing still lit is the emergency lamp.
+let blackoutLights = null;
+function setBlackout(dark) {
+  if (!blackoutLights) {
+    blackoutLights = [];
+    game.bunker.traverse((object) => {
+      if (object.isPointLight && object !== game.emergency) blackoutLights.push({ light: object, base: object.intensity });
+      if (object.isSpotLight) blackoutLights.push({ light: object, base: object.intensity });
+    });
+  }
+  for (const entry of blackoutLights) entry.light.intensity = dark ? entry.base * 0.02 : entry.base;
+  flash(dark ? 'THE GENERATOR HAS STOPPED — REFUEL IT' : 'POWER RESTORED', 3200);
+  if (dark) hurtSound();
+}
+
+function persistRun() {
+  saveRun({
+    survival: survival.snapshot,
+    elapsed: survival.elapsed,
+    health, ammo, reserve, armed,
+    keys: [...keys_found],
+    completed: [...completed],
+    cacheEmptied, launchArmed,
+  });
+}
+
+function restoreRun() {
+  const saved = loadRun();
+  if (!saved) return false;
+  Object.assign(survival, saved.survival || {});
+  survival.elapsed = saved.elapsed || 0;
+  health = saved.health ?? 100;
+  ammo = saved.ammo ?? 5;
+  reserve = saved.reserve ?? 20;
+  cacheEmptied = !!saved.cacheEmptied;
+  launchArmed = !!saved.launchArmed;
+  for (const key of saved.keys || []) keys_found.add(key);
+  for (const id of saved.completed || []) completed.add(id);
+  if (saved.armed) {
+    armed = true;
+    game.setArmed(true);
+    document.body.classList.add('armed');
+  }
+  return true;
+}
+
+const statClass = (value, warn, bad) => (value <= bad ? 'bad' : (value <= warn ? 'warn' : 'ok'));
+
+function updateStats() {
+  dayEl.textContent = String(survival.day);
+  powerEl.textContent = `${Math.round(survival.power)}%`;
+  powerEl.className = statClass(survival.power, 35, 12);
+  waterEl.textContent = `${Math.floor(survival.water)} DAYS`;
+  waterEl.className = statClass(survival.water, 5, 1);
+  airEl.textContent = `${Math.round(survival.air)}%`;
+  airEl.className = statClass(survival.air, 30, 15);
+  foodEl.textContent = `${Math.floor(survival.food)} DAYS`;
+  foodEl.className = statClass(survival.food, 3, 1);
+}
 
 function updateHealth() {
   healthEl.textContent = `${Math.round(health)}%`;
@@ -551,9 +654,9 @@ function updateHealth() {
 // lost the day's foraging, which keeps a run going.
 function collapse() {
   health = 45;
-  foodDays = Math.max(0, foodDays - 2);
-  foodEl.textContent = `${foodDays} DAYS`;
+  survival.food = Math.max(0, survival.food - 2);
   updateHealth();
+  updateStats();
   currentWorld = 'bunker';
   const spawn = game.setWorld('bunker');
   body.teleport(spawn.x, spawn.y, spawn.z);
@@ -887,7 +990,7 @@ const impactMaterials = {
 const debris = [];
 
 function burst(point, kind, count = 7, spread = 0.26) {
-  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  const scene = activeScene();
   for (let i = 0; i < count; i++) {
     const particle = new THREE.Mesh(impactGeometry, impactMaterials[kind]);
     particle.position.copy(point);
@@ -928,7 +1031,10 @@ startButton.onclick=async()=>{
   if(!game){location.reload();return}
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
-  started=true;renderObjectives();document.body.classList.add('playing');boot.style.display='none';updateOrientation();
+  started=true;
+  if (restoreRun()) flash(`RUN RESUMED — DAY ${survival.day}`, 2600);
+  updateStats();updateAmmo();updateHealth();renderObjectives();
+  document.body.classList.add('playing');boot.style.display='none';updateOrientation();
   setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
   if(!coarse)renderer.domElement.requestPointerLock?.();
   flash('SHELTER 47 // REPOSITORY BUILD',2200);
@@ -1007,15 +1113,34 @@ function renderCameraFeed() {
 // frame clock, which headless Chromium does not run on an idle page.
 function simulate(dt) {
   updatePlayer(dt);
-  (currentWorld === 'outside' ? game.outside : game.bunker).updateMatrixWorld();
+  activeScene().updateMatrixWorld();
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
   updateWeapon(dt);
+  updateReload(dt);
   updateEffects(dt);
   updateAmbience();
+  const tick = survival.tick(dt, { indoors: currentWorld !== 'outside' });
+  if (tick.damage > 0) {
+    health = Math.max(0, health - tick.damage);
+    updateHealth();
+    if (health <= 0) collapse();
+  }
+  if (tick.dayChanged) {
+    updateStats();
+    flash(`DAY ${survival.day} IN SHELTER 47`, 2600);
+  }
+  if (tick.blackoutChanged) setBlackout(survival.blackout);
+
+  saveTimer += dt;
+  if (saveTimer > 5) { saveTimer = 0; persistRun(); }
+
   hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
-  if (health < 100 && currentWorld === 'bunker') {
+  // Recovery only starts once nothing has hit you for a while, and only in the
+  // shelter. Bleeding out on the surface is the player's problem.
+  recovery += dt;
+  if (health < 100 && currentWorld === 'bunker' && recovery > 6 && survival.strain === 0) {
     health = Math.min(100, health + dt * 1.6);
     updateHealth();
   }
@@ -1032,7 +1157,7 @@ function loop() {
     return;
   }
 
-  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  const scene = activeScene();
   renderPass.scene = scene;
   renderPass.camera = game.camera;
   gradePass.uniforms.time.value = clock.elapsedTime;

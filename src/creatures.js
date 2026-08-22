@@ -30,6 +30,8 @@ class Creature {
   constructor(root, kind, options = {}) {
     this.dying = 0;
     this.stagger = 0;
+    this.detourTimer = 0;
+    this.detourHeading = 0;
     this.root = root;
     this.kind = kind;
     this.speed = options.speed ?? 1.6;
@@ -66,9 +68,21 @@ class Creature {
     return true;
   }
 
+  // Set a heading unless a detour is in progress. Callers that re-aim every
+  // frame — anything chasing the player or drawn to the open blast door —
+  // would otherwise steer straight back into whatever just blocked them and
+  // stand there grinding against it.
+  steer(heading) {
+    if (this.detourTimer <= 0) this.heading = heading;
+  }
+
   // Shared locomotion: face the heading, walk forward, refuse to walk into
   // anything the player would also collide with.
   advance(dt, speed, colliders) {
+    if (this.detourTimer > 0) {
+      this.detourTimer -= dt;
+      this.heading = this.detourHeading;
+    }
     const target = this.heading;
     let delta = ((target - this.root.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     this.root.rotation.y += THREE.MathUtils.clamp(delta, -this.turnRate * dt, this.turnRate * dt);
@@ -77,7 +91,10 @@ class Creature {
     const nextX = this.root.position.x + _step.x;
     const nextZ = this.root.position.z + _step.z;
     if (colliders.contains(nextX, nextZ, this.radius, 0.25, 1.2)) {
-      this.heading += Math.PI * (0.6 + Math.random() * 0.5);
+      // Slide around the obstacle for a moment rather than reversing into the
+      // open and immediately turning back into it.
+      this.detourTimer = 0.8 + Math.random() * 0.7;
+      this.detourHeading = this.heading + (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 2.1);
       return 0;
     }
     this.root.position.x = nextX;
@@ -108,7 +125,7 @@ class Prey extends Creature {
 
     if (distance < this.fleeRange) {
       this.state = 'flee';
-      this.heading = Math.atan2(-_toPlayer.x, -_toPlayer.z);
+      this.steer(Math.atan2(-_toPlayer.x, -_toPlayer.z));
       this.timer = 2.5;
     } else if (this.timer <= 0) {
       this.state = Math.random() < 0.45 ? 'graze' : 'wander';
@@ -173,10 +190,10 @@ class Infected extends Creature {
 
     if (distance < this.senseRange) {
       this.state = distance < this.attackRange ? 'attack' : 'pursue';
-      this.heading = Math.atan2(_toPlayer.x, _toPlayer.z);
+      this.steer(Math.atan2(_toPlayer.x, _toPlayer.z));
     } else if (this.lure) {
       this.state = 'lured';
-      this.heading = Math.atan2(this.lure.x - this.root.position.x, this.lure.z - this.root.position.z);
+      this.steer(Math.atan2(this.lure.x - this.root.position.x, this.lure.z - this.root.position.z));
     } else {
       this.timer -= dt;
       if (this.timer <= 0) {
@@ -319,7 +336,7 @@ export function createCreatureSystem({ scene, colliders, assets, counts = {}, br
         // Only drive them from here when the surface simulation is idle;
         // otherwise their own update owns the heading this frame.
         if (world !== 'outside') {
-          agent.heading = Math.atan2(dx, dz);
+          agent.steer(Math.atan2(dx, dz));
           const moved = agent.advance(dt, agent.speed * 0.9, colliders);
           agent.phase += moved * 2.6 * dt;
           swing(agent.limbs, ['legL'], agent.phase, moved * 0.13);
