@@ -1,0 +1,14 @@
+import { chromium } from 'playwright';
+const [url, out] = process.argv.slice(2);
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion'] });
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 1 });
+const errors = [];
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+page.on('pageerror', e => errors.push(String(e)));
+await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+await page.waitForFunction(() => document.title === 'READY', null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for READY'));
+await page.waitForTimeout(400);
+await page.screenshot({ path: out, fullPage: true });
+if (errors.length) console.log('ERRORS:', errors.slice(0, 8).join(' | '));
+console.log('shot ->', out);
+await browser.close();

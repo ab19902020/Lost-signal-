@@ -1,0 +1,95 @@
+import { chromium } from 'playwright';
+
+// Headless Chromium only ticks requestAnimationFrame when the compositor is
+// producing frames, so an idle page freezes the game loop mid-test. A tiny
+// screencast keeps frames flowing for the whole run.
+async function pumpFrames(page) {
+  const client = await page.context().newCDPSession(page);
+  client.on('Page.screencastFrame', ({ sessionId }) => {
+    client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await client.send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64, everyNthFrame: 1 });
+  return () => client.send('Page.stopScreencast').catch(() => {});
+}
+
+const browser = await chromium.launch({
+  executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion'],
+});
+const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+const errors = [];
+page.on('pageerror', e => errors.push(String(e).slice(0, 160)));
+const stopPump = await pumpFrames(page);
+await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
+await page.waitForFunction(() => { const b = document.getElementById('start'); return b && !b.disabled; }, null, { timeout: 60000, polling: 100 });
+await page.evaluate(() => document.getElementById('start').click());
+await page.waitForTimeout(800);
+
+const setup = (x, z, yaw) => page.evaluate(([x, z, yaw]) => {
+  globalThis.__ls.moveTo(x, z);
+  globalThis.__ls.look(yaw, 0);
+}, [x, z, yaw]);
+const read = () => page.evaluate(() => {
+  const b = globalThis.__ls.body;
+  return { x: +b.position.x.toFixed(2), y: +b.position.y.toFixed(2), z: +b.position.z.toFixed(2),
+           eye: +b.eyeHeight.toFixed(2), grounded: b.grounded };
+});
+// Headless Chromium does not run requestAnimationFrame on an idle page, so
+// the simulation is advanced directly at a fixed timestep instead of waiting
+// on the browser's frame clock.
+const frames = (count) => page.evaluate((n) => globalThis.__ls.simulate(n), count);
+const walk = async (count, keys = ['KeyW']) => {
+  for (const k of keys) await page.keyboard.down(k);
+  await frames(count);
+  for (const k of keys) await page.keyboard.up(k);
+  await frames(4);
+};
+
+const results = {};
+
+// Walk into the shelter's back wall: the capsule must stop short of it.
+await setup(0, 5.6, Math.PI);
+await frames(2);
+await walk(90);
+results.backWall = await read();
+
+// Walk into the storage rack standing against the east wall.
+await setup(3.6, 1.45, -Math.PI / 2);
+await frames(2);
+await walk(90);
+results.storageRack = await read();
+
+// Sprint down the open middle of the room, then crouch under the desk line.
+await setup(0, 5.5, Math.PI);
+await frames(2);
+await walk(45, ['KeyW', 'ShiftLeft']);
+results.sprint = await read();
+await walk(30, ['ControlLeft']);
+results.crouch = await read();
+await frames(30);
+results.standBackUp = await read();
+
+// A 1x1 map means a texture failed to load and three substituted a placeholder.
+results.textures = await page.evaluate(() => {
+  const seen = [];
+  globalThis.__ls.game.bunker.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m?.map || seen.some(e => e.material === m.name)) continue;
+      seen.push({ material: m.name, size: `${m.map.image?.width}x${m.map.image?.height}` });
+    }
+  });
+  return seen;
+});
+
+results.world = await page.evaluate(() => ({
+  wildlife: globalThis.__ls.game.wildlife.length,
+  zombies: globalThis.__ls.game.zombies.length,
+  bunkerColliders: globalThis.__ls.game.colliders.bunker.boxes.length,
+  outsideColliders: globalThis.__ls.game.colliders.outside.boxes.length,
+}));
+
+console.log(JSON.stringify(results, null, 1));
+if (errors.length) console.log('ERRORS:', [...new Set(errors)].join(' | '));
+await stopPump();
+await browser.close();

@@ -101,10 +101,29 @@ def between(name, a, b, radius, material, verts=16):
     return o
 
 
+# These scripts author with Y as the up axis (floor at y=0, ceiling at y=4.2),
+# which is exactly the convention the Three.js runtime expects. Blender's glTF
+# exporter otherwise assumes Z is up and rotates every asset 90 degrees on the
+# way out, which shipped the whole world lying on its back. Exporting with
+# export_yup=False keeps the authored axes, and the marker empty lets the loader
+# tell a corrected asset from a legacy one.
+ORIENTATION_MARKER = 'LS_ORIENT_YUP'
+
+
+def add_orientation_marker():
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+    o = bpy.context.object
+    o.name = ORIENTATION_MARKER
+    o.empty_display_size = .01
+    return o
+
+
 def export(name):
     path = os.path.join(OUT, name)
+    add_orientation_marker()
     bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True)
+    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True,
+                              export_yup=False)
     print('EXPORT', path)
 
 
@@ -148,7 +167,7 @@ def build_radio():
     cube('Radio_Body',(0,.30,0),(.68,.30,.30),GREEN,edge=.065)
     cube('Radio_Display',(-.24,.37,-.315),(.25,.12,.012),AMBER,edge=.015)
     for i in range(3):
-        cyl('Radio_Knob%d'%i,(.16+i*.22,.25,-.335),.075,.055,DARK,rotation=(math.pi/2,0,0),verts=28)
+        cyl('Radio_Knob%d'%i,(.16+i*.22,.25,-.335),.075,.055,DARK,verts=28)
     for i in range(9):
         cube('SpeakerSlot%d'%i,(-.57+i*.065,.18,-.337),(.012,.11,.012),DARK,edge=.004)
     cyl('Antenna',(0.52,1.0,.06),.011,1.25,STEEL2,rotation=(0,0,-.10),verts=10)
@@ -163,7 +182,7 @@ def build_cctv():
         x=-.92+(i%2)*1.84; y=1.72+(i//2)*.92
         cube('MonitorHousing%d'%i,(x,y,-.50),(.80,.42,.11),DARK,edge=.075)
         cube('MonitorScreen%d'%i,(x,y,-.622),(.68,.32,.012),SCREEN,edge=.024)
-        cyl('MonitorLED%d'%i,(x+.63,y+.31,-.65),.016,.015,RED,rotation=(math.pi/2,0,0),verts=12)
+        cyl('MonitorLED%d'%i,(x+.63,y+.31,-.65),.016,.015,RED,verts=12)
     for row in range(3):
         for col in range(8):
             cube('CCTV_Button_%d_%d'%(row,col),(-1.48+col*.22,1.47,.16+row*.13),(.07,.018,.045),AMBER if (row+col)%5==0 else STEEL2,rotation=(-.14,0,0),edge=.01)
@@ -215,7 +234,7 @@ def build_generator():
         cube('Vent_'+str(x),(x,1.02,-.78),(.045,.28,.015),STEEL2,edge=.007)
     cube('Generator_Panel',(.72,1.38,-.77),(.42,.26,.025),DARK,edge=.025)
     for i,(x,m) in enumerate(((.52,SCREEN),(.72,AMBER),(.92,RED))):
-        cyl('GenLED%d'%i,(x,1.42,-.81),.035,.018,m,rotation=(math.pi/2,0,0),verts=16)
+        cyl('GenLED%d'%i,(x,1.42,-.81),.035,.018,m,verts=16)
     cyl('Generator_Exhaust',(-.93,1.82,.05),.10,.85,DARK,verts=22)
     torus('ExhaustBend',(-.65,2.22,.05),.28,.10,DARK,rotation=(math.pi/2,0,0))
     for x in (-.92,.92):
@@ -270,14 +289,14 @@ def build_door():
     cube('BlastDoor_Inset',(0,1.65,-.30),(1.48,1.37,.035),DARK,edge=.055)
     for y in (.55,1.1,1.65,2.2,2.75):
         cube('DoorBrace_'+str(y),(0,y,-.355),(1.32,.055,.055),STEEL2,edge=.022)
-    torus('DoorWheel_Rim',(.82,1.62,-.43),.42,.045,RED,rotation=(math.pi/2,0,0))
-    cyl('DoorWheel_Hub',(.82,1.62,-.43),.11,.12,DARK,rotation=(math.pi/2,0,0),verts=28)
+    torus('DoorWheel_Rim',(.82,1.62,-.43),.42,.045,RED)
+    cyl('DoorWheel_Hub',(.82,1.62,-.43),.11,.12,DARK,verts=28)
     for i in range(8):
         a=i*math.tau/8
         between('Spoke%d'%i,(.82+math.cos(a)*.09,1.62+math.sin(a)*.09,-.43),(.82+math.cos(a)*.38,1.62+math.sin(a)*.38,-.43),.018,RED,12)
     for sx in (-1,1):
         for sy in (.52,1.0,1.48,1.96,2.44,2.92):
-            cyl('DoorBolt', (sx*1.52,sy,-.40),.044,.055,DARK,rotation=(math.pi/2,0,0),verts=16,edge=.006)
+            cyl('DoorBolt', (sx*1.52,sy,-.40),.044,.055,DARK,verts=16,edge=.006)
     export('blast_door_v2.glb')
 
 

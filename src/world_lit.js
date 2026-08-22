@@ -1,171 +1,181 @@
 import * as THREE from 'three';
 import { createGameWorld as createBaseWorld } from './world_blender.js';
 
-// Runtime lighting/material grading only. Visible world geometry remains Blender GLB.
-// Art direction: grounded post-apocalyptic survival shelter — readable, worn,
-// industrial and dirty rather than gothic/near-black horror.
-export function createGameWorld(assets) {
-  const game = createBaseWorld(assets);
-  const { bunker } = game;
+// Runtime lighting and material grading only. Visible world geometry stays in
+// the Blender GLBs; this layer owns every light parameter in the shelter so
+// there is exactly one place that decides how the room reads.
+//
+// Art direction: a lived-in post-apocalyptic shelter. Grimy, cool concrete lit
+// by a handful of failing fluorescents, with warm practical pools at the work
+// stations. Gloomy, but never a black screen — the Blender detail has to read.
+//
+// Three.js lights are photometric: point/spot intensity is candela and falls
+// off with distance squared, so a ceiling fixture 2 m above head height wants
+// tens of candela, not hundreds.
 
-  // A bunker should be gloomy, but it should still be a place someone lives in.
-  // Lift the black floor and greatly reduce fog so the Blender work is visible.
-  bunker.background = new THREE.Color(0x171b18);
-  bunker.fog = new THREE.FogExp2(0x252a25, 0.0045);
+const PALETTE = {
+  darkSteel: 0x2f3532,
+  steel: 0x474d48,
+  brushed: 0x6a706a,
+  green: 0x36483a,
+  concrete: 0x4e5049,
+  fabric: 0x424940,
+  rubber: 0x191c1a,
+  wood: 0x4c3729,
+  warning: 0x7c4030,
+  deck: 0x585b52,
+};
 
-  const palette = {
-    darkSteel: new THREE.Color(0x2b302d),
-    steel: new THREE.Color(0x505751),
-    brushed: new THREE.Color(0x747a72),
-    green: new THREE.Color(0x34483a),
-    concrete: new THREE.Color(0x62645d),
-    fabric: new THREE.Color(0x3d443d),
-    rubber: new THREE.Color(0x171a18),
-    wood: new THREE.Color(0x493426),
-    warning: new THREE.Color(0x763c2d),
-  };
-
-  // Re-grade Blender materials away from crushed black / gothic metal.
-  bunker.traverse((object) => {
+function gradeMaterials(scene) {
+  const colors = Object.fromEntries(
+    Object.entries(PALETTE).map(([k, v]) => [k, new THREE.Color(v)]),
+  );
+  scene.traverse((object) => {
     if (!object.isMesh) return;
     const materials = Array.isArray(object.material) ? object.material : [object.material];
-    materials.filter(Boolean).forEach((m) => {
-      const n = (m.name || '').toLowerCase();
-      if (!m.color) return;
+    for (const m of materials) {
+      if (!m?.color || m.userData.lsGraded) continue;
+      m.userData.lsGraded = true;
+      const name = (m.name || '').toLowerCase();
 
-      if (n.includes('darksteel')) m.color.copy(palette.darkSteel);
-      else if (n.includes('brushed')) m.color.copy(palette.brushed);
-      else if (n === 'steel' || n.includes('steel')) m.color.copy(palette.steel);
-      else if (n.includes('militarygreen')) m.color.copy(palette.green);
-      else if (n.includes('concrete')) m.color.copy(palette.concrete);
-      else if (n.includes('fabric')) m.color.copy(palette.fabric);
-      else if (n.includes('rubber')) m.color.copy(palette.rubber);
-      else if (n.includes('darkwood')) m.color.copy(palette.wood);
-      else if (n.includes('warningred')) m.color.copy(palette.warning);
+      if (name.includes('darksteel')) m.color.copy(colors.darkSteel);
+      else if (name.includes('brushed')) m.color.copy(colors.brushed);
+      else if (name.includes('steel')) m.color.copy(colors.steel);
+      else if (name.includes('militarygreen') || name.includes('greenpaint')) m.color.copy(colors.green);
+      else if (name.includes('plate')) m.color.copy(colors.deck);
+      else if (name.includes('concrete')) m.color.copy(colors.concrete);
+      else if (name.includes('fabric')) m.color.copy(colors.fabric);
+      else if (name.includes('rubber')) m.color.copy(colors.rubber);
+      else if (name.includes('wood')) m.color.copy(colors.wood);
+      else if (name.includes('warningred')) m.color.copy(colors.warning);
       else {
-        // Protect emissive screens, but prevent ordinary surfaces from being
-        // literally black in normal shelter lighting.
-        const emissivePower = m.emissive ? Math.max(m.emissive.r, m.emissive.g, m.emissive.b) : 0;
-        const lum = m.color.r * 0.2126 + m.color.g * 0.7152 + m.color.b * 0.0722;
-        if (emissivePower < 0.08 && lum < 0.075) m.color.lerp(palette.darkSteel, 0.58);
+        // Lift crushed blacks so ordinary surfaces still show their shape,
+        // but leave emissive screens and signage alone.
+        const emissive = m.emissive ? Math.max(m.emissive.r, m.emissive.g, m.emissive.b) : 0;
+        const luma = m.color.r * 0.2126 + m.color.g * 0.7152 + m.color.b * 0.0722;
+        if (emissive < 0.08 && luma < 0.06) m.color.lerp(colors.darkSteel, 0.55);
       }
 
-      if ('roughness' in m) m.roughness = Math.max(m.roughness ?? 0.5, 0.48);
-      if ('metalness' in m && m.metalness > 0.75) m.metalness = 0.68;
-      m.needsUpdate = true;
-    });
-  });
-
-  let oldEmergency = null;
-  const originalCeilingPoints = [];
-
-  // Rebalance the base-world lights to modern Three.js photometric values.
-  bunker.traverse((object) => {
-    if (object.isHemisphereLight) {
-      object.color.setHex(0xd4d8cf);
-      object.groundColor.setHex(0x4a4e46);
-      object.intensity = 1.45;
-    }
-    if (object.isAmbientLight) {
-      object.color.setHex(0x9aa096);
-      object.intensity = 0.72;
-    }
-    if (object.isPointLight) {
-      const c = object.color;
-      const red = c.r > c.g * 1.8 && c.r > c.b * 1.8;
-      if (red) {
-        oldEmergency = object;
-        object.color.setHex(0xd87545);
-        object.intensity = 26;
-        object.distance = 8;
-        object.decay = 2;
+      // The diamond-plate floor shipped as polished metal, which turned every
+      // fixture into a star-shaped specular smear across the room. A worn steel
+      // deck is rough and only faintly metallic.
+      if (name.includes('plate')) {
+        if ('roughness' in m) m.roughness = 0.94;
+        if ('metalness' in m) m.metalness = 0.22;
       } else {
-        object.color.setHex(0xe2e5dc);
-        object.intensity = 105;
-        object.distance = 10.5;
-        object.decay = 2;
-        originalCeilingPoints.push(object);
+        if ('roughness' in m) m.roughness = THREE.MathUtils.clamp(m.roughness ?? 0.6, 0.42, 0.98);
+        if ('metalness' in m && m.metalness > 0.8) m.metalness = 0.7;
       }
+      if (m.normalScale) m.normalScale.multiplyScalar(0.65);
+      m.needsUpdate = true;
     }
   });
+}
 
-  // Broad cool-grey bounce — like light reflecting from concrete and painted steel.
-  const roomFill = new THREE.HemisphereLight(0xd9ddd4, 0x4b5048, 0.88);
-  bunker.add(roomFill);
+export function createGameWorld(assets) {
+  const game = createBaseWorld(assets);
+  const { bunker, outside } = game;
 
-  const serviceBounce = new THREE.DirectionalLight(0xc7cbc1, 1.15);
-  serviceBounce.position.set(-3.5, 6.0, 5.0);
-  bunker.add(serviceBounce);
+  bunker.background = new THREE.Color(0x0d1010);
+  bunker.fog = new THREE.FogExp2(0x171b19, 0.019);
+  gradeMaterials(bunker);
+  gradeMaterials(outside);
 
-  const rearBounce = new THREE.DirectionalLight(0x9da99f, 0.55);
-  rearBounce.position.set(5.0, 4.0, -5.5);
-  bunker.add(rearBounce);
+  // --- Shelter ambience -----------------------------------------------------
+  // A weak sky/ground term stands in for concrete bounce. Everything else in
+  // the room is a real fixture the player can see.
+  const bounce = new THREE.HemisphereLight(0x8b978f, 0x24261f, 0.72);
+  bunker.add(bounce);
+  const fill = new THREE.AmbientLight(0x5a635c, 0.3);
+  bunker.add(fill);
 
-  // Practical fluorescent pools under the actual Blender ceiling fixtures.
-  // Neutral white, not green horror light.
-  const fixturePositions = [[-3.4,-3.6],[3.4,-3.6],[-3.4,2.35],[3.4,2.35]];
-  const practicalSpots = [];
-  fixturePositions.forEach(([x,z], index) => {
-    const spot = new THREE.SpotLight(0xf2f0df, 330, 12.5, 0.95, 0.78, 2);
-    spot.position.set(x, 3.56, z);
-    spot.target.position.set(x * 0.72, 0.15, z * 0.72);
-    spot.castShadow = index === 0 || index === 3;
-    if (spot.castShadow) {
-      spot.shadow.mapSize.set(768,768);
-      spot.shadow.bias = -0.00022;
-      spot.shadow.camera.near = 0.35;
-      spot.shadow.camera.far = 13;
+  // --- Ceiling fluorescents -------------------------------------------------
+  // game.bunkerLights are the point lights sitting inside the Blender fixtures.
+  const tubes = game.bunkerLights.map((light, index) => {
+    light.color.setHex(0xdfe6df);
+    light.intensity = 62;
+    light.distance = 13;
+    light.decay = 2;
+    light.castShadow = index % 2 === 0;
+    if (light.castShadow) {
+      light.shadow.mapSize.set(1024, 1024);
+      light.shadow.bias = -0.0009;
+      light.shadow.normalBias = 0.022;
+      light.shadow.camera.near = 0.25;
+      light.shadow.camera.far = 12;
     }
-    bunker.add(spot, spot.target);
-    practicalSpots.push(spot);
-
-    // Very broad weak bounce around each fixture.
-    const bounce = new THREE.PointLight(0xd7d7ca, 38, 6.8, 2);
-    bounce.position.set(x, 2.55, z);
-    bunker.add(bounce);
+    // A downward cone under each fixture reads as a real fluorescent pool.
+    const pool = new THREE.SpotLight(0xeef2e6, 40, 11, 0.95, 0.62, 2);
+    pool.position.copy(light.position);
+    pool.target.position.set(light.position.x * 0.6, 0, light.position.z * 0.6);
+    bunker.add(pool, pool.target);
+    return { light, pool, base: 62, poolBase: 40, phase: index * 1.7, failing: index === 2 };
   });
 
-  // Work areas get believable task lighting instead of theatrical colour pools.
-  const deskTask = new THREE.PointLight(0xe8e4cf, 54, 5.8, 2);
-  deskTask.position.set(2.35, 2.1, -2.85);
-  bunker.add(deskTask);
+  // --- Practicals -----------------------------------------------------------
+  const practical = (hex, intensity, distance, position) => {
+    const light = new THREE.PointLight(hex, intensity, distance, 2);
+    light.position.set(...position);
+    bunker.add(light);
+    return light;
+  };
+  practical(0xffd9a0, 22, 4.6, [2.45, 1.55, -2.95]);   // terminal glow
+  practical(0xbfe2d6, 20, 4.4, [-3.15, 1.55, -2.95]);  // CCTV monitor wall
+  practical(0xffc27a, 14, 3.8, [4.60, 1.35, 4.75]);    // generator panel
+  practical(0xffce8a, 11, 3.4, [-5.95, 1.45, 0.60]);   // vault interior
+  practical(0xa8d8bb, 10, 3.6, [-4.85, 1.30, 6.35]);   // breaker cabinet
 
-  const cctvTask = new THREE.PointLight(0xd8ded5, 46, 5.5, 2);
-  cctvTask.position.set(-3.15, 2.05, -2.9);
-  bunker.add(cctvTask);
+  // The emergency lamp is a restrained warm warning light, not a red wash.
+  const emergency = game.emergency;
+  emergency.color.setHex(0xff6a3a);
+  emergency.intensity = 14;
+  emergency.distance = 7.5;
+  emergency.decay = 2;
 
-  const generatorTask = new THREE.PointLight(0xe2c791, 32, 4.8, 2);
-  generatorTask.position.set(4.7, 1.75, 4.8);
-  bunker.add(generatorTask);
-
-  const vaultTask = new THREE.PointLight(0xe4cf9b, 30, 4.6, 2);
-  vaultTask.position.set(-5.55, 1.9, 0.65);
-  bunker.add(vaultTask);
-
-  // Soft daylight contamination from the blast-door end. This makes the shelter
-  // feel connected to a ruined outside world instead of a gothic crypt.
-  const doorLeak = new THREE.SpotLight(0xc5d1cb, 85, 11, 0.78, 0.82, 2);
-  doorLeak.position.set(0, 2.85, -6.65);
-  doorLeak.target.position.set(0, 0.8, -2.0);
-  bunker.add(doorLeak, doorLeak.target);
+  // --- Exterior -------------------------------------------------------------
+  outside.background = new THREE.Color(0x121a20);
+  outside.fog = new THREE.FogExp2(0x18242b, 0.018);
+  outside.traverse((object) => {
+    if (object.isHemisphereLight) {
+      object.color.setHex(0x6f8ba3);
+      object.groundColor.setHex(0x22262a);
+      object.intensity = 1.9;
+    }
+    if (object.isDirectionalLight) {
+      object.color.setHex(0xb4cbdd);
+      object.intensity = 3.1;
+      object.shadow.bias = -0.0012;
+      object.shadow.normalBias = 0.03;
+    }
+    if (object.isSpotLight) {
+      object.color.setHex(0xe6efe2);
+      object.intensity = 260;
+      object.distance = 40;
+      object.decay = 2;
+      object.penumbra = 0.5;
+      object.angle = 0.72;
+    }
+  });
 
   const baseUpdate = game.update.bind(game);
   let elapsed = 0;
-  game.update = (dt, ...args) => {
-    baseUpdate(dt, ...args);
+  game.update = (dt, ...rest) => {
+    baseUpdate(dt, ...rest);
     elapsed += dt;
 
-    // Emergency light is now a restrained warm warning lamp.
-    if (oldEmergency) oldEmergency.intensity = 24 + Math.sin(elapsed * 1.25) * 1.6;
+    // Slow ballast hum on every tube, plus one fixture that is on its way out.
+    for (const tube of tubes) {
+      const hum = 1 + Math.sin(elapsed * (1.6 + tube.phase * 0.1) + tube.phase) * 0.03;
+      let factor = hum;
+      if (tube.failing) {
+        const stutter = Math.sin(elapsed * 17.3) * Math.sin(elapsed * 2.1);
+        factor = hum * (stutter > 0.72 ? 0.25 : 1);
+      }
+      tube.light.intensity = tube.base * factor;
+      tube.pool.intensity = tube.poolBase * factor;
+    }
 
-    // Tiny fluorescent ballast variation; no horror flickering or blackouts.
-    practicalSpots.forEach((spot, i) => {
-      spot.intensity = 330 + Math.sin(elapsed * (0.7 + i * 0.05) + i) * 4;
-    });
-
-    originalCeilingPoints.forEach((light) => {
-      if (light.intensity < 80) light.intensity = 105;
-    });
+    emergency.intensity = 12 + Math.sin(elapsed * 1.9) * 3;
   };
 
   return game;

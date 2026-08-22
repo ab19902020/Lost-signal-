@@ -2,7 +2,7 @@ name: Build Lost Signal
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   workflow_dispatch:
 
 permissions:
@@ -15,38 +15,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Always produces a downloadable, playable build, whether or not Pages is on.
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Enable GitHub Pages if required
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow || true
-
-      - uses: actions/configure-pages@v5
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - run: npm install
       - run: npm run build
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+      - name: Report build size
+        run: du -sh dist && du -sh dist/assets
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lost-signal-site
+          path: dist
+          retention-days: 14
+
+  # Deploys only once Pages is switched on for the repository:
+  # Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+  # The workflow token is not allowed to create the site itself, so this job is
+  # allowed to fail without failing the build above.
   deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     steps:
-      - name: Deploy
+      - uses: actions/checkout@v4
+      - id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+      - if: steps.pages.outcome == 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.pages.outcome == 'success'
+        run: npm install && npm run build
+      - if: steps.pages.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - if: steps.pages.outcome == 'success'
         id: deployment
         uses: actions/deploy-pages@v4
+      - if: steps.pages.outcome != 'success'
+        run: |
+          echo "::notice::GitHub Pages is not enabled for this repository."
+          echo "::notice::Enable it under Settings -> Pages -> Source: GitHub Actions, then re-run this workflow."

@@ -29,7 +29,8 @@ body.playing.portrait #rotate{display:flex}
 .panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
 #name{font-size:10px;letter-spacing:.16em}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
-.ok{color:var(--green)}.warn{color:var(--amber)}
+.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:#ff7a63}
+body.overlay-open #top{opacity:0;transition:opacity .18s ease}
 #crosshair{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
 #crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
@@ -45,10 +46,19 @@ body.playing #controls{display:block}
 #moveNub{position:absolute;width:50px;height:50px;border-radius:50%;left:39px;top:39px;background:rgba(154,200,166,.20);border:1px solid rgba(255,255,255,.25)}
 #lookZone{position:absolute;left:48%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
 #use{position:absolute;right:22px;bottom:calc(env(safe-area-inset-bottom) + 28px);width:78px;height:78px;border-radius:50%;border:1px solid rgba(255,255,255,.32);background:radial-gradient(circle at 40% 35%,rgba(135,183,150,.38),rgba(10,18,13,.85));color:#effff3;font:800 12px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none}
-#soundBadge{position:absolute;right:18px;top:calc(env(safe-area-inset-top) + 94px);font-size:9px;color:#9fb0a5;background:rgba(4,8,5,.55);padding:5px 7px;border:1px solid rgba(255,255,255,.1)}
+#soundBadge{position:absolute;left:18px;top:calc(env(safe-area-inset-top) + 128px);font-size:9px;color:#9fb0a5;background:rgba(4,8,5,.55);padding:5px 7px;border:1px solid rgba(255,255,255,.1)}
 #fire{position:absolute;right:112px;bottom:calc(env(safe-area-inset-bottom) + 33px);width:72px;height:72px;border-radius:50%;border:1px solid rgba(255,210,170,.36);background:radial-gradient(circle at 40% 35%,rgba(153,91,48,.46),rgba(29,14,8,.88));color:#ffe8d0;font:900 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none;display:none}
 #weaponHud{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom) + 12px);transform:translateX(-50%);font-size:10px;letter-spacing:.08em;padding:6px 9px;border:1px solid rgba(255,230,190,.16);background:rgba(12,8,5,.62);color:#f0dcc5;display:none;text-shadow:0 2px 3px #000}
 body.armed #fire,body.armed #weaponHud{display:block}
+body.armed #reloadBtn{display:block}
+#sprintBtn,#crouchBtn{position:absolute;left:calc(22px + 138px);width:70px;height:44px;border-radius:22px;border:1px solid rgba(255,255,255,.24);background:rgba(13,20,15,.5);color:#dff0e4;font:700 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none}
+#sprintBtn{bottom:calc(env(safe-area-inset-bottom) + 96px)}
+#crouchBtn{bottom:calc(env(safe-area-inset-bottom) + 44px)}
+#sprintBtn.on,#crouchBtn.on{border-color:rgba(150,255,190,.85);background:rgba(28,72,44,.92);color:#c8ffdb}
+#reloadBtn{position:absolute;right:26px;bottom:calc(env(safe-area-inset-bottom) + 118px);width:70px;height:44px;border-radius:22px;border:1px solid rgba(255,210,170,.3);background:rgba(29,14,8,.7);color:#ffe8d0;font:700 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none;display:none}
+#staminaBar{position:absolute;left:22px;bottom:calc(env(safe-area-inset-bottom) + 160px);width:128px;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;opacity:0;transition:opacity .25s ease}
+#staminaBar.on{opacity:1}
+#staminaFill{height:100%;width:100%;background:linear-gradient(90deg,#7fd6a0,#d8e88f);transform-origin:left center}
 .overlay{position:fixed;inset:0;z-index:50;display:none;background:rgba(0,0,0,.08);padding:12px}
 .overlay.open{display:block}
 .frame{position:relative;width:100%;height:100%;border:1px solid rgba(185,255,205,.23);background:transparent;overflow:hidden}
@@ -58,6 +68,10 @@ body.armed #fire,body.armed #weaponHud{display:block}
 #ptzReadout{position:absolute;left:16px;bottom:60px;color:#cbe4d2;font-size:9px;letter-spacing:.06em;text-shadow:0 2px 4px #000}
 #camBtns{position:absolute;right:15px;bottom:15px;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 #camBtns button,#exitCam,.modal button{padding:10px 12px;border:1px solid rgba(210,255,220,.25);background:rgba(7,14,9,.88);color:#e8f5eb;font:inherit;font-size:11px}
+#nightVision.on{border-color:rgba(120,255,170,.9);background:rgba(24,66,38,.95);color:#b6ffcf}
+#motion{position:absolute;top:34px;right:14px;z-index:3;font-size:11px;letter-spacing:.08em;color:rgba(190,220,200,.5)}
+#motion.alert{color:#ff8f70;animation:motionBlink 1s steps(2,end) infinite}
+@keyframes motionBlink{50%{opacity:.25}}
 #exitCam{position:absolute;left:15px;bottom:15px}
 .scan{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.018) 0,rgba(255,255,255,.018) 1px,transparent 2px,transparent 4px)}
 .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:55;width:min(620px,90vw);max-height:78vh;overflow:auto;padding:17px;background:rgba(3,8,5,.97);border:1px solid rgba(190,255,205,.22);display:none;box-shadow:0 20px 80px #000}
@@ -68,16 +82,16 @@ body.armed #fire,body.armed #weaponHud{display:block}
 .row{display:flex;gap:8px}.row button{flex:1}
 #radioText{font-size:11px;line-height:1.6;color:#9faf9f;margin-top:12px}
 @media(pointer:fine){#controls{display:none!important}}
-@media(max-height:500px){#movePad{width:108px;height:108px}#moveNub{left:33px;top:33px;width:42px;height:42px}#use{width:68px;height:68px}}
+@media(max-height:500px){#movePad{width:108px;height:108px}#moveNub{left:33px;top:33px;width:42px;height:42px}#use{width:68px;height:68px}#sprintBtn,#crouchBtn{left:calc(22px + 118px);height:40px}#staminaBar{width:108px}}
 </style>
 </head>
 <body>
 <div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
 <div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
 <div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
-<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
-<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="soundBadge">🔊 SOUND ON</div></div>
-<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button></div><div class="scan"></div></div></div>
+<div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok">87%</span><br>WATER <span class="ok">19 DAYS</span><br>AIR <span class="ok">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span><br>SURVIVORS <span class="warn">1</span></div></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
+<div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><button id="sprintBtn" class="stick">RUN</button><button id="crouchBtn" class="stick">CROUCH</button><button id="reloadBtn">RELOAD</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><div id="staminaBar"><div id="staminaFill"></div></div><div id="soundBadge">🔊 SOUND ON</div></div>
+<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="motion">NO MOTION</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE
 EXTERNAL LINK ......... LOST
