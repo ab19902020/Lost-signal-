@@ -67,6 +67,11 @@ function gradeMaterials(scene) {
         if ('metalness' in m && m.metalness > 0.8) m.metalness = 0.7;
       }
       if (m.normalScale) m.normalScale.multiplyScalar(0.65);
+      // Emissive fittings carry the room when their point light is culled, so
+      // a strip light forty metres away still reads as a strip light.
+      if (m.emissive && Math.max(m.emissive.r, m.emissive.g, m.emissive.b) > 0.05) {
+        m.emissiveIntensity = Math.max(m.emissiveIntensity ?? 1, 1.6);
+      }
       m.needsUpdate = true;
     }
   });

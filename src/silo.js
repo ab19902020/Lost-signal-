@@ -185,14 +185,14 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A silo is lit level by level. Strip lights over the doors give each gallery
   // its own band of light, and the well between them stays dim, which is what
   // sells the drop.
-  scene.add(new THREE.HemisphereLight(0x5a6a70, 0x141614, 0.55));
-  scene.add(new THREE.AmbientLight(0x49535a, 0.3));
+  scene.add(new THREE.HemisphereLight(0x64737a, 0x171a18, 0.9));
+  scene.add(new THREE.AmbientLight(0x515b62, 0.45));
 
   // Fifty-two point lights would be compiled into every shader in the scene.
   // They are all created, but only the nearest handful are ever visible, and
   // the visible count is held constant so the material shaders never recompile.
   const strips = [];
-  const LIT_AT_ONCE = 8;
+  const LIT_AT_ONCE = 12;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
     const count = 4;
@@ -222,6 +222,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let i = 0; i < _lightSort.length; i++) {
       _lightSort[i].light.visible = i < LIT_AT_ONCE;
     }
+  }
+
+  // Culled lights leave the far side of the well black, which reads as a void
+  // rather than as a silo. A handful of wide, always-on lights up the shaft
+  // give the opposite gallery enough to be seen by. They are never culled, so
+  // the visible light count stays constant.
+  for (let i = 0; i <= 3; i++) {
+    const fill = new THREE.PointLight(0x9fb4c4, 130, 46, 1.6);
+    fill.position.set(0, (shaftHeight / 3) * i + levelHeight, 0);
+    scene.add(fill);
   }
 
   // A single hard light at the very top of the well, so looking up reads as a
