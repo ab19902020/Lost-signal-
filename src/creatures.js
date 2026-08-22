@@ -28,6 +28,8 @@ function swing(limbs, keys, phase, amount) {
 
 class Creature {
   constructor(root, kind, options = {}) {
+    this.dying = 0;
+    this.stagger = 0;
     this.root = root;
     this.kind = kind;
     this.speed = options.speed ?? 1.6;
@@ -42,6 +44,27 @@ class Creature {
   }
 
   get position() { return this.root.position; }
+
+  // A downed animal folds over instead of snapping to a right angle: legs give
+  // out, the body drops and the whole thing tips onto its side.
+  collapse(dt) {
+    this.dying = Math.min(1, this.dying + dt * 2.2);
+    const eased = this.dying * this.dying * (3 - 2 * this.dying);
+    this.root.rotation.z = eased * (Math.PI / 2) * this.fallDirection;
+    this.root.position.y = -eased * this.dropHeight;
+    for (const limb of Object.values(this.limbs || {})) {
+      limb.node.rotation.x = THREE.MathUtils.lerp(limb.node.rotation.x, limb.rest + 0.4, dt * 4);
+    }
+  }
+
+  kill() {
+    if (this.root.userData.alive === false) return false;
+    this.root.userData.alive = false;
+    this.fallDirection = Math.random() < 0.5 ? -1 : 1;
+    const box = new THREE.Box3().setFromObject(this.root);
+    this.dropHeight = Math.max(0, (box.max.y - box.min.y) * 0.22);
+    return true;
+  }
 
   // Shared locomotion: face the heading, walk forward, refuse to walk into
   // anything the player would also collide with.
@@ -127,6 +150,8 @@ class Infected extends Creature {
       torso: 'Infected_Torso', head: 'Infected_Head',
     });
     root.userData.hp = options.hp ?? 3;
+    this.staggerTime = options.staggerTime ?? 0.42;
+    this.lure = null;
     this.senseRange = options.senseRange ?? 22;
     this.attackRange = options.attackRange ?? 1.5;
     this.attackCooldown = 0;
@@ -135,12 +160,23 @@ class Infected extends Creature {
   update(dt, playerPosition, colliders, onAttack) {
     if (this.root.userData.alive === false) return;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    if (this.stagger > 0) {
+      // A hit interrupts the advance: it reels, then comes on again.
+      this.stagger = Math.max(0, this.stagger - dt);
+      this.root.rotation.z = Math.sin(this.stagger * 22) * 0.12 * this.stagger;
+      if (this.limbs.torso) this.limbs.torso.node.rotation.x = this.limbs.torso.rest - this.stagger * 0.5;
+      this.phase += dt;
+      return;
+    }
     _toPlayer.subVectors(playerPosition, this.root.position);
     const distance = _toPlayer.length();
 
     if (distance < this.senseRange) {
       this.state = distance < this.attackRange ? 'attack' : 'pursue';
       this.heading = Math.atan2(_toPlayer.x, _toPlayer.z);
+    } else if (this.lure) {
+      this.state = 'lured';
+      this.heading = Math.atan2(this.lure.x - this.root.position.x, this.lure.z - this.root.position.z);
     } else {
       this.timer -= dt;
       if (this.timer <= 0) {
@@ -152,6 +188,7 @@ class Infected extends Creature {
 
     let speed = 0;
     if (this.state === 'pursue') speed = this.speed * (distance < 8 ? 1.45 : 1);
+    else if (this.state === 'lured') speed = this.speed * 0.9;
     else if (this.state === 'shamble') speed = this.speed * 0.42;
 
     const moved = speed > 0 ? this.advance(dt, speed, colliders) : 0;
@@ -189,10 +226,13 @@ function findSpawn(colliders, radius, bounds, avoid) {
   return null;
 }
 
-export function createCreatureSystem({ scene, colliders, assets, counts = {} }) {
+export function createCreatureSystem({ scene, colliders, assets, counts = {}, breach }) {
   const wildlife = [];
   const zombies = [];
   const agents = [];
+  const byRoot = new Map();
+  const breached = [];
+  let breachCooldown = 0;
   const bounds = { minX: -17.5, maxX: 17.5, minZ: -24, maxZ: 15.5 };
   const avoid = [{ x: 0, z: -13, r: 7 }];
 
@@ -207,6 +247,7 @@ export function createCreatureSystem({ scene, colliders, assets, counts = {} }) 
     scene.add(root);
     const agent = kind === 'zombie' ? new Infected(root, options) : new Prey(root, kind, options);
     agents.push(agent);
+    byRoot.set(root, agent);
     (kind === 'zombie' ? zombies : wildlife).push(root);
     return agent;
   };
@@ -241,16 +282,87 @@ export function createCreatureSystem({ scene, colliders, assets, counts = {} }) 
     }
   }
 
-  function update(dt, world, playerPosition, onAttack) {
-    // Creatures only exist on the surface; skip the whole system indoors.
-    if (world !== 'outside') return;
+  function agentFor(root) {
+    return byRoot.get(root) || null;
+  }
+
+  // An infected that reaches the open blast door comes inside. This is the
+  // whole reason to sweep the cameras before releasing the seal, and the
+  // reason to close it behind you.
+  function updateBreach(dt, world, doorOpen, playerPosition, onAttack, onBreach) {
+    if (!breach) return;
+
+    // Anything already inside keeps hunting whether or not the door is open.
+    for (const agent of breached) {
+      if (agent.root.userData.alive === false) {
+        if (agent.dying < 1) agent.collapse(dt);
+        continue;
+      }
+      if (world === 'bunker') agent.update(dt, playerPosition, breach.colliders, onAttack);
+    }
+
+    if (!doorOpen) { breachCooldown = 0; return; }
+    breachCooldown = Math.max(0, breachCooldown - dt);
+
+    // An open seal draws them. They converge on the entrance even while the
+    // player is inside and the surface is otherwise asleep, so the cameras show
+    // them gathering before anything gets through.
     for (const agent of agents) {
-      if (agent.root.userData.alive === false) continue;
+      if (agent.root.userData.alive === false || !(agent instanceof Infected)) continue;
+      if (breached.includes(agent)) continue;
+
+      const dx = breach.entrance.x - agent.root.position.x;
+      const dz = breach.entrance.z - agent.root.position.z;
+      const distance = Math.hypot(dx, dz);
+
+      if (distance > 2.2) {
+        // Only drive them from here when the surface simulation is idle;
+        // otherwise their own update owns the heading this frame.
+        if (world !== 'outside') {
+          agent.heading = Math.atan2(dx, dz);
+          const moved = agent.advance(dt, agent.speed * 0.9, colliders);
+          agent.phase += moved * 2.6 * dt;
+          swing(agent.limbs, ['legL'], agent.phase, moved * 0.13);
+          swing(agent.limbs, ['legR'], agent.phase + Math.PI, moved * 0.13);
+        } else {
+          agent.lure = breach.entrance;
+        }
+        continue;
+      }
+
+      if (breached.length >= 2 || breachCooldown > 0) continue;
+      breachCooldown = 22;
+      scene.remove(agent.root);
+      breach.scene.add(agent.root);
+      agent.root.position.set(breach.arrival.x, 0, breach.arrival.z);
+      agent.root.rotation.set(0, 0, 0);
+      agent.senseRange = 40;
+      agent.lure = null;
+      breached.push(agent);
+      onBreach?.(agent);
+      return;
+    }
+  }
+
+  function update(dt, world, playerPosition, onAttack, options = {}) {
+    updateBreach(dt, world, options.doorOpen, playerPosition, onAttack, options.onBreach);
+
+    // Surface creatures only run while the player is out there; indoors the
+    // only thing left to advance is a collapse already in progress.
+    if (world !== 'outside') {
+      for (const agent of agents) if (agent.dying > 0 && agent.dying < 1) agent.collapse(dt);
+      return;
+    }
+    for (const agent of agents) {
+      if (agent.root.userData.alive === false) {
+        if (agent.dying < 1) agent.collapse(dt);
+        continue;
+      }
       if (agent instanceof Infected) agent.update(dt, playerPosition, colliders, onAttack);
       else agent.update(dt, playerPosition, colliders);
     }
     separate();
   }
 
-  return { wildlife, zombies, agents, update };
+  return { wildlife, zombies, agents, breached, update, agentFor, byRoot };
 }

@@ -23,6 +23,8 @@ const ammoEl = document.getElementById('ammo');
 const foodEl = document.getElementById('foodStat');
 const healthEl = document.getElementById('healthStat');
 const motionEl = document.getElementById('motion');
+const staminaBar = document.getElementById('staminaBar');
+const staminaFill = document.getElementById('staminaFill');
 
 let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -42,6 +44,7 @@ let hurtFlash = 0;
 let recoil = 0;
 let sprinting = false;
 let stamina = 1;
+const touch = { sprint: false, crouch: false };
 let breath = 0;
 const body = new CharacterBody();
 const clock = new THREE.Clock();
@@ -155,6 +158,15 @@ async function prepare() {
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
+        arm: () => { armed = true; game.setArmed(true); ammo = 5; reserve = 20; updateAmmo(); },
+        aimAt: (target) => {
+          const to = target.clone().sub(game.camera.getWorldPosition(new THREE.Vector3()));
+          yaw = Math.atan2(-to.x, -to.z);
+          pitch = Math.atan2(to.y, Math.hypot(to.x, to.z));
+        },
+        fire: () => fire(),
+        openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
+        state: () => ({ health, foodDays, ammo, reserve, armed, doorOpen: game.doorOpen(), breached: game.creatures.breached.length }),
         debug: () => ({ started, modal, cctv, keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
           climbable,
@@ -223,8 +235,12 @@ function wireGameEvents() {
     flash('SHELTER 47 — BLAST CHAMBER');
   });
   addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:breach', () => {
+    flash('SOMETHING CAME THROUGH THE BLAST DOOR', 3000);
+    breachAlarm();
+  });
   addEventListener('lostsignal:attack', () => {
-    if (currentWorld !== 'outside' || !started) return;
+    if (!started) return;
     health = Math.max(0, health - (8 + Math.random() * 6));
     hurtFlash = 1;
     updateHealth();
@@ -300,7 +316,7 @@ function use() {
     const gain = downed.userData.kind === 'deer' ? 3 : 1;
     foodDays += gain;
     foodEl.textContent = `${foodDays} DAYS`;
-    game.outside.remove(downed);
+    downed.parent?.remove(downed);
     flash(`${downed.userData.kind.toUpperCase()} HARVESTED — +${gain} DAYS FOOD`, 2200);
   }
 }
@@ -312,35 +328,64 @@ function fire() {
   updateAmmo();
   game.playGun('shoot');
   gunshotSound();
+  muzzleFlash();
   recoil = .18;
-  if (currentWorld !== 'outside') { flash('THE SHOT ECHOES THROUGH THE SHELTER', 900); return; }
 
-  ray.setFromCamera({x:0,y:0}, game.camera);
+  // fire() runs from an input event, so the camera still holds last frame's
+  // matrix. Aiming off by a frame of mouse movement is a miss at range.
+  const world = currentWorld === 'outside' ? game.outside : game.bunker;
+  world.updateMatrixWorld();
+
+  ray.setFromCamera({ x: 0, y: 0 }, game.camera);
   ray.far = 90;
-  const targets = [...game.wildlife.filter(w => w.parent && w.userData.alive !== false), ...game.zombies.filter(z => z.parent && z.userData.alive !== false && z.visible !== false)];
-  const hits = ray.intersectObjects(targets, true);
+
+  // Everything alive is a target, including anything that got inside.
+  const living = [
+    ...game.wildlife,
+    ...game.zombies,
+    ...game.creatures.breached.map(a => a.root),
+  ].filter(t => t.parent && t.userData.alive !== false);
+
+  const hits = ray.intersectObjects(living, true);
   if (hits.length) {
     const hit = hits[0];
     let target = hit.object;
-    while (target && !['deer','rabbit','zombie'].includes(target.userData.kind)) target = target.parent;
-    if (target) {
-      bloodBurst(hit.point);
-      if (target.userData.kind === 'zombie') {
-        const headshot = hit.point.y - target.position.y > 1.42;
-        target.userData.hp -= headshot ? 2 : 1;
-        if (target.userData.hp <= 0) {
-          target.userData.alive = false;
-          target.rotation.z = Math.PI / 2;
-          flash(headshot ? 'HEADSHOT — INFECTED DOWN' : 'INFECTED DOWN', 1300);
-        } else flash('INFECTED HIT', 700);
-      } else {
-        target.userData.alive = false;
-        target.rotation.z = Math.PI / 2;
-        flash(`${target.userData.kind.toUpperCase()} DOWN — APPROACH TO HARVEST`, 1700);
-      }
-    }
+    while (target && !['deer', 'rabbit', 'zombie'].includes(target.userData.kind)) target = target.parent;
+    if (target) { resolveHit(target, hit.point); return; }
   }
+
+  // A miss still has to land somewhere, or the rifle feels like it fires blanks.
+  const worldHits = ray.intersectObjects(world.children, true);
+  const impact = worldHits.find(h => h.object.isMesh && h.object.visible);
+  if (impact) {
+    burst(impact.point, 'dust', 5, 0.18);
+  } else if (currentWorld !== 'outside') {
+    flash('THE SHOT ECHOES THROUGH THE SHELTER', 900);
+  }
+
   if (ammo === 0 && reserve > 0) setTimeout(reload, 450);
+}
+
+function resolveHit(target, point) {
+  burst(point, 'blood', 8, 0.3);
+  const agent = game.creatures.agentFor(target);
+
+  if (target.userData.kind !== 'zombie') {
+    if (agent?.kill()) {
+      flash(`${target.userData.kind.toUpperCase()} DOWN — APPROACH TO HARVEST`, 1700);
+    }
+    return;
+  }
+
+  // Height above the infected's feet decides where the round landed.
+  const headshot = point.y - target.position.y > 1.42;
+  target.userData.hp -= headshot ? 3 : 1;
+  if (target.userData.hp <= 0) {
+    if (agent?.kill()) flash(headshot ? 'HEADSHOT — INFECTED DOWN' : 'INFECTED DOWN', 1300);
+    return;
+  }
+  if (agent) agent.stagger = agent.staggerTime;
+  flash('INFECTED HIT', 700);
 }
 
 function reload() {
@@ -458,6 +503,25 @@ function wireControls() {
   look.addEventListener('pointerup',()=>lookId=null);look.addEventListener('pointercancel',()=>lookId=null);
   document.getElementById('use').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();use()});
   document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
+  document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
+
+  // Sprint and crouch are latching toggles on touch: a phone has no spare
+  // finger to hold a modifier while steering with both thumbs.
+  const latch = (id, key) => {
+    const button = document.getElementById(id);
+    button.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      touch[key] = !touch[key];
+      if (key === 'sprint' && touch.sprint) touch.crouch = false;
+      if (key === 'crouch' && touch.crouch) touch.sprint = false;
+      document.getElementById('sprintBtn').classList.toggle('on', touch.sprint);
+      document.getElementById('crouchBtn').classList.toggle('on', touch.crouch);
+      clickSound(key === 'sprint' ? 520 : 300, .04, .03);
+    });
+  };
+  latch('sprintBtn', 'sprint');
+  latch('crouchBtn', 'crouch');
 }
 
 const desiredVelocity = new THREE.Vector3();
@@ -474,14 +538,18 @@ function updatePlayer(dt) {
   const magnitude = Math.hypot(strafe, forward);
   if (magnitude > 1) { strafe /= magnitude; forward /= magnitude; }
 
-  const crouching = !!keys.ControlLeft || !!keys.KeyC;
-  const wantsSprint = (!!keys.ShiftLeft || !!keys.ShiftRight) && forward > 0.1 && !crouching;
+  const crouching = !!keys.ControlLeft || !!keys.KeyC || touch.crouch;
+  const wantsSprint = (!!keys.ShiftLeft || !!keys.ShiftRight || touch.sprint) && forward > 0.1 && !crouching;
   sprinting = wantsSprint && stamina > 0.05;
 
   // Sprinting drains stamina; standing still or walking refills it, with a
   // short recovery lag so a spent player cannot immediately sprint again.
   stamina = THREE.MathUtils.clamp(
     stamina + (sprinting ? -dt / 6.5 : dt / (stamina < 0.2 ? 9 : 5)), 0, 1);
+  if (touch.sprint && stamina <= 0.02) {
+    touch.sprint = false;
+    document.getElementById('sprintBtn').classList.remove('on');
+  }
 
   const base = currentWorld === 'outside' ? 3.05 : 2.55;
   const speed = base * (sprinting ? 1.72 : 1) * (crouching ? 0.48 : 1);
@@ -513,6 +581,9 @@ function updatePlayer(dt) {
     + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0);
 
   footsteps(dt, speedRatio, crouching);
+
+  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
+  staminaBar.classList.toggle('on', stamina < 0.995);
 }
 
 // Footsteps fire on distance travelled so their rhythm always matches the legs.
@@ -544,11 +615,86 @@ function startAudio(){
   [47,94,141].forEach((freq,i)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=i?'sine':'triangle';o.frequency.value=freq;g.gain.value=[.09,.03,.01][i];o.connect(g);g.connect(master);o.start()});
   const rn=ac.createBufferSource();rn.buffer=noiseBuffer();rn.loop=true;const rf=ac.createBiquadFilter();rf.type='bandpass';rf.frequency.value=1800;radioGain=ac.createGain();radioGain.gain.value=0;rn.connect(rf);rf.connect(radioGain);radioGain.connect(master);rn.start();
   const on=ac.createBufferSource();on.buffer=noiseBuffer(3);on.loop=true;const of=ac.createBiquadFilter();of.type='lowpass';of.frequency.value=900;outdoorGain=ac.createGain();outdoorGain.gain.value=0;on.connect(of);of.connect(outdoorGain);outdoorGain.connect(master);on.start();
+  startAmbience();
 }
+// Machinery you can hear from across the room and lose behind a corner. These
+// are plain gain ramps driven by distance rather than PositionalAudio, so they
+// share the one AudioContext the rest of the game already uses.
+const ambientSources = [];
+function addAmbient(position, radius, build) {
+  if (!ac) return;
+  const gain = ac.createGain();
+  gain.gain.value = 0;
+  gain.connect(master);
+  build(gain);
+  ambientSources.push({ position: new THREE.Vector3(...position), radius, gain });
+}
+
+function startAmbience() {
+  // Diesel generator: a low rumble with a lopsided beat, in the south-east corner.
+  addAmbient([4.6, 1.2, 4.95], 7, (out) => {
+    const osc = ac.createOscillator();
+    const beat = ac.createOscillator();
+    const beatGain = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 38;
+    beat.frequency.value = 5.6;
+    beatGain.gain.value = 9;
+    beat.connect(beatGain);
+    beatGain.connect(osc.frequency);
+    const filter = ac.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 220;
+    const level = ac.createGain();
+    level.gain.value = .5;
+    osc.connect(filter); filter.connect(level); level.connect(out);
+    osc.start(); beat.start();
+  });
+
+  // Air filtration: filtered noise where the ventilation unit stands.
+  addAmbient([5.2, 1.3, -4.85], 6, (out) => {
+    const source = ac.createBufferSource();
+    source.buffer = noiseBuffer(3);
+    source.loop = true;
+    const filter = ac.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 640;
+    filter.Q.value = .8;
+    const level = ac.createGain();
+    level.gain.value = .35;
+    source.connect(filter); filter.connect(level); level.connect(out);
+    source.start();
+  });
+}
+
+function updateAmbience() {
+  if (!ac || !game) return;
+  const indoors = currentWorld === 'bunker' && !cctv;
+  for (const source of ambientSources) {
+    const distance = indoors ? source.position.distanceTo(game.player.position) : Infinity;
+    const falloff = THREE.MathUtils.clamp(1 - distance / source.radius, 0, 1);
+    source.gain.gain.setTargetAtTime(falloff * falloff * 0.09, ac.currentTime, .2);
+  }
+}
+
 function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.currentTime,.04)}
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
 function beacon(){clickSound(760,.25,.035)}
+function breachAlarm(){
+  if(!ac)return;
+  const t=ac.currentTime;
+  for(let i=0;i<3;i++){
+    const o=ac.createOscillator(),g=ac.createGain(),at=t+i*.42;
+    o.type='square';
+    o.frequency.setValueAtTime(520,at);
+    o.frequency.linearRampToValueAtTime(300,at+.3);
+    g.gain.setValueAtTime(0,at);
+    g.gain.linearRampToValueAtTime(.07,at+.03);
+    g.gain.exponentialRampToValueAtTime(.001,at+.34);
+    o.connect(g);g.connect(master);o.start(at);o.stop(at+.36);
+  }
+}
 function hurtSound(){
   if(!ac)return;
   const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
@@ -580,6 +726,64 @@ function footstepSound(outdoors, strength = 1) {
   source.stop(t + .2);
 }
 function gunshotSound(){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.type='sawtooth';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(50,t+.1);g.gain.setValueAtTime(.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.17);o.connect(g);g.connect(master);o.start(t);o.stop(t+.18)}
+// A shot needs to leave a mark on the world: the room flashes, the barrel
+// throws light, and whatever the round hit puffs.
+let muzzleLight = null;
+let muzzleTimer = 0;
+
+function muzzleFlash() {
+  if (!muzzleLight) {
+    muzzleLight = new THREE.PointLight(0xffd9a0, 0, 9, 2);
+    muzzleLight.position.set(0.3, -0.25, -0.9);
+    game.camera.add(muzzleLight);
+  }
+  muzzleTimer = 0.06;
+  muzzleLight.intensity = 260;
+}
+
+const impactGeometry = new THREE.SphereGeometry(0.035, 6, 5);
+const impactMaterials = {
+  blood: new THREE.MeshBasicMaterial({ color: 0x7a1512 }),
+  dust: new THREE.MeshBasicMaterial({ color: 0x9a9c92, transparent: true, opacity: 0.75 }),
+};
+const debris = [];
+
+function burst(point, kind, count = 7, spread = 0.26) {
+  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  for (let i = 0; i < count; i++) {
+    const particle = new THREE.Mesh(impactGeometry, impactMaterials[kind]);
+    particle.position.copy(point);
+    scene.add(particle);
+    debris.push({
+      mesh: particle,
+      scene,
+      life: 0.45 + Math.random() * 0.25,
+      velocity: new THREE.Vector3(
+        (Math.random() - 0.5) * spread * 8,
+        Math.random() * spread * 6,
+        (Math.random() - 0.5) * spread * 8),
+    });
+  }
+}
+
+function updateEffects(dt) {
+  if (muzzleTimer > 0) {
+    muzzleTimer -= dt;
+    if (muzzleTimer <= 0 && muzzleLight) muzzleLight.intensity = 0;
+  }
+  for (let i = debris.length - 1; i >= 0; i--) {
+    const particle = debris[i];
+    particle.life -= dt;
+    if (particle.life <= 0) {
+      particle.scene.remove(particle.mesh);
+      debris.splice(i, 1);
+      continue;
+    }
+    particle.velocity.y -= 14 * dt;
+    particle.mesh.position.addScaledVector(particle.velocity, dt);
+  }
+}
+
 function bloodBurst(point){const g=new THREE.SphereGeometry(.05,8,6),m=new THREE.MeshBasicMaterial({color:0x771714});for(let i=0;i<7;i++){const p=new THREE.Mesh(g,m);p.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.25,(Math.random()-.5)*.25,(Math.random()-.5)*.25));game.outside.add(p);setTimeout(()=>game.outside.remove(p),450)}}
 
 startButton.onclick=async()=>{
@@ -665,10 +869,13 @@ function renderCameraFeed() {
 // frame clock, which headless Chromium does not run on an idle page.
 function simulate(dt) {
   updatePlayer(dt);
+  (currentWorld === 'outside' ? game.outside : game.bunker).updateMatrixWorld();
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
   updateWeapon(dt);
+  updateEffects(dt);
+  updateAmbience();
   hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
   if (health < 100 && currentWorld === 'bunker') {
     health = Math.min(100, health + dt * 1.6);

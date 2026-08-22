@@ -19,7 +19,10 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion'],
 });
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const size = process.env.QA_VIEWPORT === 'phone'
+  ? { width: 844, height: 390 }
+  : { width: 1280, height: 720 };
+const page = await browser.newPage({ viewport: size, hasTouch: process.env.QA_VIEWPORT === 'phone', isMobile: process.env.QA_VIEWPORT === 'phone' });
 const errors = [];
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)));

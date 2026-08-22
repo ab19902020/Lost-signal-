@@ -215,6 +215,13 @@ export function createGameWorld(assets) {
     scene: outside,
     colliders: colliders.outside,
     assets,
+    // Leaving the blast door open is not free: the surface entrance is a way in.
+    breach: {
+      scene: bunker,
+      colliders: colliders.bunker,
+      entrance: new THREE.Vector3(0, 0, -13.5),
+      arrival: new THREE.Vector3(0, 0, -6.2),
+    },
   });
   const wildlife = creatures.wildlife;
   const zombies = creatures.zombies;
@@ -311,6 +318,9 @@ export function createGameWorld(assets) {
     elapsed += dt;
     creatures.update(dt, world, playerPosition, (agent) => {
       window.dispatchEvent(new CustomEvent('lostsignal:attack', { detail: { agent } }));
+    }, {
+      doorOpen,
+      onBreach: () => window.dispatchEvent(new CustomEvent('lostsignal:breach')),
     });
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
