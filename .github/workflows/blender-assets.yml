@@ -25,6 +25,10 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           persist-credentials: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Install Blender and glTF dependencies
         run: |
           sudo apt-get update
@@ -40,6 +44,9 @@ jobs:
 
       - name: Generate Blender creature kit
         run: blender -b --python blender/generate_creatures_v3.py
+
+      - name: Detach placeholder images so the shared textures load
+        run: node tools/externalize-glb-images.mjs
 
       - name: Verify generated Blender library
         run: |

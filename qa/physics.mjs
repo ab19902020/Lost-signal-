@@ -69,6 +69,19 @@ results.crouch = await read();
 await frames(30);
 results.standBackUp = await read();
 
+// A 1x1 map means a texture failed to load and three substituted a placeholder.
+results.textures = await page.evaluate(() => {
+  const seen = [];
+  globalThis.__ls.game.bunker.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m?.map || seen.some(e => e.material === m.name)) continue;
+      seen.push({ material: m.name, size: `${m.map.image?.width}x${m.map.image?.height}` });
+    }
+  });
+  return seen;
+});
+
 results.world = await page.evaluate(() => ({
   wildlife: globalThis.__ls.game.wildlife.length,
   zombies: globalThis.__ls.game.zombies.length,
