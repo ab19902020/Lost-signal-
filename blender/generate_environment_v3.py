@@ -154,8 +154,13 @@ def export(name):
     path = os.path.join(OUT, name)
     add_orientation_marker()
     bpy.ops.object.select_all(action='SELECT')
+    # export_keep_originals references the shared JPEGs in ../textures instead of
+    # baking a private copy of every one into each GLB. The same six 1K maps were
+    # embedded five times over, which was 10 MB of the asset payload and five
+    # separate GPU uploads of identical images.
     bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True,
-                              export_apply=True, export_yup=False)
+                              export_apply=True, export_yup=False,
+                              export_keep_originals=True)
     print('EXPORT', path)
 
 
