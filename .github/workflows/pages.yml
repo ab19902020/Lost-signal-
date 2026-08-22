@@ -2,7 +2,7 @@ name: Build Lost Signal
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   workflow_dispatch:
 
 permissions:
@@ -20,13 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enable GitHub Pages if required
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow || true
-
+      # enablement lets the action create the Pages site itself where the token
+      # is allowed to. Where it is not, Pages has to be switched on once by hand
+      # under Settings -> Pages -> Source: GitHub Actions.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/setup-node@v4
         with:
@@ -35,6 +34,13 @@ jobs:
 
       - run: npm install
       - run: npm run build
+
+      # A downloadable build, so the game can be tested even when Pages is off.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lost-signal-site
+          path: dist
+          retention-days: 14
 
       - uses: actions/upload-pages-artifact@v3
         with:
