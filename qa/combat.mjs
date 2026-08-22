@@ -1,8 +1,17 @@
 import { chromium } from 'playwright';
 
-// Exercises the systems a screenshot cannot show: that a round actually kills
-// an infected, that a kill collapses rather than snapping, and that leaving the
-// blast door open eventually lets something into the shelter.
+// Exercises what a screenshot cannot show: that the rifle downs game on the
+// surface, that a kill collapses rather than snapping to a right angle, and
+// that the silo is populated with residents who answer when spoken to.
+async function pumpFrames(page) {
+  const client = await page.context().newCDPSession(page);
+  client.on('Page.screencastFrame', ({ sessionId }) => {
+    client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await client.send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64, everyNthFrame: 1 });
+  return () => client.send('Page.stopScreencast').catch(() => {});
+}
+
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
@@ -11,6 +20,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
 const errors = [];
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)));
+const stopPump = await pumpFrames(page);
 await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
 await page.waitForFunction(() => {
   const b = document.getElementById('start');
@@ -27,80 +37,65 @@ const results = await page.evaluate(async () => {
   ls.arm();
   ls.simulate(10);
 
-  // Walk a live infected into range, aim at its chest and shoot it down.
-  const zombie = ls.game.zombies.find(z => z.userData.alive !== false);
-  out.foundZombie = !!zombie;
-  if (zombie) {
-    zombie.position.set(ls.body.position.x, 0, ls.body.position.z - 6);
-    ls.simulate(1);
-    ls.aimAt(zombie.position.clone().setY(1.3));
-    ls.simulate(1);
-    out.startingHp = zombie.userData.hp;
+  // A deer should take more than one round; a hare should take one.
+  const deer = ls.game.wildlife.find(w => w.userData.kind === 'deer' && w.userData.alive !== false);
+  out.foundDeer = !!deer;
+  if (deer) {
     let shots = 0;
-    while (zombie.userData.alive !== false && shots < 8) {
+    const mark = { x: ls.body.position.x, z: ls.body.position.z - 6 };
+    while (deer.userData.alive !== false && shots < 4) {
+      deer.position.set(mark.x, 0, mark.z);
+      // aimAt only sets yaw/pitch; the camera picks them up on the next
+      // simulated frame, so the shot has to come after one.
+      ls.aimAt({ x: mark.x, y: 1.0, z: mark.z });
+      ls.simulate(1);
+      deer.position.set(mark.x, 0, mark.z);
       ls.fire();
       shots++;
-      ls.simulate(6);
+      ls.simulate(4);
     }
-    out.shotsToKill = shots;
-    out.zombieDown = zombie.userData.alive === false;
+    out.deerShots = shots;
+    out.deerDown = deer.userData.alive === false;
     ls.simulate(60);
-    out.collapsedRoll = +zombie.rotation.z.toFixed(2);
+    out.collapsedRoll = +deer.rotation.z.toFixed(2);
   }
 
-  // A hare should die to a single round.
   const hare = ls.game.wildlife.find(w => w.userData.kind === 'rabbit' && w.userData.alive !== false);
   if (hare) {
-    // A hare bolts the moment the player is close, so re-acquire between
-    // shots rather than assuming the first one connects.
-    // Re-arm first: this check is about whether a round kills a hare, not
-    // about how many rounds the infected before it used up.
     ls.arm();
-    let hareShots = 0;
+    let shots = 0;
     const mark = { x: ls.body.position.x, z: ls.body.position.z - 4 };
-    while (hare.userData.alive !== false && hareShots < 4) {
-      // aimAt only sets yaw/pitch; the camera picks them up on the next
-      // simulated frame. The hare bolts in that frame, so it is put back on
-      // the mark the shot is actually lined up with.
+    while (hare.userData.alive !== false && shots < 4) {
       hare.position.set(mark.x, 0, mark.z);
       ls.aimAt({ x: mark.x, y: 0.2, z: mark.z });
       ls.simulate(1);
       hare.position.set(mark.x, 0, mark.z);
       ls.fire();
-      hareShots++;
+      shots++;
       ls.simulate(4);
     }
-    out.hareShots = hareShots;
     out.hareDown = hare.userData.alive === false;
   }
 
-  // Open the blast door, go back inside and wait: something should come in.
-  ls.world('bunker');
-  ls.openDoor();
-  out.doorOpen = ls.state().doorOpen;
-  for (let i = 0; i < 90 && ls.state().breached === 0; i++) ls.simulate(60, 1 / 60);
-  out.breached = ls.state().breached;
+  // The silo: residents should be walking their galleries, and standing next to
+  // one should offer something to say.
+  ls.world('silo');
+  ls.simulate(30);
+  const residents = ls.game.residents?.residents || [];
+  out.residents = residents.length;
+  if (residents.length) {
+    const before = residents.map(r => ({ x: r.position.x, z: r.position.z }));
+    ls.simulate(600);
+    out.residentsMoved = residents.filter((r, i) =>
+      Math.hypot(r.position.x - before[i].x, r.position.z - before[i].z) > 0.4).length;
+    out.residentLevels = new Set(residents.map(r => Math.round(r.position.y))).size;
+    out.residentLines = residents.filter(r => (r.userData.resident?.line || '').length > 10).length;
 
-  // And it should be able to hurt you once it is inside.
-  const intruder = ls.game.creatures.breached[0];
-  if (intruder) {
-    const before = ls.state().health;
-    // Hold it at arm's length for long enough to clear a full attack cycle,
-    // whatever phase its cooldown happened to be in when it came through.
-    for (let i = 0; i < 6; i++) {
-      intruder.root.position.set(ls.body.position.x, 0, ls.body.position.z - 1);
-      ls.simulate(60);
-    }
-    out.intruder = {
-      alive: intruder.root.userData.alive,
-      state: intruder.state,
-      inBunker: intruder.root.parent === ls.game.bunker,
-      distance: +Math.hypot(
-        intruder.root.position.x - ls.body.position.x,
-        intruder.root.position.z - ls.body.position.z).toFixed(2),
-    };
-    out.healthDropped = ls.state().health < before;
-    out.health = ls.state().health;
+    // Standing next to one should raise the prompt to speak.
+    const target = residents[0];
+    ls.body.teleport(target.position.x + 0.9, target.position.y, target.position.z);
+    ls.simulate(3);
+    out.speakPrompt = (document.getElementById('prompt').textContent || '').includes('RESIDENT');
   }
   out.ammoAfter = ls.state().ammo;
   return out;
@@ -108,4 +103,5 @@ const results = await page.evaluate(async () => {
 
 console.log(JSON.stringify(results, null, 1));
 if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));
+await stopPump();
 await browser.close();

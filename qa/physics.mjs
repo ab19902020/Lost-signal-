@@ -80,10 +80,10 @@ results.silo = await page.evaluate(async () => {
   settle(20);
   const arrival = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
 
-  // Step off the catwalk: the player should fall the full height of the shaft
-  // and land on the silo floor, not hover over the hole in the middle.
+  // Step into the light well: the player should fall the full height of the
+  // shaft and land at the bottom, not hover over the hole in the middle.
   ls.body.teleport(0, ls.body.position.y, 0);
-  settle(240);
+  settle(900);
   const overCentre = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
 
   return {

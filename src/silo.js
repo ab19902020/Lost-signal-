@@ -1,30 +1,35 @@
 import * as THREE from 'three';
 
-// Silo 47-A, directly beneath the shelter.
+// Silo 47 — a habitation silo, not a weapons one.
 //
-// The chamber, catwalk, stairs, missile and console are Blender GLBs. What is
-// authored here is collision and light — the catwalk's own bounding box spans
-// deck *and* railing, which would read as a solid wall, so the deck is a
-// climbable box and the railing a separate solid one. The stairs get one
-// climbable box per tread, each within the player's step height, which is what
-// lets a capsule with gravity walk down them.
+// Twelve residential levels and a secure unit on top, stacked around an open
+// light well with a spiral stair running down it. Three hundred people live
+// here. Nobody in the silo knows why the world above ended.
+//
+// The Blender kit is one level ring, one stair flight and one shell, joined
+// into single meshes and instanced up the shaft — twelve galleries built from
+// two hundred separate objects each would be thousands of draw calls. What is
+// authored here is collision and light: a joined ring's bounding box would fill
+// the whole level including the open well, so decks are per-bay boxes with a
+// real hole in the middle, and the stair gets one box per tread.
 
 export const SILO = {
-  radius: 5.6,
-  height: 17,
-  catwalkY: 7.2,
-  wallSegments: 16,
-  catwalkSegments: 8,
+  shellRadius: 17.4,
+  wellRadius: 5.4,
+  deckOuter: 16.4,
+  levelHeight: 3.6,
+  levels: 12,
+  segments: 16,
+  stairRadius: 4.1,
   stairSteps: 24,
-  stairRun: 0.3,
+  stairTurn: THREE.MathUtils.degToRad(200),
 };
 
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
   new THREE.Box3(new THREE.Vector3(minX, minY, minZ), new THREE.Vector3(maxX, maxY, maxZ));
 
-// A box of the given half-extents, rotated about Y and pushed out to `distance`.
-// Axis-aligned bounds of a rotated slab are conservative, which is exactly what
-// a wall wants to be.
+// Conservative axis-aligned bounds for a slab standing at `distance` from the
+// axis, rotated to face the centre.
 function ringBox(angle, distance, halfWidth, halfDepth, minY, maxY) {
   const cx = Math.cos(angle) * distance;
   const cz = Math.sin(angle) * distance;
@@ -34,156 +39,226 @@ function ringBox(angle, distance, halfWidth, halfDepth, minY, maxY) {
 }
 
 export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
-  if (!assets.siloChamber) return null;
+  if (!assets.habShell || !assets.habLevel || !assets.habStair) return null;
 
-  const { radius, height, catwalkY, wallSegments, catwalkSegments, stairSteps, stairRun } = SILO;
+  const {
+    shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
+    stairRadius, stairSteps, stairTurn,
+  } = SILO;
 
-  scene.background = new THREE.Color(0x07090a);
-  scene.fog = new THREE.FogExp2(0x0d1112, 0.021);
+  const shaftHeight = levels * levelHeight;
+  const bay = (Math.PI * (deckOuter + wellRadius) / 2) / segments;
+  const deckMid = (deckOuter + wellRadius) / 2;
+  const deckHalf = (deckOuter - wellRadius) / 2;
 
-  place(assets.siloChamber, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+  scene.background = new THREE.Color(0x080a0b);
+  scene.fog = new THREE.FogExp2(0x0e1213, 0.0085);
 
-  // Wall ring: one conservative box per panel, so the room is an enclosure
-  // rather than a rectangle the player can walk into the corners of.
-  for (let i = 0; i < wallSegments; i++) {
-    const angle = (i * Math.PI * 2) / wallSegments;
-    colliders.addBox(ringBox(angle, radius + 0.45, 1.2, 0.5, -0.5, height + 1), {});
+  place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+
+  // Outer shell: an enclosure of flat panels rather than a rectangle.
+  for (let i = 0; i < segments * 2; i++) {
+    const angle = (i * Math.PI * 2) / (segments * 2);
+    colliders.addBox(ringBox(angle, shellRadius + 0.6, bay + 0.4, 0.7, -1, shaftHeight + levelHeight * 2), {});
   }
 
-  // Catwalk ring at the service level, plus its railing.
-  const catwalkRadius = radius - 0.95;
-  for (let i = 0; i < catwalkSegments; i++) {
-    const angle = (i * Math.PI * 2) / catwalkSegments;
-    const x = Math.cos(angle) * catwalkRadius;
-    const z = Math.sin(angle) * catwalkRadius;
-    place(assets.siloCatwalk, scene, [x, catwalkY, z], [0, -angle + Math.PI / 2, 0], 1,
-      { world: 'silo', collide: false });
-    colliders.addBox(ringBox(angle, catwalkRadius, 1.62, 0.9, catwalkY - 0.3, catwalkY + 0.06),
+  const levelY = (index) => index * levelHeight;
+  const gallery = [];
+
+  for (let level = 0; level < levels; level++) {
+    const y = levelY(level);
+    place(assets.habLevel, scene, [0, y, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+
+    for (let i = 0; i < segments; i++) {
+      const angle = (i * Math.PI * 2) / segments;
+      // Deck: walkable, with the light well left open through the middle.
+      colliders.addBox(ringBox(angle, deckMid, bay + 0.12, deckHalf, y - 0.3, y + 0.02),
+        { climbable: true });
+      // Apartment frontage, and the gallery railing over the well.
+      colliders.addBox(ringBox(angle, deckOuter - 0.3, bay + 0.1, 0.34, y, y + levelHeight), {});
+      colliders.addBox(ringBox(angle, wellRadius, bay + 0.12, 0.1, y + 0.02, y + 1.15), {});
+    }
+    gallery.push({ level, y });
+  }
+
+  // The spiral stair, one flight per level, each rotated on from the last.
+  for (let level = 0; level < levels; level++) {
+    const base = levelY(level);
+    const spin = level * stairTurn;
+    place(assets.habStair, scene, [0, base, 0], [0, -spin, 0], 1, { world: 'silo', collide: false });
+
+    const rise = levelHeight / stairSteps;
+    for (let i = 0; i < stairSteps; i++) {
+      const angle = spin + (i * stairTurn) / stairSteps;
+      const top = base + i * rise + 0.04;
+      colliders.addBox(ringBox(angle, stairRadius, 0.9, 0.32, top - 0.5, top), { climbable: true });
+    }
+    // The stair's own central column is solid.
+    colliders.addBox(box(-(stairRadius - 0.95), base, -(stairRadius - 0.95),
+      stairRadius - 0.95, base + levelHeight, stairRadius - 0.95), {});
+  }
+
+  // --- Fittings -------------------------------------------------------------
+  // Hydroponics and mess tables, spread so no two levels read the same.
+  const dress = [];
+  for (let level = 0; level < levels; level++) {
+    const y = levelY(level);
+    if (assets.habHydroponics && level % 3 === 1) {
+      for (let i = 0; i < 3; i++) {
+        const angle = (i * Math.PI * 2) / 3 + level * 0.4;
+        const radius = deckOuter - 2.6;
+        const rack = place(assets.habHydroponics, scene,
+          [Math.cos(angle) * radius, y, Math.sin(angle) * radius], [0, -angle + Math.PI / 2, 0], 1,
+          { world: 'silo' });
+        if (i === 0) {
+          addInteraction(rack, `HYDROPONICS — LEVEL ${levels - level}`, 'silo',
+            () => window.dispatchEvent(new CustomEvent('lostsignal:hydroponics', { detail: { level: levels - level } })));
+        }
+        dress.push(rack);
+      }
+    }
+    if (assets.habCommons && level % 3 === 2) {
+      for (let i = 0; i < 2; i++) {
+        const angle = (i * Math.PI) + level * 0.7;
+        const radius = deckOuter - 3.4;
+        dress.push(place(assets.habCommons, scene,
+          [Math.cos(angle) * radius, y, Math.sin(angle) * radius], [0, -angle, 0], 1,
+          { world: 'silo' }));
+      }
+    }
+    if (assets.habDirectory && level % 2 === 0) {
+      const angle = level * 0.9;
+      const radius = wellRadius + 1.1;
+      place(assets.habDirectory, scene,
+        [Math.cos(angle) * radius, y, Math.sin(angle) * radius], [0, -angle + Math.PI / 2, 0], 1,
+        { world: 'silo', collide: false });
+    }
+  }
+
+  // --- The secure unit ------------------------------------------------------
+  // Top landing, above the residential levels. The CCTV console watches it.
+  const topY = levelY(levels);
+  place(assets.habLevel, scene, [0, topY, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+  for (let i = 0; i < segments; i++) {
+    const angle = (i * Math.PI * 2) / segments;
+    colliders.addBox(ringBox(angle, deckMid, bay + 0.12, deckHalf, topY - 0.3, topY + 0.02),
       { climbable: true });
-    colliders.addBox(ringBox(angle, catwalkRadius - 0.82, 1.62, 0.09, catwalkY + 0.06, catwalkY + 1.15), {});
+    colliders.addBox(ringBox(angle, deckOuter - 0.3, bay + 0.1, 0.34, topY, topY + levelHeight), {});
+    colliders.addBox(ringBox(angle, wellRadius, bay + 0.12, 0.1, topY + 0.02, topY + 1.15), {});
   }
 
-  // Stairs down to the silo floor, one collider per tread.
-  const stairAngle = Math.PI * 0.5;
-  const stairOrigin = new THREE.Vector3(
-    Math.cos(stairAngle) * (catwalkRadius - 0.3), 0, Math.sin(stairAngle) * (catwalkRadius - 0.3));
-  place(assets.siloStairs, scene, [stairOrigin.x, 0, stairOrigin.z], [0, -stairAngle - Math.PI / 2, 0], 1,
-    { world: 'silo', collide: false });
-  const rise = catwalkY / stairSteps;
-  for (let i = 0; i < stairSteps; i++) {
-    const along = (i + 0.5) * stairRun;
-    const x = stairOrigin.x - Math.sin(stairAngle + Math.PI / 2) * along;
-    const z = stairOrigin.z - Math.cos(stairAngle + Math.PI / 2) * along;
-    const top = catwalkY - (i + 1) * rise;
-    colliders.addBox(box(x - 0.8, top - 0.6, z - 0.28, x + 0.8, top, z + 0.28), { climbable: true });
+  const secureAngle = Math.PI * 0.25;
+  const secureRadius = deckOuter - 0.9;
+  const securePosition = new THREE.Vector3(
+    Math.cos(secureAngle) * secureRadius, topY, Math.sin(secureAngle) * secureRadius);
+  let secureDoor = null;
+  if (assets.habSecureDoor) {
+    secureDoor = place(assets.habSecureDoor, scene,
+      [securePosition.x, topY, securePosition.z], [0, -secureAngle + Math.PI / 2, 0], 1,
+      { world: 'silo', collide: false });
+    addInteraction(secureDoor, 'SECURE UNIT — ENTRANCE', 'silo',
+      () => window.dispatchEvent(new CustomEvent('lostsignal:secureunit')));
   }
 
-  // The missile, its mount and the umbilical tower.
-  const missile = place(assets.siloMissile, scene, [0, 0, 0], [0, 0, 0], 1,
-    { world: 'silo', collide: false });
-  colliders.addBox(box(-1.7, 0, -1.7, 1.7, 13.9, 1.7), {});
-  colliders.addBox(box(2.2, 0, -0.4, 3.0, 11.7, 0.4), {});
-  addInteraction(missile, 'DECOMMISSIONED WARHEAD', 'silo',
-    () => window.dispatchEvent(new CustomEvent('lostsignal:missile')));
-
-  // Launch control, on the floor facing the missile.
-  const console3d = place(assets.siloConsole, scene, [-3.4, 0, 2.6], [0, -0.9, 0], 1, { world: 'silo' });
-  addInteraction(console3d, 'LAUNCH CONTROL', 'silo',
-    () => window.dispatchEvent(new CustomEvent('lostsignal:launchconsole')));
-
-  // The supply cache, tucked under the stairs where it is worth finding.
-  const cache = place(assets.siloCache, scene, [3.6, 0, 2.9], [0, -2.2, 0], 1, { world: 'silo' });
-  addInteraction(cache, 'SUPPLY CACHE', 'silo',
-    () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
-
-  // The way back up: the access shaft the player came down, at the far side of
-  // the catwalk from the stairs.
-  const shaftAngle = Math.PI * 1.5;
-  const shaftX = Math.cos(shaftAngle) * (catwalkRadius + 0.72);
-  const shaftZ = Math.sin(shaftAngle) * (catwalkRadius + 0.72);
+  // The way back up to the shelter, on the top landing.
+  const shaftAngle = Math.PI * 1.25;
+  const shaftPosition = new THREE.Vector3(
+    Math.cos(shaftAngle) * (deckOuter - 1.0), topY, Math.sin(shaftAngle) * (deckOuter - 1.0));
   if (assets.accessControl) {
     const panel = place(assets.accessControl, scene,
-      [shaftX, catwalkY + 0.95, shaftZ], [0, -shaftAngle + Math.PI / 2, 0], 0.7,
+      [shaftPosition.x, topY + 1.05, shaftPosition.z], [0, -shaftAngle + Math.PI / 2, 0], 0.75,
       { world: 'silo', collide: false });
     addInteraction(panel, 'ACCESS SHAFT — CLIMB TO SHELTER', 'silo',
       () => window.dispatchEvent(new CustomEvent('lostsignal:ascend')));
   }
 
-  // --- Lighting ------------------------------------------------------------
-  // A silo is lit from the gantry down: hard pools on the missile skin, deep
-  // shadow in the trench, and one failing amber lamp at the service level.
-  scene.add(new THREE.HemisphereLight(0x5b6870, 0x141716, 0.6));
-  scene.add(new THREE.AmbientLight(0x495256, 0.26));
-
-  const lamps = [];
-  for (let i = 0; i < 4; i++) {
-    const angle = (i * Math.PI * 2) / 4 + Math.PI / 8;
-    const lamp = new THREE.PointLight(0xd8e2e0, 42, 13, 2);
-    lamp.position.set(Math.cos(angle) * (radius - 0.5), catwalkY + 3.1, Math.sin(angle) * (radius - 0.5));
-    scene.add(lamp);
-    lamps.push({ light: lamp, base: 42, phase: i * 1.9, failing: i === 1 });
+  const cache = assets.siloCache ? place(assets.siloCache, scene,
+    [Math.cos(2.1) * (deckOuter - 2.2), 0, Math.sin(2.1) * (deckOuter - 2.2)], [0, -2.1, 0], 1,
+    { world: 'silo' }) : null;
+  if (cache) {
+    addInteraction(cache, 'SILO STORES', 'silo',
+      () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
   }
 
-  // Work lights at the mount, so the floor of the shaft is somewhere you can
-  // actually see the missile you walked all the way down to.
-  for (let i = 0; i < 3; i++) {
-    const angle = (i * Math.PI * 2) / 3 + 0.6;
-    const work = new THREE.PointLight(0xffd9a8, 24, 9, 2);
-    work.position.set(Math.cos(angle) * 3.4, 2.1, Math.sin(angle) * 3.4);
-    scene.add(work);
+  // --- Lighting -------------------------------------------------------------
+  // A silo is lit level by level. Strip lights over the doors give each gallery
+  // its own band of light, and the well between them stays dim, which is what
+  // sells the drop.
+  scene.add(new THREE.HemisphereLight(0x5a6a70, 0x141614, 0.55));
+  scene.add(new THREE.AmbientLight(0x49535a, 0.3));
+
+  const strips = [];
+  for (let level = 0; level <= levels; level++) {
+    const y = levelY(level) + levelHeight - 0.5;
+    const count = 4;
+    for (let i = 0; i < count; i++) {
+      const angle = (i * Math.PI * 2) / count + level * 0.5;
+      const light = new THREE.PointLight(0xffe9c8, 34, 13, 2);
+      light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
+      scene.add(light);
+      strips.push({ light, base: 34, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 });
+    }
   }
 
-  const floodTop = new THREE.SpotLight(0xbfd2e2, 1500, 30, 0.78, 0.6, 2);
-  floodTop.position.set(0, height - 0.6, 0);
-  floodTop.target.position.set(0, 0, 0);
-  scene.add(floodTop, floodTop.target);
+  // A single hard light at the very top of the well, so looking up reads as a
+  // long way from the surface and looking down reads as a long way to fall.
+  const crown = new THREE.SpotLight(0xd6e6f2, 2400, shaftHeight + 12, 0.5, 0.7, 2);
+  crown.position.set(0, topY + levelHeight - 0.4, 0);
+  crown.target.position.set(0, 0, 0);
+  scene.add(crown, crown.target);
 
-  const trench = new THREE.PointLight(0xff5a2a, 26, 9, 2);
-  trench.position.set(0, 0.6, 0);
-  scene.add(trench);
+  const secureGlow = new THREE.PointLight(0xff6a4a, 12, 6, 2);
+  secureGlow.position.copy(securePosition).setY(topY + 1.6);
+  scene.add(secureGlow);
 
-  const consoleGlow = new THREE.PointLight(0x9fe8bb, 16, 5, 2);
-  consoleGlow.position.set(-3.4, 1.5, 2.4);
-  scene.add(consoleGlow);
-
-  // Dust falling through the flood beam sells the depth of the shaft.
-  const motes = 260;
+  // Dust in the well.
+  const motes = 420;
   const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(motes * 3);
   const speeds = new Float32Array(motes);
   for (let i = 0; i < motes; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const distance = Math.random() * (radius - 0.6);
+    const distance = Math.random() * (deckOuter - 0.5);
     positions[i * 3] = Math.cos(angle) * distance;
-    positions[i * 3 + 1] = Math.random() * height;
+    positions[i * 3 + 1] = Math.random() * (shaftHeight + levelHeight);
     positions[i * 3 + 2] = Math.sin(angle) * distance;
-    speeds[i] = 0.12 + Math.random() * 0.4;
+    speeds[i] = 0.1 + Math.random() * 0.36;
   }
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   const dust = new THREE.Points(geometry, new THREE.PointsMaterial({
-    color: 0xcfd8d4, size: 0.026, transparent: true, opacity: 0.3, depthWrite: false,
+    color: 0xd2dad6, size: 0.03, transparent: true, opacity: 0.26, depthWrite: false,
   }));
   scene.add(dust);
 
-  const spawn = new THREE.Vector3(shaftX * 0.86, catwalkY + 0.08, shaftZ * 0.86);
+  // The player arrives on the top landing, at the head of the stair.
+  const spawn = new THREE.Vector3(
+    Math.cos(shaftAngle) * (deckOuter - 2.6), topY + 0.06, Math.sin(shaftAngle) * (deckOuter - 2.6));
+
+  // Where residents can walk: the mid-radius of each gallery.
+  const walkable = [];
+  for (let level = 0; level < levels; level++) {
+    walkable.push({ y: levelY(level) + 0.02, radius: deckMid });
+  }
 
   let elapsed = 0;
   function update(dt) {
     elapsed += dt;
-    for (const lamp of lamps) {
-      const hum = 1 + Math.sin(elapsed * 1.3 + lamp.phase) * 0.04;
-      const stutter = lamp.failing && Math.sin(elapsed * 13.7) * Math.sin(elapsed * 2.7) > 0.7 ? 0.2 : 1;
-      lamp.light.intensity = lamp.base * hum * stutter;
+    for (const strip of strips) {
+      const hum = 1 + Math.sin(elapsed * 1.4 + strip.phase) * 0.035;
+      const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.72
+        ? 0.15 : 1;
+      strip.light.intensity = strip.base * hum * stutter;
     }
-    trench.intensity = 24 + Math.sin(elapsed * 2.3) * 5;
+    secureGlow.intensity = 10 + Math.sin(elapsed * 1.7) * 3;
 
     const array = geometry.attributes.position.array;
+    const ceiling = shaftHeight + levelHeight;
     for (let i = 0; i < motes; i++) {
       array[i * 3 + 1] -= speeds[i] * dt;
-      if (array[i * 3 + 1] < 0.1) array[i * 3 + 1] = SILO.height;
+      if (array[i * 3 + 1] < 0.1) array[i * 3 + 1] = ceiling;
     }
     geometry.attributes.position.needsUpdate = true;
   }
 
-  return { spawn, update, missile, console3d, cache };
+  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight };
 }

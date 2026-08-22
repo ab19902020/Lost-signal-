@@ -108,7 +108,7 @@ body.armed #reloadBtn{display:block}
 <div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
 <div id="help"><div id="helpCard">
 <h2>SHELTER 47 — FIELD MANUAL</h2>
-<p>You are the last occupant of a fallout shelter with a decommissioned missile under the floor and a voice on the shortwave that should not be there.</p>
+<p>You are the last occupant of a fallout shelter. Under its floor is Silo 47 — twelve levels of housing around an open light well, three hundred people, and a secure unit on the top landing nobody will explain. On the shortwave there is a voice that should not be there. Nobody knows why the world ended.</p>
 <h3>DESKTOP</h3><table>
 <tr><td>W A S D</td><td>Move</td></tr>
 <tr><td>Mouse</td><td>Look (click to capture)</td></tr>
@@ -128,14 +128,14 @@ body.armed #reloadBtn{display:block}
 <tr><td>USE / FIRE / RELOAD</td><td>As labelled</td></tr>
 </table>
 <h3>THE SHELTER</h3>
-<p>The CCTV console watches the surface compound — sweep it before you release the blast seal, because an open seal draws the infected to the entrance and they will eventually come through it. Close it behind you.</p>
-<p>The hatch in the floor opens onto Silo 47-A. Launch control needs two keys: one is taped inside the gun vault, the other is in the supply cache on the silo floor.</p>
+<p>The CCTV console watches the surface compound on four feeds, and the silo's top landing on a fifth. The surface has game worth shooting and nothing that shoots back.</p>
+<p>The hatch in the floor opens onto the silo's top landing. The stair spirals down twelve galleries to the stores at the bottom; the residents on the way will talk to you. Mind the light well — it is a long way down.</p>
 <button class="x">CLOSE</button></div></div>
 <div id="fatal"><div class="card"><b>3D ENGINE FAILED TO LOAD</b><br><br><span id="fatalText">The game could not start.</span></div></div>
 <div id="rotate">ROTATE TO LANDSCAPE<br><span style="display:block;margin-top:9px;font-size:10px;color:#8e9d93">This beta is designed only for landscape play.</span></div>
 <div id="hud"><div id="top"><div class="panel" id="name">LOST SIGNAL // SHELTER 47</div><div class="panel" id="stats">DAY <span class="ok" id="dayStat">1</span><br>CONDITION <span class="ok" id="healthStat">100%</span><br>POWER <span class="ok" id="powerStat">87%</span><br>WATER <span class="ok" id="waterStat">19 DAYS</span><br>AIR <span class="ok" id="airStat">71%</span><br>FOOD <span class="ok" id="foodStat">8 DAYS</span></div></div><div class="panel" id="tasks"><div id="tasksTitle">OBJECTIVES</div><ul id="taskList"></ul></div><div id="crosshair"></div><div id="prompt"></div><div id="msg"></div><div id="backend">LOCAL ASSETS / MESHOPT PREPARING…</div></div>
 <div id="controls"><div id="movePad"><div id="moveNub"></div></div><div id="lookZone"></div><button id="use">USE</button><button id="fire">FIRE</button><button id="sprintBtn" class="stick">RUN</button><button id="crouchBtn" class="stick">CROUCH</button><button id="reloadBtn">RELOAD</button><div id="weaponHud">SURVIVAL RIFLE &nbsp; <span id="ammo">5 / 20</span></div><button id="helpBtn">?</button><div id="staminaBar"><div id="staminaFill"></div></div><div id="soundBadge">🔊 SOUND ON</div></div>
-<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="motion">NO MOTION</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
+<div id="cctv" class="overlay"><div class="frame"><div id="camTitle">CAM 01 // MAIN GATE</div><div id="rec">● REC</div><div id="motion">NO MOTION</div><div id="ptzHelp">DRAG / SWIPE FEED TO PAN & TILT</div><div id="ptzReadout">PTZ 000° / 000° &nbsp; ZOOM 1.0×</div><button id="exitCam">EXIT CCTV</button><div id="camBtns"><button data-c="0">CAM 1</button><button data-c="1">CAM 2</button><button data-c="2">CAM 3</button><button data-c="3">CAM 4</button><button data-c="4">CAM 5</button><button id="zoomIn">ZOOM +</button><button id="zoomOut">ZOOM −</button><button id="ptzReset">RESET</button><button id="nightVision">IR  [N]</button></div><div class="scan"></div></div></div>
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE
 EXTERNAL LINK ......... LOST

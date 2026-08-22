@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
 import { ColliderSet } from './physics.js';
-import { createCreatureSystem } from './creatures.js';
+import { createCreatureSystem, populateSilo } from './creatures.js';
 import { buildSilo } from './silo.js';
 
 // V3 WORLD RULE:
@@ -155,12 +155,20 @@ export function createGameWorld(assets) {
   // Floor hatch down to the silo. It has to be unsealed before it will open,
   // which is one more thing the shelter asks you to do before it lets you out.
   let hatchOpen = false;
-  const siloWorld = assets.siloChamber ? buildSilo({
+  const siloWorld = assets.habShell ? buildSilo({
     scene: silo,
     colliders: colliders.silo,
     place,
     addInteraction,
     assets,
+  }) : null;
+
+  const residents = siloWorld ? populateSilo({
+    scene: silo,
+    colliders: colliders.silo,
+    assets,
+    walkable: siloWorld.walkable,
+    count: 10,
   }) : null;
 
   if (siloWorld) {
@@ -244,16 +252,8 @@ export function createGameWorld(assets) {
     scene: outside,
     colliders: colliders.outside,
     assets,
-    // Leaving the blast door open is not free: the surface entrance is a way in.
-    breach: {
-      scene: bunker,
-      colliders: colliders.bunker,
-      entrance: new THREE.Vector3(0, 0, -13.5),
-      arrival: new THREE.Vector3(0, 0, -6.2),
-    },
   });
   const wildlife = creatures.wildlife;
-  const zombies = creatures.zombies;
 
   // Rain is an atmospheric effect, not physical world geometry.
   const rainCount=320;
@@ -290,6 +290,8 @@ export function createGameWorld(assets) {
     new THREE.PerspectiveCamera(50,16/9,.1,160),
     new THREE.PerspectiveCamera(48,16/9,.1,160),
     new THREE.PerspectiveCamera(42,16/9,.1,190),
+    // The fifth feed looks down the silo's top landing at the secure unit.
+    new THREE.PerspectiveCamera(56,16/9,.1,90),
   ];
   const targets=[
     new THREE.Vector3(0,1.5,18),
@@ -301,8 +303,17 @@ export function createGameWorld(assets) {
   cctvCameras[1].position.set(17,4.5,10);
   cctvCameras[2].position.set(-16,4,-10);
   cctvCameras[3].position.set(-18,11,20);
+  if (siloWorld) {
+    const secure = siloWorld.securePosition;
+    cctvCameras[4].position.set(secure.x * .55, siloWorld.topY + 2.9, secure.z * .55);
+    targets.push(secure.clone().setY(siloWorld.topY + 1.2));
+  } else {
+    cctvCameras[4].position.set(0, 3, 0);
+    targets.push(new THREE.Vector3(0, 1, -4));
+  }
   cctvCameras.forEach((c,i)=>c.lookAt(targets[i]));
   const cctvBaseRot=cctvCameras.map(c=>c.rotation.clone());
+  const cctvScenes=['outside','outside','outside','outside','silo'];
 
   const scenes = { bunker, outside, silo };
   const spawnPoints = {
@@ -350,12 +361,8 @@ export function createGameWorld(assets) {
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
     if (world === 'silo') siloWorld?.update(dt);
-    creatures.update(dt, world, playerPosition, (agent) => {
-      window.dispatchEvent(new CustomEvent('lostsignal:attack', { detail: { agent } }));
-    }, {
-      doorOpen,
-      onBreach: () => window.dispatchEvent(new CustomEvent('lostsignal:breach')),
-    });
+    creatures.update(dt, world, playerPosition);
+    residents?.update(dt, world, playerPosition);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
     dust.rotation.y += dt*.008;
@@ -378,8 +385,8 @@ export function createGameWorld(assets) {
   }
 
   return {
-    bunker,outside,silo,scenes,player,camera,interactions,wildlife,zombies,cctvCameras,cctvBaseRot,
-    weaponView,blocked,colliders,spawnPoints,creatures,nearestInteraction,setWorld,setArmed,playGun,update,
+    bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
+    weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,playGun,update,
     bunkerLights,emergency,siloWorld,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,

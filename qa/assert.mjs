@@ -30,7 +30,7 @@ check(physics.backWall.z <= 6.6, 'player walked through the shelter wall');
 check(physics.storageRack.x <= 5.4, 'player walked through the storage rack');
 check(physics.crouch.eye < physics.standBackUp.eye, 'crouch did not lower the view');
 check(physics.standBackUp.eye > 1.6, 'player never stood back up');
-check(physics.world.wildlife > 0 && physics.world.zombies > 0, 'the surface is empty');
+check(physics.world.wildlife > 0, 'the surface has no wildlife');
 check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes');
 
 // A 1x1 map is three.js substituting a placeholder for a texture that failed to
@@ -40,20 +40,23 @@ for (const texture of physics.textures) {
 }
 
 if (physics.silo.present) {
-  check(physics.silo.arrival.grounded, 'arriving in the silo did not land on the catwalk');
-  check(physics.silo.arrival.y > 6.5, `silo arrival was at y=${physics.silo.arrival.y}, not the catwalk`);
-  check(physics.silo.overCentre.y < 1, 'stepping off the catwalk did not fall to the silo floor');
-  check(physics.silo.overCentre.grounded, 'the player never landed on the silo floor');
+  check(physics.silo.arrival.grounded, 'arriving in the silo did not land on the top landing');
+  check(physics.silo.arrival.y > 40, `silo arrival was at y=${physics.silo.arrival.y}, not the top landing`);
+  check(physics.silo.overCentre.y < 1, 'stepping into the light well did not fall to the silo floor');
+  check(physics.silo.overCentre.grounded, 'the player never landed at the bottom of the silo');
   check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
 }
 
-check(combat.zombieDown, 'rifle did not down an infected');
+check(combat.deerDown, 'rifle did not down a deer');
 check(combat.hareDown, 'rifle did not down a hare');
-check(Math.abs(combat.collapsedRoll) > 1.4, 'a downed creature did not collapse');
-check(combat.breached > 0, 'an open blast door was never breached');
-check(combat.healthDropped, 'an intruder inside the shelter did no harm');
+check(Math.abs(combat.collapsedRoll) > 1.4, 'a downed animal did not collapse');
+check(combat.residents >= 10, `the silo has ${combat.residents} residents, expected at least 10`);
+check(combat.residentsMoved > 0, 'no resident moved along their gallery');
+check(combat.residentLevels > 1, 'every resident is on the same level');
+check(combat.residentLines === combat.residents, 'a resident has nothing to say');
+check(combat.speakPrompt, 'standing beside a resident offered no way to speak to them');
 
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed:`);

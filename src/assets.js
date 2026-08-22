@@ -37,17 +37,19 @@ const bunkerUrls = {
 const creatureUrls = {
   deer: `${BASE}assets/blender/deer_v3.glb`,
   rabbit: `${BASE}assets/blender/rabbit_v3.glb`,
-  infected: `${BASE}assets/blender/infected_v3.glb`,
 };
 
 // The silo beneath the shelter. Loaded best-effort like the creatures, so a
 // checkout without the generated assets still boots into the bunker.
 const siloUrls = {
-  siloChamber: `${BASE}assets/blender/silo_chamber_v3.glb`,
-  siloCatwalk: `${BASE}assets/blender/silo_catwalk_v3.glb`,
-  siloStairs: `${BASE}assets/blender/silo_stairs_v3.glb`,
-  siloMissile: `${BASE}assets/blender/silo_missile_v3.glb`,
-  siloConsole: `${BASE}assets/blender/silo_console_v3.glb`,
+  habShell: `${BASE}assets/blender/hab_shell_v4.glb`,
+  habLevel: `${BASE}assets/blender/hab_level_v4.glb`,
+  habStair: `${BASE}assets/blender/hab_stair_v4.glb`,
+  habHydroponics: `${BASE}assets/blender/hab_hydroponics_v4.glb`,
+  habCommons: `${BASE}assets/blender/hab_commons_v4.glb`,
+  habSecureDoor: `${BASE}assets/blender/hab_secure_door_v4.glb`,
+  habDirectory: `${BASE}assets/blender/hab_directory_v4.glb`,
+  resident: `${BASE}assets/blender/resident_v4.glb`,
   accessHatch: `${BASE}assets/blender/access_hatch_v3.glb`,
   siloCache: `${BASE}assets/blender/silo_cache_v3.glb`,
 };
