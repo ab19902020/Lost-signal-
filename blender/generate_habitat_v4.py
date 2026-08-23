@@ -300,6 +300,10 @@ DECKPLATE = image_pbr('HabDeck', 'metal_floor_plate__DiamondPlate008C_1K_Color.j
 STEEL = mat('HabSteel', (.21, .23, .22), .78, .36)
 BRUSHED = mat('HabBrushed', (.35, .37, .35), .72, .32)
 DARK = mat('HabDarkSteel', (.06, .065, .062), .74, .42)
+# A non-metallic near-black used where geometry represents an opening rather
+# than a surface. Metallic DARK caught the shelter lights and made the hatch
+# throat read as a bright steel plate when the lid lifted.
+VOID = mat('HabVoid', (.002, .002, .002), 0, .98)
 PAINT = mat('HabPaint', (.19, .24, .22), .10, .62)
 # The gallery wall is the same warm plaster the homes are finished in, not
 # a cold grey-green. It is most of what you look at walking the silo.
@@ -1424,7 +1428,7 @@ def build_access_hatch():
     cyl('Hatch_Ring', (0, .10, 0), .92, .10, BRUSHED, rotation=UP, verts=32, edge=.015)
     # A dark throat beneath the moving lid keeps an opened hatch from revealing
     # the shelter floor mesh underneath it.
-    cyl('Hatch_Void', (0, .105, 0), .77, .035, DARK, rotation=UP, verts=32, edge=.01)
+    cyl('Hatch_Void', (0, .105, 0), .77, .035, VOID, rotation=UP, verts=32, edge=.01)
     cyl('Hatch_Lid', (0, .17, 0), .84, .10, STEEL, rotation=UP, verts=32, edge=.02)
     for i in range(8):
         a = i * math.tau / 8

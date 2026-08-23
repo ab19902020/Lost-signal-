@@ -104,11 +104,14 @@ await desktop.evaluate(() => {
 });
 await save(desktop, '05-silo-top-landing');
 
+// A close, narrow view proves the upper landing really opens onto the last
+// treads without asking SwiftShader to draw all 126 homes through the well.
+await desktop.setViewportSize({ width: 960, height: 540 });
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
   ls.simulate(90);
-  ls.freecam(11.8, 9.4, 4.8, 0, 4.7, 0, 65);
+  ls.freecam(1.8, 9.2, -1.8, 8.7, 7.7, 0, 54);
 });
 await save(desktop, '06-silo-stair-and-landings');
 
