@@ -31,6 +31,12 @@ STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
 STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .62          # half-width of a doorway opening
+TUNNEL_BAY = 9           # the bay whose facade is left out of the level ring,
+                         # so the arched tunnel has an opening to stand in. The
+                         # ring is one mesh placed on every level, so this has
+                         # to be the same bearing on all of them — which is what
+                         # you want from a landmark anyway. Bay 0 is the stair
+                         # landing, so the tunnel faces it across the well.
 LANDING_HALF = 1.8       # half-width of the stair landing, and of the gap it
                          # needs in the gallery railing to reach the floor
 # Treads beside both ends of a flight whose outer balustrade is left open. The
@@ -460,6 +466,11 @@ def build_level():
                        BRUSHED, edge=.012)
 
         # --- The wall between the doors ---------------------------------------
+        # ...except at the tunnel bay, which carries its own arched wall. Two
+        # walls in the same plane means the facade draws straight across the
+        # mouth of the arch, dado band and all.
+        if i == TUNNEL_BAY:
+            continue
         panel_half = (front_half - DOOR_HALF - .12) / 2
         for k in (-1, 1):
             offset = k * (DOOR_HALF + .12 + panel_half)
@@ -1347,6 +1358,92 @@ def build_sump():
     export('hab_sump_v5.glb')
 
 
+def build_tunnel():
+    """An arched tunnel set into the gallery wall.
+
+    The silo's landmarks: where a run of front doors gives way to a great
+    voussoired arch with a lit passage behind it, so a level has somewhere that
+    is not another home and you can tell one bearing from another. Authored
+    facing -Z toward the walkway, like a home, so the runtime rotates a copy
+    into a bay.
+    """
+    clear_scene()
+    SPAN = 1.55          # half-width of the opening
+    SPRING = 2.05        # springing line
+    DEPTH = 2.60         # how far the passage runs back
+    HEAD = SPRING + SPAN
+
+    # The wall the arch is cut through, built as the two haunches and the
+    # spandrel above, so the opening is a real hole rather than a painted one.
+    for k in (-1, 1):
+        cube(f'Tun_Haunch_{k}', (k * (SPAN + .95), HEAD / 2, 0), (.95, HEAD / 2, .30),
+             CONCRETE, edge=.04)
+    cube('Tun_Spandrel', (0, (HEAD + LEVEL_HEIGHT) / 2, 0),
+         (SPAN + 1.90, (LEVEL_HEIGHT - HEAD) / 2, .30), CONCRETE, edge=.04)
+    arch_head('Tun_Arch', 0, 0, SPAN, SPRING, CONCRETE, across=True, thick=.30, steps=14)
+
+    # Voussoirs: radiating blocks round the arch, with a keystone at the crown.
+    VOUS = 15
+    for i in range(VOUS):
+        t = math.pi * (i + .5) / VOUS           # 0 at the right springing
+        r = SPAN + .26
+        x = math.cos(t) * r
+        y = SPRING + math.sin(t) * r
+        cube(f'Tun_Vous_{i}', (x, y, -.02), (.16, .30, .36), CONCRETE,
+             rotation=(0, 0, t - math.pi / 2), edge=.025)
+    cube('Tun_Key', (0, SPRING + SPAN + .30, -.02), (.20, .36, .40), CONCRETE, edge=.03)
+    # Impost bands where the arch springs from the haunches.
+    for k in (-1, 1):
+        cube(f'Tun_Impost_{k}', (k * (SPAN + .22), SPRING - .06, -.03),
+             (.42, .09, .38), BRUSHED, edge=.02)
+
+    # The passage: a barrel running back, ribbed, with the soffit lit.
+    for i in range(5):
+        z = .45 + i * (DEPTH / 5)
+        # The rib is a frame round the passage, not a slab across it: a cube of
+        # the opening's full width and height is a plug, and the tunnel was
+        # solid below the springing line.
+        arch_head(f'Tun_RibArch_{i}', 0, z, SPAN + .04, SPRING, CONCRETE,
+                  across=True, thick=.10, steps=10)
+        for k in (-1, 1):
+            cube(f'Tun_Side_{i}_{k}', (k * (SPAN - .04), SPRING / 2, z),
+                 (.10, SPRING / 2, DEPTH / 10), CONCRETE, edge=.02)
+        # A light in the crown of every second rib bay.
+        if i % 2 == 0:
+            cube(f'Tun_Soffit_{i}', (0, SPRING + SPAN * .62, z + .18),
+                 (.30, .05, .16), WARMLAMP, edge=.012)
+            cube(f'Tun_SoffitHood_{i}', (0, SPRING + SPAN * .70, z + .18),
+                 (.38, .07, .22), DARK, edge=.02)
+    cube('Tun_Floor', (0, .03, DEPTH / 2 + .3), (SPAN, .03, DEPTH / 2 + .3), DECKPLATE, edge=.01)
+    for k in (-1, 1):
+        cube(f'Tun_Skirt_{k}', (k * (SPAN - .10), .16, DEPTH / 2 + .3),
+             (.08, .16, DEPTH / 2 + .3), DARK, edge=.012)
+
+    # A bulkhead door at the far end, shut, with a wheel and a warning plate.
+    cube('Tun_Bulkhead', (0, SPRING / 2 + .1, DEPTH + .55), (SPAN + .10, SPRING / 2 + .1, .18),
+         DARK, edge=.03)
+    cube('Tun_DoorLeaf', (0, 1.15, DEPTH + .40), (.86, 1.15, .10), DOORPAINT, edge=.03)
+    for k in (-1, 1):
+        cube(f'Tun_DoorRib_{k}', (k * .42, 1.15, DEPTH + .32), (.10, 1.05, .05), BRUSHED, edge=.012)
+    bpy.ops.mesh.primitive_torus_add(location=(0, 1.20, DEPTH + .28),
+                                     major_radius=.28, minor_radius=.045,
+                                     major_segments=26, minor_segments=10)
+    wheel = bpy.context.object
+    wheel.name = 'Tun_Wheel'
+    wheel.data.materials.append(BRUSHED)
+    for poly in wheel.data.polygons:
+        poly.use_smooth = True
+    for i in range(4):
+        a = i * math.tau / 4
+        cube(f'Tun_Spoke_{i}', (math.cos(a) * .14, 1.20 + math.sin(a) * .14, DEPTH + .28),
+             (.14, .028, .028), BRUSHED, rotation=(0, 0, a), edge=.006)
+    cube('Tun_Plate', (0, 1.92, DEPTH + .30), (.36, .13, .02), AMBER, edge=.008)
+    cube('Tun_Lamp', (0, 2.28, DEPTH + .34), (.16, .07, .06), REDLIGHT, edge=.012)
+
+    join_all('HabTunnel')
+    export('hab_tunnel_v5.glb')
+
+
 def build_hydroponics():
     """A grow rack. Three hundred people have to eat something."""
     clear_scene()
@@ -1762,6 +1859,7 @@ build_apartment()
 build_door()
 build_crown()
 build_sump()
+build_tunnel()
 build_hydroponics()
 build_commons()
 build_secure_door()

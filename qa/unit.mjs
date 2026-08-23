@@ -96,6 +96,44 @@ assert.ok(colliders.contains(4, 4, 0.34, crownY - 0.2, crownY + 0.4),
 assert.ok(colliders.floorAt(0, 0, 0.34, 1.0) > -0.2,
   'the floor of the shaft has no surface to stand on');
 
+// Navigation: every room of every home you can walk into has to be standable.
+// A home is a hall, a kitchen, a living room and two bedrooms behind their own
+// portals, and a partition placed a few centimetres wrong seals one of them off
+// without anything looking wrong from the walkway.
+const ROOMS = [
+  ['hall', 0, -4.1], ['kitchen', -2.0, -1.9], ['living', 1.6, -1.0],
+  ['bedroom A', -1.7, 3.2], ['bedroom B', 1.7, 3.2],
+];
+let roomsChecked = 0;
+for (let level = 0; level < SILO.levels; level++) {
+  const y = level * SILO.levelHeight;
+  for (const bay of silo.openBays[level]) {
+    const angle = (bay * Math.PI * 2) / SILO.segments;
+    for (const [name, lx, lz] of ROOMS) {
+      const radius = silo.apartmentMid + lz;
+      const x = Math.cos(angle) * radius + Math.sin(angle) * lx;
+      const z = Math.sin(angle) * radius - Math.cos(angle) * lx;
+      assert.equal(colliders.contains(x, z, PLAYER_RADIUS, y + 0.2, y + 1.7), false,
+        `level ${level} bay ${bay}: the ${name} is blocked`);
+      const floor = colliders.floorAt(x, z, PLAYER_RADIUS, y + 0.4);
+      assert.ok(Math.abs(floor - y) < 0.1,
+        `level ${level} bay ${bay}: the ${name} has no floor (${floor} vs ${y})`);
+      roomsChecked++;
+    }
+  }
+}
+
+// The tunnel's bulkhead is shut, so its bay must stay solid: it is the one bay
+// whose facade the level ring leaves out, and a gap there is a hole in the wall.
+for (let level = 0; level < SILO.levels; level++) {
+  const y = level * SILO.levelHeight;
+  const angle = (silo.tunnelBay * Math.PI * 2) / SILO.segments;
+  const r = SILO.deckOuter - 0.30;
+  assert.ok(colliders.contains(Math.cos(angle) * r, Math.sin(angle) * r,
+    PLAYER_RADIUS, y + 0.2, y + 1.7),
+  `level ${level}: the arched tunnel's bay is open when its bulkhead is shut`);
+}
+
 // A merge once pasted the silo event block four times. Besides opening CCTV
 // repeatedly it paid out hydroponics four times and replaced the cache message
 // with three "empty" messages, so duplicate game-event registrations fail the
@@ -111,4 +149,5 @@ for (const [event, count] of counts) {
 assert.ok(!mainSource.includes('TWELVE LEVELS BELOW'), 'silo copy disagrees with its seven levels');
 
 console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings, `
-  + `walkway clear on all ${SILO.levels + 1} levels, ${counts.size} unique game events.`);
+  + `walkway clear on all ${SILO.levels + 1} levels, ${roomsChecked} rooms reachable, `
+  + `${counts.size} unique game events.`);

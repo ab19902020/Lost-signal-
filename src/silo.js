@@ -78,11 +78,12 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
 
-  // Outer shell: an enclosure of flat panels rather than a rectangle.
-  for (let i = 0; i < segments * 2; i++) {
-    const angle = (i * Math.PI * 2) / (segments * 2);
-    colliders.addBox(ringBox(angle, shellRadius + 0.6, arcHalf(shellRadius + 0.6) / 2 + 0.4, 0.8, -1, shaftHeight + levelHeight * 2), {});
-  }
+  // The outer shell, as the circle it is. Built as thirty-six boxes it had the
+  // same fault the walkway had — an axis-aligned box round a wide, thin slab is
+  // far bigger than the slab — and it reached three metres inside the shell,
+  // through the back wall of every home and into the bedrooms.
+  colliders.addRing({ innerRadius: shellRadius, outerRadius: shellRadius + 1.4,
+    minY: -1, maxY: shaftHeight + levelHeight * 2 });
 
   const levelY = (index) => index * levelHeight;
   const gallery = [];
@@ -152,6 +153,14 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     }
   }
 
+  // One bay on every level is an arched tunnel rather than a home: the silo's
+  // landmark, facing the stair's landing across the well. It is the same
+  // bearing on every level because the level ring is one mesh — the bay whose
+  // facade is left out of it has to be in the same place each time — and a
+  // landmark you can rely on is what makes a round building navigable.
+  const TUNNEL_BAY = 9;
+  const tunnelBay = () => TUNNEL_BAY;
+
   const doorwayAngle = (level, bay) => {
     // Which homes stand open. Deterministic, so a door you left open is open
     // when you come back, and roughly a third of the silo is welcoming.
@@ -160,7 +169,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   const openBaysFor = (level) => {
     const open = [];
-    for (let bay = 0; bay < segments; bay++) if (doorwayAngle(level, bay)) open.push(bay);
+    for (let bay = 0; bay < segments; bay++) {
+      if (bay === TUNNEL_BAY) continue;   // the tunnel's bulkhead is shut
+      if (doorwayAngle(level, bay)) open.push(bay);
+    }
     return open;
   };
 
@@ -217,6 +229,24 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let bay = 0; bay < segments; bay++) {
       const angle = (bay * Math.PI * 2) / segments;
       const open = doorwayAngle(level, bay);
+      if (bay === TUNNEL_BAY) {
+        // The tunnel carries its own wall, so the level ring's facade and the
+        // home behind it both step aside for it. The bulkhead at the far end
+        // is shut, so this opens no new space to walk into — the facade ring
+        // stays solid across this bay.
+        if (assets.habTunnel) {
+          place(assets.habTunnel, scene,
+            [Math.cos(angle) * (deckOuter - 0.30), y, Math.sin(angle) * (deckOuter - 0.30)],
+            [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
+          const glow = new THREE.PointLight(0xffbe80, 20, 8, 2);
+          glow.position.set(Math.cos(angle) * (deckOuter + 1.1), y + 2.2,
+            Math.sin(angle) * (deckOuter + 1.1));
+          glow.visible = false;
+          scene.add(glow);
+          allLights.push({ light: glow, base: 20, phase: level * 2.3, failing: false });
+        }
+        continue;
+      }
 
       // The interior is only built where the door stands open. Behind a shut
       // door you can never see it, and a hundred and twenty-six furnished
@@ -625,7 +655,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     geometry.attributes.position.needsUpdate = true;
   }
 
+  // Which bays stand open, per level, so a navigation check can visit the
+  // rooms behind them rather than re-deriving the rule and drifting from it.
+  const openBays = [];
+  for (let level = 0; level < levels; level++) openBays.push(openBaysFor(level));
+
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
+           openBays, tunnelBay: TUNNEL_BAY, apartmentMid,
            stairRadius, stairColumn, stairSteps, stairTurn, wellRadius, deckOuter,
            levelHeight, levels };
 }

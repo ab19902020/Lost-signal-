@@ -54,6 +54,7 @@ const siloUrls = {
   habDoor: `${BASE}assets/blender/hab_door_v4.glb`,
   habCrown: `${BASE}assets/blender/hab_crown_v5.glb`,
   habSump: `${BASE}assets/blender/hab_sump_v5.glb`,
+  habTunnel: `${BASE}assets/blender/hab_tunnel_v5.glb`,
   // Six builds of person. Twenty residents drawn from six bodies and a
   // palette of cloth, hair and skin read as twenty people.
   residentA: `${BASE}assets/blender/resident_a_v5.glb`,

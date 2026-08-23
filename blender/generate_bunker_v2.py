@@ -194,7 +194,7 @@ def build_cctv():
     FEED   = mat('ConsoleFeed', (0.02,0.05,0.04), 0, .16, (0.16,0.42,0.24), 0.85)
     FEED2  = mat('ConsoleFeedCold', (0.015,0.03,0.05), 0, .16, (0.12,0.28,0.50), 0.80)
     FEED3  = mat('ConsoleFeedWarm', (0.05,0.035,0.01), 0, .16, (0.50,0.34,0.10), 0.70)
-    TINTS = (FEED, FEED2, FEED, FEED3, FEED2, FEED)
+    TINTS = (FEED, FEED2, FEED3, FEED)
 
     # --- Desk ---------------------------------------------------------------
     for k in range(9):
@@ -205,41 +205,78 @@ def build_cctv():
         cube('DeskEdge_%d' % k, (x + math.sin(t) * .40, .78, z + math.cos(t) * .40),
              (.34, .045, .05), BRONZE, rotation=(0, t, 0), edge=.015)
 
-    # --- Six monitors, two rows of three ------------------------------------
-    HW, HH = .40, .27               # half-width and half-height of the picture
-    for row, (radius, y, tilt) in enumerate(((1.62, 1.20, -0.13), (1.78, 1.78, -0.26))):
-        for col in range(3):
-            t = (col - 1) * 0.52
-            i = row * 3 + col
+    # --- Four monitors, two by two ------------------------------------------
+    # Four big screens beat six small ones: at this size a feed is a picture you
+    # can read across the room rather than a lit rectangle.
+    HW, HH = .52, .33               # half-width and half-height of the picture
+    # The angular spacing has to fit the screens: at 0.62 rad on a 1.66 m arc
+    # two 1.04 m screens want twice the room there is, and they fold into each
+    # other like a shopfront.
+    for row, (radius, y, tilt) in enumerate(((1.72, 1.22, -0.11), (1.94, 2.08, -0.28))):
+        for col in range(2):
+            t = (col - 0.5) * 0.72
+            i = row * 2 + col
             x, z = math.sin(t) * radius, EYE - math.cos(t) * radius
             nx, nz = math.sin(t), math.cos(t)      # outward normal, toward you
             def at(depth, lift=0.0):
                 return (x + nx * depth, y + lift, z + nz * depth)
-            # Case, bezel, picture.
-            cube('MonCase_%d' % i, at(-.055), (HW + .075, HH + .085, .075), CASE,
-                 rotation=(tilt, t, 0), edge=.035)
-            cube('MonBezel_%d' % i, at(.02), (HW + .035, HH + .045, .02), DARK,
-                 rotation=(tilt, t, 0), edge=.012)
-            cube('MonScreen_%d' % i, at(.042), (HW, HH, .012), TINTS[i],
-                 rotation=(tilt, t, 0), edge=.006)
-            # Scanline break across the picture, so a feed is not a flat slab.
+
+            # Case: a deep body, a chamfered bezel, and a slimmer front frame,
+            # so the edge catches light instead of reading as a printed border.
+            cube('MonBody_%d' % i, at(-.12), (HW + .055, HH + .065, .11), CASE,
+                 rotation=(tilt, t, 0), edge=.045)
+            cube('MonBezel_%d' % i, at(-.01), (HW + .050, HH + .060, .045), DARK,
+                 rotation=(tilt, t, 0), edge=.022)
+            cube('MonFrame_%d' % i, at(.030), (HW + .022, HH + .028, .012), BRONZE,
+                 rotation=(tilt, t, 0), edge=.008)
+            cube('MonScreen_%d' % i, at(.040), (HW, HH, .010), TINTS[i],
+                 rotation=(tilt, t, 0), edge=.005)
+            # Picture furniture: a header band, a footer band and a side gutter,
+            # so a feed reads as a display rather than a slab of colour.
+            cube('MonHead_%d' % i, at(.048, HH * .80), (HW * .97, HH * .10, .006), DARK,
+                 rotation=(tilt, t, 0), edge=.002)
+            cube('MonFoot_%d' % i, at(.048, -HH * .84), (HW * .97, HH * .07, .006), DARK,
+                 rotation=(tilt, t, 0), edge=.002)
             for b in range(3):
-                cube('MonBand_%d_%d' % (i, b), at(.050, -HH * .5 + b * HH * .5),
-                     (HW * .96, .012, .006), DARK, rotation=(tilt, t, 0), edge=.002)
-            # Caption strip and channel light under the picture.
-            cube('MonCaption_%d' % i, at(.048, -HH - .055), (HW * .55, .028, .008), AMBER,
+                cube('MonBand_%d_%d' % (i, b), at(.046, -HH * .40 + b * HH * .40),
+                     (HW * .86, .005, .004), DARK, rotation=(tilt, t, 0), edge=.001)
+            # Anti-glare hood over the top of the picture.
+            cube('MonHood_%d' % i, at(.055, HH + .075), (HW + .045, .016, .085), CASE,
+                 rotation=(tilt - .22, t, 0), edge=.014)
+            # Ventilation slots down the side of the case.
+            for k in (-1, 1):
+                for v in range(4):
+                    cube('MonVent_%d_%d_%d' % (i, k, v),
+                         (x + nx * -.13 + math.cos(t) * k * (HW + .050),
+                          y - HH * .5 + v * HH * .34,
+                          z + nz * -.13 - math.sin(t) * k * (HW + .050)),
+                         (.008, .048, .050), DARK, rotation=(tilt, t, 0), edge=.003)
+            # Brand strip and channel light on the bottom rail.
+            cube('MonStrip_%d' % i, at(.046, -HH - .050), (HW * .30, .020, .008), BRONZE,
                  rotation=(tilt, t, 0), edge=.004)
-            cyl('MonLed_%d' % i, at(.052, -HH - .055), .015, .012,
-                RED if i % 3 == 1 else GREEN, rotation=(math.pi/2 + tilt, t, 0), verts=10)
-            # Stand: a foot on the desk for the lower row, a bracket for the upper.
+            cube('MonCaption_%d' % i, at(.046, -HH - .050), (HW * .13, .026, .010), AMBER,
+                 rotation=(tilt, t, 0), edge=.004)
+            cyl('MonLed_%d' % i, at(.050, -HH - .050), .016, .014,
+                RED if i == 1 else GREEN, rotation=(math.pi/2 + tilt, t, 0), verts=12)
+            # Stand: a tilting yoke on a weighted foot for the lower row, a
+            # bracket off the gantry for the upper.
             if row == 0:
-                cube('MonNeck_%d' % i, (x, y - HH - .19, z), (.07, .17, .07), CASE,
-                     rotation=(0, t, 0), edge=.02)
-                cube('MonFoot_%d' % i, (x, y - HH - .35, z), (.20, .022, .17), CASE,
-                     rotation=(0, t, 0), edge=.015)
+                cube('MonYoke_%d' % i, (x, y - HH - .13, z), (.055, .12, .085), CASE,
+                     rotation=(0, t, 0), edge=.022)
+                cyl('MonPivot_%d' % i, (x, y - HH - .04, z), .030, .12, BRONZE,
+                    rotation=(0, 0, math.pi/2 + t), verts=12)
+                cube('MonColumn_%d' % i, (x, y - HH - .27, z), (.045, .13, .045), CASE,
+                     rotation=(0, t, 0), edge=.016)
+                cube('MonFoot2_%d' % i, (x, y - HH - .40, z), (.24, .020, .19), CASE,
+                     rotation=(0, t, 0), edge=.014)
+                between('MonCable_%d' % i,
+                        (x - nx * .10, y - HH - .30, z - nz * .10),
+                        (x - nx * .34, .78, z - nz * .34), .012, RUBBER)
             else:
-                cube('MonArm_%d' % i, (x - nx * .18, y - HH - .16, z - nz * .18),
-                     (.06, .22, .06), BRONZE, rotation=(0, t, 0), edge=.018)
+                cube('MonArm_%d' % i, (x - nx * .22, y - HH - .18, z - nz * .22),
+                     (.055, .26, .055), BRONZE, rotation=(0, t, 0), edge=.018)
+                cube('MonKnuckle_%d' % i, (x - nx * .10, y - HH - .05, z - nz * .10),
+                     (.055, .055, .055), BRONZE, rotation=(0, t, 0), edge=.018)
 
     # A slim bridge behind the desk that the upper row's arms bolt to.
     for k in range(7):
