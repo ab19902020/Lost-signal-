@@ -417,14 +417,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // the rest of the three hundred, joined into one mesh each so a populated
   // silo costs draw calls rather than skeletons.
   const crowd = [];
-  if (assets.residentStill) {
+  const stillBuilds = ['A', 'B', 'C', 'D', 'E', 'F']
+    .map((k) => assets[`residentStill${k}`]).filter(Boolean);
+  if (stillBuilds.length) {
     for (let level = 0; level < levels; level++) {
       const y = levelY(level);
       const count = 3 + ((level * 5) % 4);
       for (let i = 0; i < count; i++) {
         const angle = (i / count) * Math.PI * 2 + level * 0.83;
         const radius = wellRadius + 0.55 + ((i + level) % 3) * 0.5;
-        const figure = place(assets.residentStill, scene,
+        const figure = place(stillBuilds[(level * 3 + i) % stillBuilds.length], scene,
           [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
           [0, Math.atan2(-Math.cos(angle), -Math.sin(angle)) + (i % 2 ? 0.4 : -0.3), 0], 1,
           { world: 'silo', collide: false });
@@ -520,9 +522,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
-    // Reaching across a twenty-six metre well: at 175 the far gallery fell to
-    // black and the silo read as a void with a lit stair in it.
-    const fill = new THREE.PointLight(0xc7b49a, 400, 60, 1.35);
+    // Reaching across a twenty-six metre well without washing it out. At 175
+    // the far gallery fell to black; at 400 with a 1.35 falloff the whole silo
+    // went to white paper.
+    const fill = new THREE.PointLight(0xc7b49a, 230, 52, 1.55);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
       Math.sin(angle) * fillRadius);

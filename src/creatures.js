@@ -297,10 +297,16 @@ export function dressPerson(root, index) {
   return root;
 }
 
-export function populateSilo({ scene, colliders, assets, walkable, count = 10 }) {
+// The six builds of person the Blender kit ships. Twenty residents drawn from
+// six bodies and a palette of cloth, hair and skin read as twenty people; one
+// body recoloured twenty times reads as one person cloned.
+export const RESIDENT_BUILDS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+export function populateSilo({ scene, colliders, assets, walkable, count = 20 }) {
   const residents = [];
   const agents = [];
-  if (!assets.resident || !walkable?.length) return { residents, agents, update: () => {} };
+  const builds = RESIDENT_BUILDS.map((k) => assets[`resident${k}`]).filter(Boolean);
+  if (!builds.length || !walkable?.length) return { residents, agents, update: () => {} };
 
   // Spread over the upper galleries rather than one per level: a silo of three
   // hundred should look inhabited from the first landing you reach, not offer
@@ -309,7 +315,9 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 10 })
   for (let i = 0; i < count; i++) {
     const ring = walkable[walkable.length - 1 - (i % occupied)];
     const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
-    const root = dressPerson(cloneGLTF(assets.resident), i);
+    // Walk the builds rather than picking at random, so twenty residents are
+    // never eleven of one body and one of another.
+    const root = dressPerson(cloneGLTF(builds[i % builds.length]), i);
     root.position.set(Math.cos(angle) * ring.radius, ring.y, Math.sin(angle) * ring.radius);
     root.rotation.y = Math.atan2(-Math.cos(angle), -Math.sin(angle));
     root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -351,8 +359,13 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 10 })
   return { residents, agents, update };
 }
 
-export function createCreatureSystem({ scene, colliders, assets, counts = {} }) {
+export function createCreatureSystem({ scene, colliders, assets, counts = {}, wildlife: spawnWildlife = true }) {
   const wildlife = [];
+  // The surface is dead. Nothing walks it, and the system is asked to build
+  // nothing rather than being handed a count of zero in four places.
+  if (!spawnWildlife) {
+    return { wildlife, agents: [], update: () => {} };
+  }
   const agents = [];
   const byRoot = new Map();
   const bounds = { minX: -17.5, maxX: 17.5, minZ: -24, maxZ: 15.5 };

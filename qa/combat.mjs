@@ -39,54 +39,9 @@ const results = await page.evaluate(async () => {
   ls.arm();
   ls.simulate(10);
 
-  // A deer should take more than one round; a hare should take one.
-  const deer = ls.game.wildlife.find(w => w.userData.kind === 'deer' && w.userData.alive !== false);
-  out.foundDeer = !!deer;
-  if (deer) {
-    let shots = 0;
-    const mark = { x: ls.body.position.x, z: ls.body.position.z - 6 };
-    while (deer.userData.alive !== false && shots < 4) {
-      deer.position.set(mark.x, 0, mark.z);
-      // aimAt only sets yaw/pitch; the camera picks them up on the next
-      // simulated frame, so the shot has to come after one.
-      ls.aimAt({ x: mark.x, y: 1.0, z: mark.z });
-      ls.simulate(1);
-      deer.position.set(mark.x, 0, mark.z);
-      ls.fire();
-      shots++;
-      ls.simulate(4);
-    }
-    out.deerShots = shots;
-    out.deerDown = deer.userData.alive === false;
-    ls.simulate(60);
-    out.collapsedRoll = +deer.rotation.z.toFixed(2);
-  }
-
-  const hare = ls.game.wildlife.find(w => w.userData.kind === 'rabbit' && w.userData.alive !== false);
-  if (hare) {
-    ls.arm();
-    let shots = 0;
-    const mark = { x: ls.body.position.x, z: ls.body.position.z - 4 };
-    while (hare.userData.alive !== false && shots < 6) {
-      hare.position.set(mark.x, 0, mark.z);
-      // Aim at the animal's actual centre rather than a guessed height: a hare
-      // is twenty centimetres wide and the guess made the check flaky.
-      hare.updateWorldMatrix(true, true);
-      const bounds = ls.bounds(hare);
-      ls.aimAt({ x: mark.x, y: (bounds.min.y + bounds.max.y) / 2, z: mark.z });
-      ls.simulate(1);
-      hare.position.set(mark.x, 0, mark.z);
-      ls.fire();
-      shots++;
-      ls.simulate(4);
-    }
-    out.hareDown = hare.userData.alive === false;
-    out.hareDebug = {
-      pos: [+hare.position.x.toFixed(2), +hare.position.y.toFixed(2), +hare.position.z.toFixed(2)],
-      player: [+ls.body.position.x.toFixed(2), +ls.body.position.z.toFixed(2)],
-      parented: !!hare.parent,
-    };
-  }
+  // Nothing lives on the surface any more, so there is nothing out there to
+  // shoot. The rifle still has to load and fire, which the silo checks below
+  // exercise through arm() and the ammo count.
 
   // The silo: residents should be walking their galleries, and standing next to
   // one should offer something to say.
@@ -101,6 +56,22 @@ const results = await page.evaluate(async () => {
       Math.hypot(r.position.x - before[i].x, r.position.z - before[i].z) > 0.4).length;
     out.residentLevels = new Set(residents.map(r => Math.round(r.position.y))).size;
     out.residentLines = residents.filter(r => (r.userData.resident?.line || '').length > 10).length;
+    // How many distinct bodies are in play. The torso alone will not tell you:
+    // every build shares its topology and only differs by scale. What differs
+    // is what each is wearing and carrying — a coat skirt, straps, an apron, a
+    // satchel, a cap, a beard — so the whole figure's mesh count and total
+    // vertex count together identify the build.
+    const builds = new Set();
+    for (const r of residents) {
+      let meshes = 0, verts = 0;
+      r.traverse((o) => {
+        if (!o.isMesh) return;
+        meshes++;
+        verts += o.geometry.attributes.position.count;
+      });
+      builds.add(`${meshes}:${verts}`);
+    }
+    out.residentBuilds = builds.size;
     const residentRadii = residents.map(r => Math.hypot(r.position.x, r.position.z));
     out.residentsOffGallery = residentRadii.filter(radius => radius < 13.2 || radius > 19.4).length;
     out.residentRadiusRange = [

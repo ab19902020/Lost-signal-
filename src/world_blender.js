@@ -170,7 +170,7 @@ export function createGameWorld(assets) {
     colliders: colliders.silo,
     assets,
     walkable: siloWorld.walkable,
-    count: 10,
+    count: 20,
   }) : null;
 
   if (siloWorld) {
@@ -290,11 +290,15 @@ export function createGameWorld(assets) {
   const returnPanel = place(assets.accessControl,outside,[-2.15,.55,-13.55],[0,0,0],.64,{ collide: false });
   addInteraction(returnPanel,'RETURN TO SHELTER','outside',()=>window.dispatchEvent(new CustomEvent('lostsignal:return')));
 
-  // Wildlife and infected populate the surface once their Blender assets exist.
+  // Nothing lives up here. Whatever ended the world took the animals with it,
+  // and a deer picking its way through the compound said the opposite of every
+  // other thing on the surface. The creature system stays wired so the silo's
+  // residents keep working; it is simply given nothing to put outside.
   const creatures = createCreatureSystem({
     scene: outside,
     colliders: colliders.outside,
     assets,
+    wildlife: false,
   });
   const wildlife = creatures.wildlife;
 

@@ -30,7 +30,9 @@ check(physics.backWall.z <= 6.6, 'player walked through the shelter wall');
 check(physics.storageRack.x <= 5.4, 'player walked through the storage rack');
 check(physics.crouch.eye < physics.standBackUp.eye, 'crouch did not lower the view');
 check(physics.standBackUp.eye > 1.6, 'player never stood back up');
-check(physics.world.wildlife > 0, 'the surface has no wildlife');
+// Nothing lives on the surface: the world ended and took the animals with it.
+check(physics.world.wildlife === 0,
+  `the surface has ${physics.world.wildlife} animals on it and should have none`);
 check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes');
 
 // A 1x1 map is three.js substituting a placeholder for a texture that failed to
@@ -78,14 +80,15 @@ if (physics.silo.present) {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
 }
 
-check(combat.deerDown, 'rifle did not down a deer');
-check(combat.hareDown, 'rifle did not down a hare');
-check(Math.abs(combat.collapsedRoll) > 1.4, 'a downed animal did not collapse');
-check(combat.residents >= 10, `the silo has ${combat.residents} residents, expected at least 10`);
+check(combat.residents >= 20, `the silo has ${combat.residents} residents, expected at least 20`);
 check(combat.residentsMoved > 0, 'no resident moved along their gallery');
 check(combat.residentLevels > 1, 'every resident is on the same level');
 check(combat.residentLevels <= 6, 'residents are spread too thin to meet');
 check(combat.residentLines === combat.residents, 'a resident has nothing to say');
+// Twenty of the same person is the most obviously artificial thing in a game,
+// so the silo has to be drawing them from more than one build.
+check(combat.residentBuilds >= 6,
+  `residents are drawn from ${combat.residentBuilds} body build(s), expected 6`);
 check(combat.speakPrompt, 'standing beside a resident offered no way to speak to them');
 check(combat.residentsOffGallery === 0,
   `${combat.residentsOffGallery} residents walked through a gallery wall or balustrade`);

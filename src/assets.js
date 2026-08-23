@@ -52,8 +52,20 @@ const siloUrls = {
   habLanding: `${BASE}assets/blender/hab_landing_v4.glb`,
   habApartment: `${BASE}assets/blender/hab_apartment_v4.glb`,
   habDoor: `${BASE}assets/blender/hab_door_v4.glb`,
-  resident: `${BASE}assets/blender/resident_v4.glb`,
-  residentStill: `${BASE}assets/blender/resident_still_v4.glb`,
+  // Six builds of person. Twenty residents drawn from six bodies and a
+  // palette of cloth, hair and skin read as twenty people.
+  residentA: `${BASE}assets/blender/resident_a_v5.glb`,
+  residentB: `${BASE}assets/blender/resident_b_v5.glb`,
+  residentC: `${BASE}assets/blender/resident_c_v5.glb`,
+  residentD: `${BASE}assets/blender/resident_d_v5.glb`,
+  residentE: `${BASE}assets/blender/resident_e_v5.glb`,
+  residentF: `${BASE}assets/blender/resident_f_v5.glb`,
+  residentStillA: `${BASE}assets/blender/resident_still_a_v5.glb`,
+  residentStillB: `${BASE}assets/blender/resident_still_b_v5.glb`,
+  residentStillC: `${BASE}assets/blender/resident_still_c_v5.glb`,
+  residentStillD: `${BASE}assets/blender/resident_still_d_v5.glb`,
+  residentStillE: `${BASE}assets/blender/resident_still_e_v5.glb`,
+  residentStillF: `${BASE}assets/blender/resident_still_f_v5.glb`,
   accessHatch: `${BASE}assets/blender/access_hatch_v3.glb`,
   siloCache: `${BASE}assets/blender/silo_cache_v3.glb`,
 };

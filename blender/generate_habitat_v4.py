@@ -1259,86 +1259,115 @@ def build_directory():
 
 # --- People ------------------------------------------------------------------
 # The residents are the thing you stand closest to and look at longest, so they
-# are built as lofted bodies rather than assembled from primitives: a torso that
-# narrows at the waist and broadens across the chest, limbs that taper, a skull
-# with a jaw. Every part is a smooth surface, and the joints nest, so a knee
-# bends at the knee.
+# are lofted rather than assembled from primitives, and they are built from a
+# spec rather than once: twenty identical figures walking one silo is the most
+# obviously artificial thing in a game. Height, build, shoulder width, what
+# they are wearing, what they carry and what they have done with their hair all
+# come from the spec, and the runtime recolours cloth, hair and skin on top.
 
-def _leg(prefix, side, jointed):
+RESIDENT_SPECS = [
+    dict(key='a', height=1.00, build=1.00, shoulders=1.00, dress='jacket',
+         hair='short', extras=('badge',)),
+    dict(key='b', height=1.06, build=0.90, shoulders=1.06, dress='overalls',
+         hair='tied', extras=('toolbelt',)),
+    dict(key='c', height=0.94, build=1.14, shoulders=0.96, dress='coat',
+         hair='short', extras=('scarf',), beard=True),
+    dict(key='d', height=1.02, build=0.94, shoulders=0.98, dress='vest',
+         hair='bald', extras=('satchel',)),
+    dict(key='e', height=0.96, build=1.02, shoulders=0.94, dress='apron',
+         hair='long', extras=('badge',)),
+    dict(key='f', height=1.04, build=1.08, shoulders=1.04, dress='jacket',
+         hair='cap', extras=('toolbelt', 'glasses'), beard=True),
+]
+
+
+def _fit(sections, spec, girth=1.0):
+    """Scale a ring table to a body: height up the Y, build across the rest."""
+    h, b = spec['height'], spec['build'] * girth
+    return [((x * b, y * h, z * b), rx * b, rz * b) for (x, y, z), rx, rz in sections]
+
+
+def _leg(prefix, side, jointed, spec):
     # Every part runs past its joint and into the next one. Subdivision pulls a
     # capped tube's ends inward, so parts that merely met at the knee left a
     # visible gap there; overlapping them means the shrink happens inside the
     # neighbouring limb where nobody sees it.
     hip_x = side * .105
-    thigh = loft(f'{prefix}_Leg_{side}', [
+    trouser = TROUSER if spec['dress'] != 'overalls' else JACKET
+    thigh = loft(f'{prefix}_Leg_{side}', _fit([
         ((hip_x, 1.04, 0), .112, .120),
         ((hip_x, .94, 0), .122, .132),
         ((hip_x, .84, 0), .114, .124),
         ((hip_x, .68, .004), .096, .106),
         ((hip_x, .56, .006), .080, .089),
         ((hip_x, .47, .006), .075, .084),
-    ], TROUSER, sides=10)
-    shin = loft(f'{prefix}_Shin_{side}', [
+    ], spec), trouser, sides=10)
+    shin = loft(f'{prefix}_Shin_{side}', _fit([
         ((hip_x, .63, .004), .074, .083),
         ((hip_x, .52, .002), .079, .088),
         ((hip_x, .43, -.008), .083, .095),
         ((hip_x, .30, .002), .060, .070),
         ((hip_x, .18, .010), .049, .057),
         ((hip_x, .11, .012), .046, .054),
-    ], TROUSER, sides=10)
-    boot = loft(f'{prefix}_Boot_{side}', [
+    ], spec), trouser, sides=10)
+    boot = loft(f'{prefix}_Boot_{side}', _fit([
         ((hip_x, .26, .008), .054, .060),
         ((hip_x, .16, .012), .062, .072),
         ((hip_x, .085, .028), .072, .112),
         ((hip_x, .035, .048), .074, .150),
         ((hip_x, .006, .052), .066, .148),
-    ], DARK, sides=10)
+    ], spec), DARK, sides=10)
     if jointed:
-        set_pivot(thigh, (hip_x, .94, 0))
-        set_pivot(shin, (hip_x, .54, 0))
+        set_pivot(thigh, (hip_x * spec['build'], .94 * spec['height'], 0))
+        set_pivot(shin, (hip_x * spec['build'], .54 * spec['height'], 0))
         parent_to(boot, shin)
         parent_to(shin, thigh)
     return thigh
 
 
-def _arm(prefix, side, jointed):
-    sx = side * .205
-    upper = loft(f'{prefix}_Arm_{side}', [
+def _arm(prefix, side, jointed, spec):
+    sx = side * .205 * spec['shoulders'] / spec['build']
+    sleeve = SKIN if spec['dress'] == 'vest' else JACKET
+    upper = loft(f'{prefix}_Arm_{side}', _fit([
         ((sx * .92, 1.51, 0), .060, .064),
         ((sx, 1.44, 0), .072, .076),
         ((sx * 1.03, 1.34, 0), .065, .067),
         ((sx * 1.06, 1.20, .004), .056, .058),
         ((sx * 1.08, 1.10, .006), .051, .053),
         ((sx * 1.09, 1.03, .006), .049, .051),
-    ], JACKET, sides=8)
-    fore = loft(f'{prefix}_Forearm_{side}', [
+    ], spec), sleeve, sides=8)
+    fore = loft(f'{prefix}_Forearm_{side}', _fit([
         ((sx * 1.07, 1.17, .006), .049, .051),
         ((sx * 1.08, 1.09, .006), .053, .055),
         ((sx * 1.09, 1.00, .002), .048, .050),
         ((sx * 1.10, .90, .004), .039, .041),
         ((sx * 1.10, .82, .006), .034, .036),
-    ], SKIN, sides=8)
-    hand = loft(f'{prefix}_Hand_{side}', [
+    ], spec), SKIN, sides=8)
+    hand = loft(f'{prefix}_Hand_{side}', _fit([
         ((sx * 1.10, .88, .006), .034, .036),
         ((sx * 1.10, .79, .012), .039, .053),
         ((sx * 1.10, .71, .014), .036, .051),
         ((sx * 1.10, .655, .008), .020, .032),
-    ], SKIN, sides=8)
-    cuff = loft(f'{prefix}_Cuff_{side}', [
-        ((sx * 1.08, 1.14, .006), .058, .060),
-        ((sx * 1.09, 1.02, .004), .054, .056),
-    ], JACKET, sides=8, subdiv=0)
+    ], spec), SKIN, sides=8)
+    extra = []
+    if spec['dress'] != 'vest':
+        extra.append(loft(f'{prefix}_Cuff_{side}', _fit([
+            ((sx * 1.08, 1.14, .006), .058, .060),
+            ((sx * 1.09, 1.02, .004), .054, .056),
+        ], spec), sleeve, sides=8, subdiv=0))
     if jointed:
-        set_pivot(upper, (sx, 1.44, 0))
-        set_pivot(fore, (sx * 1.08, 1.10, 0))
+        set_pivot(upper, (sx * spec['build'], 1.44 * spec['height'], 0))
+        set_pivot(fore, (sx * 1.08 * spec['build'], 1.10 * spec['height'], 0))
         parent_to(hand, fore)
-        parent_to(cuff, fore)
+        for e in extra:
+            parent_to(e, fore)
         parent_to(fore, upper)
     return upper
 
 
-def _head(prefix, jointed):
-    head = loft(f'{prefix}_Head', [
+def _head(prefix, jointed, spec):
+    h, b = spec['height'], spec['build']
+    head = loft(f'{prefix}_Head', _fit([
         ((0, 1.455, 0), .062, .066),
         ((0, 1.520, 0), .066, .070),
         ((0, 1.560, .004), .076, .086),
@@ -1347,77 +1376,163 @@ def _head(prefix, jointed):
         ((0, 1.698, 0), .099, .108),
         ((0, 1.740, -.005), .082, .092),
         ((0, 1.768, -.008), .046, .053),
-    ], SKIN, sides=12)
-    hair = loft(f'{prefix}_Hair', [
-        ((0, 1.618, -.020), .104, .116),
-        ((0, 1.660, -.016), .109, .120),
-        ((0, 1.702, -.013), .108, .117),
-        ((0, 1.744, -.014), .088, .098),
-        ((0, 1.776, -.016), .050, .058),
-    ], HAIR, sides=12)
-    brow = cube(f'{prefix}_Brow', (0, 1.665, .090), (.066, .011, .024), HAIR, edge=.006)
-    eyes = [sphere(f'{prefix}_Eye_{k}', (k * .036, 1.641, .088), .0145, DARK, segments=8)
-            for k in (-1, 1)]
-    nose = loft(f'{prefix}_Nose', [
+    ], spec, girth=.96), SKIN, sides=12)
+    parts = []
+    style = spec['hair']
+    if style == 'cap':
+        parts.append(loft(f'{prefix}_Cap', _fit([
+            ((0, 1.690, -.010), .104, .114),
+            ((0, 1.735, -.010), .102, .112),
+            ((0, 1.772, -.012), .070, .078),
+        ], spec, girth=.96), DARK, sides=12))
+        parts.append(cube(f'{prefix}_Peak', (0, 1.690 * h, .118 * b),
+                          (.086 * b, .012 * h, .062 * b), DARK, edge=.01))
+    elif style != 'bald':
+        crown = [
+            ((0, 1.618, -.020), .104, .116),
+            ((0, 1.660, -.016), .109, .120),
+            ((0, 1.702, -.013), .108, .117),
+            ((0, 1.744, -.014), .088, .098),
+            ((0, 1.776, -.016), .050, .058),
+        ]
+        parts.append(loft(f'{prefix}_Hair', _fit(crown, spec, girth=.96), HAIR, sides=12))
+        if style == 'long':
+            parts.append(loft(f'{prefix}_HairFall', _fit([
+                ((0, 1.640, -.070), .095, .050),
+                ((0, 1.520, -.085), .105, .055),
+                ((0, 1.400, -.090), .098, .050),
+                ((0, 1.330, -.088), .060, .032),
+            ], spec, girth=.96), HAIR, sides=10))
+        elif style == 'tied':
+            parts.append(loft(f'{prefix}_HairTie', _fit([
+                ((0, 1.660, -.105), .052, .046),
+                ((0, 1.615, -.130), .062, .056),
+                ((0, 1.570, -.128), .040, .036),
+            ], spec, girth=.96), HAIR, sides=10))
+    if style != 'bald':
+        parts.append(cube(f'{prefix}_Brow', (0, 1.665 * h, .090 * b),
+                          (.066 * b, .011 * h, .024 * b), HAIR, edge=.006))
+    if spec.get('beard'):
+        parts.append(loft(f'{prefix}_Beard', _fit([
+            ((0, 1.612, .052), .078, .085),
+            ((0, 1.575, .046), .070, .080),
+            ((0, 1.545, .036), .046, .052),
+        ], spec, girth=.96), HAIR, sides=10))
+    parts += [sphere(f'{prefix}_Eye_{k}', (k * .036 * b, 1.641 * h, .088 * b),
+                     .0145 * b, DARK, segments=8) for k in (-1, 1)]
+    parts.append(loft(f'{prefix}_Nose', _fit([
         ((0, 1.646, .086), .017, .022),
         ((0, 1.619, .099), .021, .029),
         ((0, 1.601, .090), .016, .020),
-    ], SKIN, sides=8)
+    ], spec, girth=.96), SKIN, sides=8))
+    if 'glasses' in spec['extras']:
+        for k in (-1, 1):
+            parts.append(cube(f'{prefix}_Lens_{k}', (k * .036 * b, 1.641 * h, .098 * b),
+                              (.030 * b, .024 * h, .006 * b), DARK, edge=.008))
+        parts.append(cube(f'{prefix}_Bridge', (0, 1.641 * h, .100 * b),
+                          (.012 * b, .006 * h, .005 * b), DARK, edge=.003))
     if jointed:
-        set_pivot(head, (0, 1.50, 0))
-        for part in (hair, brow, nose, *eyes):
+        set_pivot(head, (0, 1.50 * h, 0))
+        for part in parts:
             parent_to(part, head)
     return head
 
 
-def humanoid(prefix, jointed):
-    """One person, 1.76 m tall. Jointed for the ones that walk about."""
-    torso = loft(f'{prefix}_Torso', [
+def humanoid(prefix, jointed, spec):
+    """One person, built to a spec so no two in the silo are the same."""
+    h, b = spec['height'], spec['build']
+    body = [
         ((0, .80, 0), .150, .114),
         ((0, .88, 0), .168, .126),
         ((0, .99, 0), .157, .117),
         ((0, 1.10, -.002), .148, .107),
         ((0, 1.22, .004), .170, .120),
         ((0, 1.33, .006), .194, .131),
-        ((0, 1.405, .002), .213, .126),
+        ((0, 1.405, .002), .213 * spec['shoulders'], .126),
         ((0, 1.455, 0), .158, .112),
         ((0, 1.500, 0), .080, .082),
         ((0, 1.545, 0), .066, .068),
-    ], JACKET, sides=12)
-    belt = loft(f'{prefix}_Belt', [
+    ]
+    torso = loft(f'{prefix}_Torso', _fit(body, spec),
+                 TROUSER if spec['dress'] == 'overalls' else JACKET, sides=12)
+    parts = []
+
+    if spec['dress'] == 'coat':
+        # A long coat: the skirt hangs past the hip and swings free of the legs.
+        parts.append(loft(f'{prefix}_CoatSkirt', _fit([
+            ((0, 1.08, 0), .162, .120),
+            ((0, .92, 0), .190, .140),
+            ((0, .74, 0), .205, .150),
+            ((0, .60, 0), .200, .146),
+        ], spec), JACKET, sides=12))
+    if spec['dress'] == 'overalls':
+        for k in (-1, 1):
+            parts.append(cube(f'{prefix}_Strap_{k}', (k * .085 * b, 1.35 * h, .112 * b),
+                              (.038 * b, .16 * h, .022 * b), TROUSER, edge=.01))
+    if spec['dress'] == 'apron':
+        parts.append(cube(f'{prefix}_Apron', (0, 1.05 * h, .118 * b),
+                          (.155 * b, .30 * h, .015 * b), CLOTH, edge=.02))
+        parts.append(cube(f'{prefix}_ApronBib', (0, 1.32 * h, .126 * b),
+                          (.095 * b, .12 * h, .012 * b), CLOTH, edge=.015))
+    if spec['dress'] != 'vest':
+        parts.append(loft(f'{prefix}_Collar', _fit([
+            ((0, 1.455, 0), .120, .095),
+            ((0, 1.515, 0), .085, .080),
+        ], spec), DARK, sides=12, subdiv=0))
+
+    parts.append(loft(f'{prefix}_Belt', _fit([
         ((0, 1.055, -.002), .148, .108),
         ((0, 1.125, -.002), .150, .110),
-    ], DARK, sides=12, subdiv=0)
-    collar = loft(f'{prefix}_Collar', [
-        ((0, 1.455, 0), .120, .095),
-        ((0, 1.515, 0), .085, .080),
-    ], DARK, sides=12, subdiv=0)
-    badge = cube(f'{prefix}_Badge', (.125, 1.30, .120), (.038, .052, .008), AMBER, edge=.006)
+    ], spec), DARK, sides=12, subdiv=0))
 
-    head = _head(prefix, jointed)
-    arms = [_arm(prefix, side, jointed) for side in (-1, 1)]
-    legs = [_leg(prefix, side, jointed) for side in (-1, 1)]
+    if 'badge' in spec['extras']:
+        parts.append(cube(f'{prefix}_Badge', (.125 * b, 1.30 * h, .120 * b),
+                          (.038 * b, .052 * h, .008 * b), AMBER, edge=.006))
+    if 'toolbelt' in spec['extras']:
+        for i, k in enumerate((-1, 1)):
+            parts.append(cube(f'{prefix}_Pouch_{i}', (k * .125 * b, 1.05 * h, .075 * b),
+                              (.050 * b, .062 * h, .038 * b), DARK, edge=.014))
+        parts.append(cyl(f'{prefix}_Spanner', (.16 * b, 1.02 * h, -.02 * b),
+                         .012 * b, .20 * h, BRUSHED, rotation=UP, verts=8))
+    if 'satchel' in spec['extras']:
+        parts.append(loft(f'{prefix}_Satchel', _fit([
+            ((.20, 1.06, -.08), .085, .060),
+            ((.21, .94, -.09), .105, .072),
+            ((.21, .84, -.09), .095, .064),
+        ], spec), CLOTH, sides=10))
+        parts.append(cube(f'{prefix}_SatchelStrap', (0, 1.26 * h, .010 * b),
+                          (.170 * b, .030 * h, .140 * b), CLOTH, rotation=(0, 0, .58), edge=.012))
+    if 'scarf' in spec['extras']:
+        parts.append(loft(f'{prefix}_Scarf', _fit([
+            ((0, 1.470, 0), .118, .100),
+            ((0, 1.530, 0), .108, .092),
+            ((0, 1.570, 0), .086, .076),
+        ], spec), CLOTH, sides=12))
+
+    head = _head(prefix, jointed, spec)
+    arms = [_arm(prefix, side, jointed, spec) for side in (-1, 1)]
+    legs = [_leg(prefix, side, jointed, spec) for side in (-1, 1)]
 
     if jointed:
-        set_pivot(torso, (0, .92, 0))
-        for part in (belt, collar, badge, head, *arms):
+        set_pivot(torso, (0, .92 * h, 0))
+        for part in (*parts, head, *arms):
             parent_to(part, torso)
     return torso, legs
 
 
-def build_resident():
-    """A resident. Ten of these walk the galleries; three hundred live here."""
-    clear_scene()
-    humanoid('Resident', jointed=True)
-    export('resident_v4.glb')
-
-
-def build_resident_still():
-    """A joined standing figure, for the crowds that line the galleries."""
-    clear_scene()
-    humanoid('Still', jointed=False)
-    join_all('HabResidentStill')
-    export('resident_still_v4.glb')
+def build_residents():
+    """Six builds of person, jointed for the ones who walk and joined for the
+    ones who stand about. Twenty residents drawn from six bodies and a palette
+    of cloth, hair and skin read as twenty people; one body recoloured twenty
+    times reads as one person cloned."""
+    for spec in RESIDENT_SPECS:
+        clear_scene()
+        humanoid('Resident', True, spec)
+        export(f"resident_{spec['key']}_v5.glb")
+        clear_scene()
+        humanoid('Still', False, spec)
+        join_all('HabResidentStill')
+        export(f"resident_still_{spec['key']}_v5.glb")
 
 
 def build_access_hatch():
@@ -1482,8 +1597,7 @@ build_hydroponics()
 build_commons()
 build_secure_door()
 build_directory()
-build_resident()
-build_resident_still()
+build_residents()
 build_access_hatch()
 build_supply_cache()
 print('HABITAT DONE')
