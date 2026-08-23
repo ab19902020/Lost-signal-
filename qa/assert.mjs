@@ -75,7 +75,28 @@ if (physics.silo.present) {
     check(floor.grounded, `level ${floor.level}: walking off the stair did not end on the floor`);
     check(Math.abs(floor.drop) < 1.0, `level ${floor.level}: walking off the stair changed level`);
   }
-  check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
+  check(physics.silo.homeEntry.closedBlocked, 'a closed quarters door has no collision');
+  check(physics.silo.homeEntry.radius > 20.0,
+    `player stopped at r=${physics.silo.homeEntry.radius} before entering the opened quarters`);
+  check(physics.silo.homeEntry.grounded, 'entering an opened quarters left the player airborne');
+  check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
+  check(physics.silo.tunnelEntry.doorMesh, 'the animated arched bulkhead asset did not load');
+  check(physics.silo.tunnelEntry.radius > 24.0,
+    `player stopped at r=${physics.silo.tunnelEntry.radius} before entering the maintenance room`);
+  check(physics.silo.tunnelEntry.grounded, 'bulkhead traversal left the player airborne');
+  check(physics.silo.lightStability.active >= 5, 'the silo light pool never illuminated the current floor');
+  check(physics.silo.lightStability.spread < 0.08,
+    `stationary silo lighting flickered by ${physics.silo.lightStability.spread.toFixed(3)} intensity units`);
+  check(physics.silo.lightMotion.distance > 6,
+    `moving light test travelled only ${physics.silo.lightMotion.distance.toFixed(1)} m`);
+  check(physics.silo.lightMotion.hotSwaps === 0,
+    `${physics.silo.lightMotion.hotSwaps} silo light slot(s) moved while still illuminated`);
+  check(physics.silo.lightMotion.maxSlotStep < 2.6,
+    `moving silo light changed by ${physics.silo.lightMotion.maxSlotStep.toFixed(2)} intensity units in one frame`);
+  check(physics.silo.doorArcs >= 126,
+    `the silo has only ${physics.silo.doorArcs} stateful door colliders`);
+  check(physics.silo.interactions >= 126,
+    `the silo exposes only ${physics.silo.interactions} interactions; quarters/bulkheads are missing`);
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
 }

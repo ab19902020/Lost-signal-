@@ -85,15 +85,15 @@ jobs:
             resident_still_a_v5.glb resident_still_b_v5.glb resident_still_c_v5.glb \
             resident_still_d_v5.glb resident_still_e_v5.glb resident_still_f_v5.glb \
             remains_covered_v1.glb remains_slumped_v1.glb \
-            hab_crown_v5.glb hab_sump_v5.glb hab_tunnel_v5.glb \
+            hab_crown_v5.glb hab_sump_v5.glb hab_tunnel_v6.glb hab_bulkhead_door_v6.glb \
             access_hatch_v3.glb silo_cache_v3.glb; do
             test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
           done
 
       - name: Commit generated assets to source branch
-        # Pull-request runs validate the generators but must not push. A pushed
-        # bot commit causes another PR synchronize event; with nondeterministic
-        # Blender metadata that can otherwise become an endless commit loop.
+        # Pull-request runs validate the generators without repeatedly changing
+        # Blender metadata. The reviewed revision-7 tunnel asset has already been
+        # published by the one-shot same-repository build above this commit.
         if: github.event_name != 'pull_request'
         shell: bash
         run: |

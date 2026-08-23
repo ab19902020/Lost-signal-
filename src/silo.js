@@ -30,8 +30,59 @@ export const SILO = {
   stairSteps: 36,
   stairTurn: Math.PI * 2,   // a full turn per level, so the landings stack
   apartmentBack: 29.6,  // rear wall of every home: ten metres deep
-  doorHalf: 0.62,
+  // A 1.24 m opening left less than sixty centimetres of usable centre line
+  // once the player's capsule margin was applied. These are residential front
+  // doors, not submarine hatches.
+  doorHalf: 0.84,
 };
+
+const TAU = Math.PI * 2;
+const TUNNEL_BAY = 9;
+const TUNNEL_ENTRY_HALF = 1.45;
+const TUNNEL_DOOR_HALF = 0.98;
+const TUNNEL_DOOR_DEPTH = 3.72;
+
+// The level GLB is instanced eight times, but an identical pale wall on every
+// floor made the silo read as a stack of white boxes. Clone only the handful
+// of finish materials and give each storey a restrained wayfinding identity;
+// geometry and textures stay shared.
+const LEVEL_FINISHES = [
+  { facade: 0x35322d, accent: 0x613a2c },
+  { facade: 0x30362f, accent: 0x596044 },
+  { facade: 0x30363a, accent: 0x405b65 },
+  { facade: 0x3a302c, accent: 0x74452d },
+  { facade: 0x33302f, accent: 0x5d4c62 },
+  { facade: 0x2f3735, accent: 0x3d655d },
+  { facade: 0x39352c, accent: 0x75613a },
+  { facade: 0x302e2c, accent: 0x6b3d34 },
+];
+
+function styleLevel(root, level) {
+  if (!root) return;
+  const finish = LEVEL_FINISHES[level % LEVEL_FINISHES.length];
+  const clones = new Map();
+  const styled = (material) => {
+    if (!material) return material;
+    if (clones.has(material)) return clones.get(material);
+    const name = (material.name || '').toLowerCase();
+    if (!name.includes('facade') && !name.includes('tileband') && !name.includes('paint')) {
+      return material;
+    }
+    const copy = material.clone();
+    if (name.includes('facade')) copy.color.setHex(finish.facade);
+    else if (name.includes('tileband')) copy.color.setHex(finish.accent);
+    else copy.color.lerp(new THREE.Color(finish.facade), 0.18);
+    copy.roughness = Math.max(copy.roughness ?? 0.7, 0.74);
+    clones.set(material, copy);
+    return copy;
+  };
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    object.material = Array.isArray(object.material)
+      ? object.material.map(styled)
+      : styled(object.material);
+  });
+}
 
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
   new THREE.Box3(new THREE.Vector3(minX, minY, minZ), new THREE.Vector3(maxX, maxY, maxZ));
@@ -100,20 +151,28 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // the ring and thin through it is far bigger than the slab — and better than
   // a third of every walkway was solid to the player and invisible on screen.
   const doorGapHalf = doorHalf / (deckOuter - 0.30);
+  const tunnelGapHalf = TUNNEL_ENTRY_HALF / (deckOuter - 0.30);
   const railGapHalf = landingHalf / wellRadius;
 
-  function buildLevelRings(y, openBays) {
+  function buildLevelRings(y, residential = true) {
     // The walkway itself.
     colliders.addRing({ innerRadius: wellRadius, outerRadius: deckOuter,
       minY: y - 0.3, maxY: y + 0.02, climbable: true });
     // The railing over the well, open where the stair's landing arrives.
     colliders.addRing({ innerRadius: wellRadius - 0.1, outerRadius: wellRadius + 0.1,
       minY: y + 0.02, maxY: y + 1.15, gaps: [[0, railGapHalf]] });
-    // The wall of front doors: solid, except at the doorways that stand open.
-    // A shut door is simply not a gap.
+    // The masonry has a real opening at every residential door. Each leaf gets
+    // its own switchable arc collider below, so opening a door updates the
+    // physical world instead of asking a static wall ring to predict state.
+    const gaps = residential
+      ? Array.from({ length: segments }, (_, bay) => [
+          (bay * TAU) / segments,
+          bay === TUNNEL_BAY ? tunnelGapHalf : doorGapHalf,
+        ])
+      : [];
     colliders.addRing({ innerRadius: deckOuter - 0.45, outerRadius: deckOuter - 0.15,
       minY: y, maxY: y + 2.24,
-      gaps: openBays.map((bay) => [(bay * Math.PI * 2) / segments, doorGapHalf]) });
+      gaps });
     // ...and solid all the way round above the door heads.
     colliders.addRing({ innerRadius: deckOuter - 0.45, outerRadius: deckOuter - 0.15,
       minY: y + 2.24, maxY: y + levelHeight });
@@ -139,7 +198,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     const step = span / pieces;
     for (let i = 0; i < pieces; i++) {
       const mid = r0 + step * (i + 0.5);
-      colliders.addBox(ringBox(angle, mid, halfWidth, step / 2, minY, maxY), opts);
+      colliders.addOrientedBox({
+        cx: Math.cos(angle) * mid, cz: Math.sin(angle) * mid,
+        halfX: step / 2, halfZ: halfWidth, rotationY: -angle,
+        minY, maxY, ...opts,
+      });
     }
   }
 
@@ -149,7 +212,12 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     const step = (halfWidth * 2) / pieces;
     for (let i = 0; i < pieces; i++) {
       const offset = -halfWidth + step * (i + 0.5);
-      colliders.addBox(ringBox(angle + offset / radius, radius, step / 2, halfDepth, minY, maxY), opts);
+      const pieceAngle = angle + offset / radius;
+      colliders.addOrientedBox({
+        cx: Math.cos(pieceAngle) * radius, cz: Math.sin(pieceAngle) * radius,
+        halfX: halfDepth, halfZ: step / 2, rotationY: -pieceAngle,
+        minY, maxY, ...opts,
+      });
     }
   }
 
@@ -158,19 +226,18 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // bearing on every level because the level ring is one mesh — the bay whose
   // facade is left out of it has to be in the same place each time — and a
   // landmark you can rely on is what makes a round building navigable.
-  const TUNNEL_BAY = 9;
   const tunnelBay = () => TUNNEL_BAY;
 
   const doorwayAngle = (level, bay) => {
-    // Which homes stand open. Deterministic, so a door you left open is open
-    // when you come back, and roughly a third of the silo is welcoming.
-    return ((level * 7 + bay * 5) % 3) === 0;
+    // Deterministic starting states. Half the homes begin open so a new player
+    // immediately sees lived-in rooms, while every closed one can be opened.
+    return ((level * 5 + bay * 7) % 4) < 2;
   };
 
   const openBaysFor = (level) => {
     const open = [];
     for (let bay = 0; bay < segments; bay++) {
-      if (bay === TUNNEL_BAY) continue;   // the tunnel's bulkhead is shut
+      if (bay === TUNNEL_BAY) continue;
       if (doorwayAngle(level, bay)) open.push(bay);
     }
     return open;
@@ -178,8 +245,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   for (let level = 0; level < levels; level++) {
     const y = levelY(level);
-    place(assets.habLevel, scene, [0, y, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
-    buildLevelRings(y, openBaysFor(level));
+    const levelRoot = place(assets.habLevel, scene, [0, y, 0], [0, 0, 0], 1,
+      { world: 'silo', collide: false });
+    styleLevel(levelRoot, level);
+    buildLevelRings(y, true);
     buildHomeRings(y);
     gallery.push({ level, y });
   }
@@ -211,122 +280,200 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       stairColumn - 0.15, base + levelHeight, stairColumn - 0.15), {});
   }
 
-  // --- Homes ---------------------------------------------------------------
-  // Every door in the silo opens onto a home. The interiors are joined single
-  // meshes, so two hundred and fifty of them cost draw calls rather than scene
-  // graphs, and frustum culling means only the ones you are looking at are
-  // drawn at all.
-  // Every light in the silo goes on this list; only the nearest handful are
-  // ever visible, so the shader's light count never changes.
-  const allLights = [];
+  // --- Homes and service bulkheads -----------------------------------------
+  // Every residential leaf is now a real stateful door. The masonry ring has
+  // permanent apertures; a short polar collider belongs to each leaf and is
+  // disabled only after the same state change that swings the visible mesh.
+  const lightSources = [];
+  const addLightSource = (color, base, distance, position, active = true) => {
+    const source = { id: lightSources.length, color: new THREE.Color(color), base, distance,
+      position: position.clone(), active };
+    lightSources.push(source);
+    return source;
+  };
   const apartmentMid = (deckOuter + apartmentBack) / 2;
   const apartmentDepth = (apartmentBack - deckOuter) / 2;
-
   const homes = [];
+  const homeDoors = [];
+  const tunnelDoors = [];
+  const homeDoorByKey = new Map();
+  const tunnelDoorByLevel = new Map();
+  const yAxis = new THREE.Vector3(0, 1, 0);
+
+  const updateDoorLabel = (state) => {
+    const interaction = state.root?.userData?.interaction;
+    if (!interaction) return;
+    interaction.name = `${state.open ? 'CLOSE' : 'OPEN'} ${state.label}`;
+  };
+
+  function setHomeDoor(level, bay, open) {
+    const state = homeDoorByKey.get(`${level}:${bay}`);
+    if (!state) return false;
+    state.open = !!open;
+    state.collider.enabled = !state.open;
+    for (const source of state.lights) source.active = state.open;
+    updateDoorLabel(state);
+    return true;
+  }
+
+  function setTunnelDoor(level, open) {
+    const state = tunnelDoorByLevel.get(level);
+    if (!state) return false;
+    state.open = !!open;
+    state.collider.enabled = !state.open;
+    for (const source of state.lights) source.active = state.open;
+    updateDoorLabel(state);
+    return true;
+  }
+
   // Homes on the residential levels only; the top ring is the secure unit.
   for (let level = 0; level < levels; level++) {
     const y = levelY(level);
     for (let bay = 0; bay < segments; bay++) {
-      const angle = (bay * Math.PI * 2) / segments;
-      const open = doorwayAngle(level, bay);
+      const angle = (bay * TAU) / segments;
+      const initialOpen = doorwayAngle(level, bay);
+
       if (bay === TUNNEL_BAY) {
-        // The tunnel carries its own wall, so the level ring's facade and the
-        // home behind it both step aside for it. The bulkhead at the far end
-        // is shut, so this opens no new space to walk into — the facade ring
-        // stays solid across this bay.
+        const rotationY = -angle + Math.PI / 2;
+        const baseRadius = deckOuter - 0.30;
+        const basePosition = new THREE.Vector3(
+          Math.cos(angle) * baseRadius, y, Math.sin(angle) * baseRadius);
         if (assets.habTunnel) {
-          place(assets.habTunnel, scene,
-            [Math.cos(angle) * (deckOuter - 0.30), y, Math.sin(angle) * (deckOuter - 0.30)],
-            [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
-          const glow = new THREE.PointLight(0xffbe80, 20, 8, 2);
-          glow.position.set(Math.cos(angle) * (deckOuter + 1.1), y + 2.2,
-            Math.sin(angle) * (deckOuter + 1.1));
-          glow.visible = false;
-          scene.add(glow);
-          allLights.push({ light: glow, base: 20, phase: level * 2.3, failing: false });
+          place(assets.habTunnel, scene, basePosition.toArray(), [0, rotationY, 0], 1,
+            { world: 'silo', collide: false });
         }
+
+        // The door sits at the back of the arched passage. The new tunnel kit
+        // continues behind it into a furnished maintenance room, so opening it
+        // reveals actual playable space instead of a wall texture.
+        const doorRadius = baseRadius + TUNNEL_DOOR_DEPTH;
+        const hingeLocal = new THREE.Vector3(-TUNNEL_DOOR_HALF, 0, TUNNEL_DOOR_DEPTH)
+          .applyAxisAngle(yAxis, rotationY);
+        const hingeWorld = basePosition.clone().add(hingeLocal);
+        let doorRoot = null;
+        const closedRotation = rotationY;
+        if (assets.habBulkheadDoor) {
+          doorRoot = place(assets.habBulkheadDoor, scene, hingeWorld.toArray(),
+            [0, closedRotation, 0], 1, { world: 'silo', collide: false });
+        }
+        const doorCollider = colliders.addArc({
+          innerRadius: doorRadius - 0.18, outerRadius: doorRadius + 0.18,
+          minY: y, maxY: y + 2.32, centre: angle,
+          halfWidth: TUNNEL_DOOR_HALF / doorRadius,
+        });
+        // Solid frame returns either side of the moving leaf.
+        const frameHalf = (TUNNEL_ENTRY_HALF - TUNNEL_DOOR_HALF) / 2;
+        const frameOffset = TUNNEL_DOOR_HALF + frameHalf;
+        for (const side of [-1, 1]) {
+          colliders.addArc({
+            innerRadius: doorRadius - 0.22, outerRadius: doorRadius + 0.22,
+            minY: y, maxY: y + 2.48,
+            centre: angle + side * frameOffset / doorRadius,
+            halfWidth: frameHalf / doorRadius,
+          });
+        }
+        // Both sides of the service room are physical all the way to the shell.
+        for (const side of [-0.5, 0.5]) {
+          addRadialWall((bay + side) * TAU / segments,
+            deckOuter - 0.1, apartmentBack, 0.16, y, y + levelHeight);
+        }
+
+        const state = {
+          level, bay, open: false, root: doorRoot, collider: doorCollider,
+          closedRotation, lights: [], label: `SERVICE BULKHEAD — LEVEL ${levels - level}`,
+        };
+        tunnelDoors.push(state);
+        tunnelDoorByLevel.set(level, state);
+        if (doorRoot) {
+          addInteraction(doorRoot, `OPEN ${state.label}`, 'silo', () => {
+            setTunnelDoor(level, !state.open);
+            window.dispatchEvent(new CustomEvent('lostsignal:bulkhead', {
+              detail: { open: state.open, level: levels - level },
+            }));
+          });
+        }
+        addLightSource(0xffbd82, 10, 8.5,
+          new THREE.Vector3(Math.cos(angle) * (baseRadius + 1.45), y + 2.65,
+            Math.sin(angle) * (baseRadius + 1.45)));
+        state.lights.push(addLightSource(0xffc991, 8, 9.5,
+          new THREE.Vector3(Math.cos(angle) * (doorRadius + 2.15), y + 2.8,
+            Math.sin(angle) * (doorRadius + 2.15)), false));
+        updateDoorLabel(state);
         continue;
       }
 
-      // The interior is only built where the door stands open. Behind a shut
-      // door you can never see it, and a hundred and twenty-six furnished
-      // rooms nobody can look into is a hundred and twenty-six draw calls
-      // spent on nothing.
-      if (assets.habApartment && open) {
-        homes.push(place(assets.habApartment, scene,
+      // All homes exist, including those whose doors start shut. Frustum
+      // culling means only the rooms in view draw, and a player may now open
+      // any front door instead of discovering a decorative dead end.
+      if (assets.habApartment) {
+        const home = place(assets.habApartment, scene,
           [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
-          [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false }));
+          [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
+        home.userData.home = { level, bay };
+        homes.push(home);
       }
 
-      // A home that stands open has its lamp on, and the light falls out
-      // across the gallery. That spill is what makes the wall read as
-      // dwellings rather than as a painted facade.
-      if (open) {
-        // Two: the front room and the sleeping end. One lamp at the door left
-        // eight metres of the home in the dark.
-        // Up at the ceiling and much dimmer than they were. These were set
-        // when a home was one open room and you were never near one; in a
-        // four-metre bedroom an inverse-square light at head height is a
-        // white-out.
-        // A home is six and a half metres by ten with partitions in it. These
-        // were tuned when it was one open room and left every flat a murky
-        // brown box once it had rooms and a ceiling.
-        for (const [depth, base] of [[2.2, 9], [5.0, 12], [8.4, 8]]) {
-          const lamp = new THREE.PointLight(0xffc78f, base, 9.5, 2);
-          lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 3.15,
-            Math.sin(angle) * (deckOuter + depth));
-          lamp.visible = false;
-          scene.add(lamp);
-          allLights.push({ light: lamp, base, phase: level * 1.7 + bay + depth, failing: false });
-        }
-      }
-
-      // The door leaf: flat in the opening when shut, swung back into the home
-      // when it stands open. Its origin is the hinge, so it is placed at the
-      // jamb rather than at the middle of the opening.
-      const doorOffset = 0;   // centred in the bay, lining up with the home behind it
-      const hinge = doorOffset - doorHalf + 0.04;
+      const hinge = -doorHalf + 0.04;
       const dx = Math.cos(angle) * (deckOuter - 0.28) + Math.sin(angle) * hinge;
       const dz = Math.sin(angle) * (deckOuter - 0.28) - Math.cos(angle) * hinge;
+      const closedRotation = -angle + Math.PI / 2;
+      let doorRoot = null;
       if (assets.habDoor) {
-        place(assets.habDoor, scene, [dx, y, dz],
-          [0, -angle + Math.PI / 2 - (open ? 1.85 : 0), 0], 1, { world: 'silo', collide: false });
+        doorRoot = place(assets.habDoor, scene, [dx, y, dz],
+          [0, closedRotation - (initialOpen ? 1.82 : 0), 0], 1,
+          { world: 'silo', collide: false });
       }
-
-      // The partitions inside the home, so the rooms are rooms rather than a
-      // drawing of rooms. Only for homes that are actually built — behind a
-      // shut door there is no interior to walk into. These numbers are the
-      // room plan from blender/generate_habitat_v4.py: keep them in step.
-      if (open && assets.habApartment) {
-        const homeWidth = 2 * (Math.PI * deckOuter / segments) - 0.3;
-        const halfW = homeWidth / 2;
-        const halfD = (apartmentBack - deckOuter) / 2;
-        const centre = (deckOuter + apartmentBack) / 2;
-        const T = 0.10, DW = 0.48, WIDE = 0.85, top = y + levelHeight - 0.5;
-        // A partition running across the width, at local z, between x0 and x1.
-        const across = (z, x0, x1) => addArcWall(
-          angle + ((x0 + x1) / 2) / centre, centre + z, (x1 - x0) / 2, T, y, top);
-        // A partition running back into the home, at local x, from z0 to z1.
-        const along = (x, z0, z1) => addRadialWall(
-          angle + x / centre, centre + z0, centre + z1, T, y, top);
-
-        const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
-        const kitchenDoor = -2.05, livingGap = 1.95, bedA = -1.70, bedB = 1.70;
-        across(HALL_BACK, -halfW, kitchenDoor - DW);
-        across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
-        across(HALL_BACK, livingGap + WIDE, halfW);
-        along(KITCHEN_X, HALL_BACK, KITCHEN_BACK);
-        across(BED_FRONT, -halfW, bedA - DW);
-        across(BED_FRONT, bedA + DW, bedB - DW);
-        across(BED_FRONT, bedB + DW, halfW);
-        along(0, BED_FRONT, halfD);
+      const doorRadius = deckOuter - 0.30;
+      const doorCollider = colliders.addArc({
+        innerRadius: doorRadius - 0.18, outerRadius: doorRadius + 0.18,
+        minY: y, maxY: y + 2.22, centre: angle,
+        halfWidth: doorHalf / doorRadius, enabled: !initialOpen,
+      });
+      const state = {
+        level, bay, open: initialOpen, root: doorRoot, collider: doorCollider,
+        closedRotation, lights: [],
+        label: `QUARTERS ${String(levels - level).padStart(2, '0')}-${String(bay + 1).padStart(2, '0')}`,
+      };
+      homeDoors.push(state);
+      homeDoorByKey.set(`${level}:${bay}`, state);
+      if (doorRoot) {
+        addInteraction(doorRoot, `${initialOpen ? 'CLOSE' : 'OPEN'} ${state.label}`, 'silo', () => {
+          setHomeDoor(level, bay, !state.open);
+          window.dispatchEvent(new CustomEvent('lostsignal:quarters', {
+            detail: { open: state.open, unit: state.label },
+          }));
+        });
       }
+      for (const [depth, base] of [[2.2, 6], [5.0, 8], [8.4, 5]]) {
+        state.lights.push(addLightSource(0xffc78f, base, 9.5,
+          new THREE.Vector3(Math.cos(angle) * (deckOuter + depth), y + 3.05,
+            Math.sin(angle) * (deckOuter + depth)), initialOpen));
+      }
+      updateDoorLabel(state);
 
-      // The walls between one home and its neighbour. Radial rather than
-      // circular, so they stay boxes — but split along their length, because a
-      // box around a ten-metre slab lying at forty-five degrees is a
-      // seven-metre square that fills the whole home.
-      const boundary = ((bay + 0.5) * Math.PI * 2) / segments;
+      // The room plan collision exists regardless of the starting door state.
+      const homeWidth = 2 * (Math.PI * deckOuter / segments) - 0.3;
+      const halfW = homeWidth / 2;
+      const halfD = apartmentDepth;
+      const centre = apartmentMid;
+      const T = 0.10, DW = 0.48, WIDE = 0.85, top = y + levelHeight - 0.5;
+      const across = (z, x0, x1) => addArcWall(
+        angle + ((x0 + x1) / 2) / centre, centre + z, (x1 - x0) / 2, T, y, top);
+      const along = (x, z0, z1) => addRadialWall(
+        angle + x / centre, centre + z0, centre + z1, T, y, top);
+      const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
+      const kitchenDoor = -2.05, livingGap = 1.95, bedA = -1.70, bedB = 1.70;
+      across(HALL_BACK, -halfW, kitchenDoor - DW);
+      across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
+      across(HALL_BACK, livingGap + WIDE, halfW);
+      along(KITCHEN_X, HALL_BACK, KITCHEN_BACK);
+      across(BED_FRONT, -halfW, bedA - DW);
+      across(BED_FRONT, bedA + DW, bedB - DW);
+      across(BED_FRONT, bedB + DW, halfW);
+      along(0, BED_FRONT, halfD);
+
+      // The walls between one home and its neighbour.
+      const boundary = ((bay + 0.5) * TAU) / segments;
       addRadialWall(boundary, deckOuter, apartmentBack, 0.2, y, y + levelHeight);
     }
   }
@@ -342,7 +489,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     colliders.addRing({ innerRadius: 0, outerRadius: wellRadius + 1.7,
       minY: crownY - 0.6, maxY: crownY + 1.2 });
     // The oculus reads as the light source, so there is one behind it.
-    const oculus = new THREE.PointLight(0xf2e6cc, 140, 30, 1.7);
+    const oculus = new THREE.PointLight(0xf2e6cc, 58, 24, 1.8);
     oculus.position.set(0, crownY - 0.9, 0);
     scene.add(oculus);
   }
@@ -352,7 +499,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       minY: -0.4, maxY: 0.02, climbable: true });
     // Two work lamps stand down there; they are what you see from six levels up.
     for (const angle of [1.9, 5.1]) {
-      const lamp = new THREE.PointLight(0xdff0ff, 90, 22, 1.7);
+      const lamp = new THREE.PointLight(0xdff0ff, 42, 18, 1.8);
       lamp.position.set(Math.cos(angle) * (wellRadius - 3.4), 1.72,
         Math.sin(angle) * (wellRadius - 3.4));
       scene.add(lamp);
@@ -405,8 +552,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
           { world: 'silo' }));
       }
     }
-    if (assets.habDirectory && level % 2 === 0) {
-      const angle = level * 0.9;
+    if (assets.habDirectory) {
+      const angle = level * 0.9 + 0.28;
       const radius = wellRadius + 1.1;
       place(assets.habDirectory, scene,
         [Math.cos(angle) * radius, y, Math.sin(angle) * radius], [0, -angle + Math.PI / 2, 0], 1,
@@ -417,12 +564,14 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // --- The secure unit ------------------------------------------------------
   // Top landing, above the residential levels. The CCTV console watches it.
   const topY = levelY(levels);
-  place(assets.habLevel, scene, [0, topY, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+  const secureLevelRoot = place(assets.habLevel, scene, [0, topY, 0], [0, 0, 0], 1,
+    { world: 'silo', collide: false });
+  styleLevel(secureLevelRoot, levels);
   // Same rings as any other level, with no open doorways: up here the wall of
   // the secure unit is solid. This level used to carry its own copy of the
   // walkway collision, which is how it ended up without the railing opening
   // the landing needs.
-  buildLevelRings(topY, []);
+  buildLevelRings(topY, false);
   for (let i = 0; i < segments; i++) {
     const angle = (i * Math.PI * 2) / segments;
 
@@ -501,8 +650,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // Warm. The silo used to be lit with a blue sky light and a blue ambient,
   // which turned every wall in it cold grey-blue — the opposite of how the
   // living spaces are meant to read.
-  scene.add(new THREE.HemisphereLight(0x9a8f7c, 0x1c1814, 1.25));
-  scene.add(new THREE.AmbientLight(0x5f5648, 0.60));
+  scene.add(new THREE.HemisphereLight(0xa99d89, 0x211b16, 1.08));
+  scene.add(new THREE.AmbientLight(0x665c4d, 0.44));
 
   // A hemisphere light barely touches a vertical wall — its contribution is
   // driven by how much of the surface faces up — so the shaft's tall surfaces,
@@ -510,64 +659,92 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // opposed directionals light every vertical face regardless of distance, at
   // the cost of two lights rather than one per level.
   for (const [dx, dz] of [[1, 0.35], [-1, -0.35]]) {
-    const wash = new THREE.DirectionalLight(0xc6b49c, 0.42);
+    const wash = new THREE.DirectionalLight(0xcbb9a0, 0.33);
     wash.position.set(dx * 40, shaftHeight * 0.6, dz * 40);
     wash.target.position.set(0, shaftHeight * 0.35, 0);
     scene.add(wash, wash.target);
   }
 
-  // Fifty-two point lights would be compiled into every shader in the scene.
-  // They are all created, but only the nearest handful are ever visible, and
-  // the visible count is held constant so the material shaders never recompile.
-  const strips = [];
-  const LIT_AT_ONCE = 14;
-  // Over how many metres a light ramps out as it nears the cull radius.
-  const LIGHT_FADE_METRES = 4;
+  // The previous system created every lamp, sorted them by distance each frame
+  // and snapped the fourteenth one off. Walking changed that membership several
+  // times a second, so whole walls visibly flashed. These authored positions
+  // feed a fixed twelve-light pool instead. A source fades completely before a
+  // pool slot moves, and assigned sources receive hysteresis at the boundary.
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
     const count = 4;
     for (let i = 0; i < count; i++) {
-      const angle = (i * Math.PI * 2) / count + level * 0.5;
-      const light = new THREE.PointLight(0xffd9a2, 40, 15, 2);
-      light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
-      light.visible = false;
-      scene.add(light);
-      const entry = { light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 23 === 3 };
-      strips.push(entry);
-      allLights.push(entry);
+      const angle = (i * TAU) / count + level * 0.5;
+      addLightSource(0xffd9a2, 28, 14,
+        new THREE.Vector3(Math.cos(angle) * (deckOuter - 2.2), y,
+          Math.sin(angle) * (deckOuter - 2.2)));
     }
   }
 
-  const _lightSort = [];
-  function cullLights(playerPosition) {
-    _lightSort.length = 0;
-    for (const strip of allLights) {
-      // Vertical distance dominates: the gallery you are on matters far more
-      // than one seven levels down on the same bearing.
-      const dy = strip.light.position.y - playerPosition.y;
-      const dx = strip.light.position.x - playerPosition.x;
-      const dz = strip.light.position.z - playerPosition.z;
-      strip.score = dx * dx + dz * dz + dy * dy * 4;
-      _lightSort.push(strip);
+  const LIGHT_POOL_SIZE = 12;
+  const lightPool = Array.from({ length: LIGHT_POOL_SIZE }, () => {
+    const light = new THREE.PointLight(0xffd9a2, 0, 14, 2);
+    light.visible = true;
+    scene.add(light);
+    return { light, source: null, target: 0 };
+  });
+  const rankedSources = [];
+
+  function sourceScore(source, playerPosition, assigned) {
+    const dx = source.position.x - playerPosition.x;
+    const dz = source.position.z - playerPosition.z;
+    const dy = source.position.y - playerPosition.y;
+    // Strong floor preference, plus hysteresis so two equally distant lamps do
+    // not trade the final pool slot on alternating frames.
+    return (dx * dx + dz * dz + dy * dy * 5.5) * (assigned ? 0.72 : 1);
+  }
+
+  function sourceIntensity(source, playerPosition) {
+    const dx = source.position.x - playerPosition.x;
+    const dz = source.position.z - playerPosition.z;
+    const dy = (source.position.y - playerPosition.y) * 1.8;
+    const distance = Math.hypot(dx, dy, dz);
+    return source.base * (1 - THREE.MathUtils.smoothstep(distance, 8, 18));
+  }
+
+  function updateLightPool(dt, playerPosition) {
+    const assigned = new Set(lightPool.map((slot) => slot.source).filter(Boolean));
+    rankedSources.length = 0;
+    for (const source of lightSources) {
+      if (!source.active) continue;
+      source.score = sourceScore(source, playerPosition, assigned.has(source));
+      rankedSources.push(source);
     }
-    _lightSort.sort((a, b) => a.score - b.score);
-    // The visible count has to stay constant or every material in the scene
-    // recompiles, so the set is still the nearest LIT_AT_ONCE. What changed is
-    // that the last few fade down to nothing by the time they drop out: a
-    // light switched off at full brightness as you walk is a flash, and the
-    // whole silo appeared to flicker as you moved along a gallery.
-    // Fade by distance, not by rank. A lamp two metres away that happens to
-    // rank thirteenth is still a lamp two metres away; ranking it out dimmed
-    // whole rooms. What matters is that a light is nearly out by the time it
-    // reaches the cull radius, so switching it off is not a flash.
-    const cutoff = _lightSort[LIT_AT_ONCE]
-      ? Math.sqrt(_lightSort[LIT_AT_ONCE].score) : Infinity;
-    for (let i = 0; i < _lightSort.length; i++) {
-      const entry = _lightSort[i];
-      entry.light.visible = i < LIT_AT_ONCE;
-      entry.fade = i < LIT_AT_ONCE
-        ? Math.min(1, Math.max(0, (cutoff - Math.sqrt(entry.score)) / LIGHT_FADE_METRES))
-        : 0;
+    rankedSources.sort((a, b) => a.score - b.score);
+    const selected = rankedSources.slice(0, LIGHT_POOL_SIZE);
+    const wanted = new Set(selected);
+
+    for (const slot of lightPool) {
+      if (slot.source && !wanted.has(slot.source)) slot.target = 0;
+      if (slot.source && !wanted.has(slot.source) && slot.light.intensity < 0.035) {
+        slot.source = null;
+      }
+    }
+
+    const already = new Set(lightPool.map((slot) => slot.source).filter(Boolean));
+    for (const source of selected) {
+      if (already.has(source)) continue;
+      const slot = lightPool.find((candidate) => !candidate.source);
+      if (!slot) break;
+      slot.source = source;
+      slot.light.position.copy(source.position);
+      slot.light.color.copy(source.color);
+      slot.light.distance = source.distance;
+      slot.light.decay = 2;
+      slot.light.intensity = 0;
+      already.add(source);
+    }
+
+    for (const slot of lightPool) {
+      slot.target = slot.source && wanted.has(slot.source)
+        ? sourceIntensity(slot.source, playerPosition) : 0;
+      slot.light.intensity = THREE.MathUtils.damp(
+        slot.light.intensity, slot.target, slot.target > slot.light.intensity ? 5.0 : 4.0, dt);
     }
   }
 
@@ -578,14 +755,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // except the column, which is how the silo's spine came to be a black
   // cylinder. They are never culled, so the visible light count stays constant.
   const fillRadius = stairRadius + 2.4;
-  for (let i = 0; i < 6; i++) {
-    const angle = (i * Math.PI * 2) / 6;
-    // Reaching across a twenty-six metre well without washing it out. At 175
-    // the far gallery fell to black; at 400 with a 1.35 falloff the whole silo
-    // went to white paper.
-    const fill = new THREE.PointLight(0xc7b49a, 230, 52, 1.55);
+  for (let i = 0; i < 4; i++) {
+    const angle = (i * TAU) / 4 + 0.35;
+    const fill = new THREE.PointLight(0xcbb79b, 104, 34, 1.8);
     fill.position.set(Math.cos(angle) * fillRadius,
-      (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
+      (shaftHeight / 3) * i + levelHeight * 0.55,
       Math.sin(angle) * fillRadius);
     scene.add(fill);
   }
@@ -593,12 +767,12 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xe8dcc6, 900, shaftHeight + 12, 0.5, 0.7, 2);
+  const crown = new THREE.SpotLight(0xe8dcc6, 330, shaftHeight + 12, 0.46, 0.78, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);
 
-  const secureGlow = new THREE.PointLight(0xff6a4a, 12, 6, 2);
+  const secureGlow = new THREE.PointLight(0xff6a4a, 8, 5.5, 2);
   secureGlow.position.copy(securePosition).setY(topY + 1.6);
   scene.add(secureGlow);
 
@@ -631,20 +805,18 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     walkable.push({ y: levelY(level) + 0.02, radius: deckMid });
   }
 
-  let elapsed = 0;
   function update(dt, playerPosition) {
-    elapsed += dt;
-    if (playerPosition) cullLights(playerPosition);
-    for (const strip of allLights) {
-      if (!strip.light.visible) continue;
-      const hum = 1 + Math.sin(elapsed * 1.4 + strip.phase) * 0.035;
-      // A failing lamp browns out rather than snapping to near-dark: at 0.15
-      // it read as the whole level flashing rather than as one bad fitting.
-      const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.82
-        ? 0.55 : 1;
-      strip.light.intensity = strip.base * hum * stutter * (strip.fade ?? 1);
+    if (playerPosition) updateLightPool(dt, playerPosition);
+    for (const door of homeDoors) {
+      if (!door.root) continue;
+      door.root.rotation.y = THREE.MathUtils.damp(door.root.rotation.y,
+        door.closedRotation - (door.open ? 1.82 : 0), 6.5, dt);
     }
-    secureGlow.intensity = 10 + Math.sin(elapsed * 1.7) * 3;
+    for (const door of tunnelDoors) {
+      if (!door.root) continue;
+      door.root.rotation.y = THREE.MathUtils.damp(door.root.rotation.y,
+        door.closedRotation - (door.open ? 1.62 : 0), 5.2, dt);
+    }
 
     const array = geometry.attributes.position.array;
     const ceiling = shaftHeight + levelHeight;
@@ -659,9 +831,26 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // rooms behind them rather than re-deriving the rule and drifting from it.
   const openBays = [];
   for (let level = 0; level < levels; level++) openBays.push(openBaysFor(level));
+  const homeBays = Array.from({ length: levels }, () =>
+    Array.from({ length: segments }, (_, bay) => bay).filter((bay) => bay !== TUNNEL_BAY));
+  const lightState = () => ({
+    energy: lightPool.reduce((sum, slot) => sum + slot.light.intensity, 0),
+    active: lightPool.filter((slot) => slot.light.intensity > 0.05).length,
+    maximum: Math.max(0, ...lightPool.map((slot) => slot.light.intensity)),
+    assignments: lightPool.filter((slot) => slot.source).length,
+    // QA observes slot identity as the player moves. Reassigning a slot while
+    // it is still bright is the wall-sized flash seen in the supplied mobile
+    // recording, even when total light energy happens to remain similar.
+    slots: lightPool.map((slot) => ({
+      source: slot.source?.id ?? -1,
+      intensity: slot.light.intensity,
+    })),
+  });
 
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
-           openBays, tunnelBay: TUNNEL_BAY, apartmentMid,
+           openBays, homeBays, homeDoors, tunnelDoors, setHomeDoor, setTunnelDoor, lightState,
+           tunnelBay: TUNNEL_BAY, tunnelDoorRadius: deckOuter - 0.30 + TUNNEL_DOOR_DEPTH,
+           apartmentMid,
            stairRadius, stairColumn, stairSteps, stairTurn, wellRadius, deckOuter,
            levelHeight, levels };
 }

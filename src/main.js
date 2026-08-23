@@ -91,9 +91,12 @@ function fail(error) {
 // One quality tier decides pixel ratio, shadow resolution and how much of the
 // post stack we can afford, so a phone and a desktop run the same code path.
 const TIERS = {
-  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.018, ao: false },
-  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.021, ao: false },
-  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.024, ao: true },
+  // Mobile previously lost browser antialiasing when the composer rendered to
+  // an unsampled target. SMAA costs one light fullscreen pass and removes the
+  // crawling/blocky railing edges visible in the supplied Android recording.
+  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: true, grain: 0.0, ao: false },
+  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.004, ao: false },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.007, ao: true },
 };
 const quality = (() => {
   // ?quality=high forces a tier. A headless browser reports four cores and a
@@ -146,7 +149,7 @@ function createComposer() {
     composer.addPass(aoPass);
   }
 
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.2, 0.42, 0.94);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.11, 0.34, 1.02);
   composer.addPass(bloomPass);
 
   gradePass = new ShaderPass(GradeShader);
@@ -168,9 +171,9 @@ function createComposer() {
 async function prepare() {
   try {
     createRenderer();
-    engineState.textContent = 'Meshopt decoder ready. Loading same-repository assets…';
+    engineState.textContent = 'Restoring Shelter 47 lighting, controls and life-support displays…';
     const assets = await loadGameAssets((label, step, total) => {
-      engineState.textContent = `${label} — ${step}/${total}`;
+      engineState.textContent = `Bringing site systems online — ${step}/${total}`;
     });
 
     game = createGameWorld(assets);
@@ -241,7 +244,7 @@ async function prepare() {
       };
     }
     engineState.textContent = '✓ Shelter 47, surface compound, wildlife and rifle loaded from this repository.';
-    backendEl.textContent = `THREE.JS / PBR / MESHOPT / SAME-ORIGIN GLB / ${quality.name.toUpperCase()}`;
+    backendEl.textContent = `S47 INTERNAL // EXTERNAL LINK LOST // ${quality.name.toUpperCase()} DISPLAY`;
     startButton.disabled = false;
     startButton.textContent = 'ENTER SHELTER';
     renderer.setAnimationLoop(loop);
@@ -322,6 +325,18 @@ function wireGameEvents() {
   addEventListener('lostsignal:ascend', () => {
     enterWorld('bunker', 0, -0.02);
     flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:quarters', (e) => {
+    flash(e.detail.open
+      ? `${e.detail.unit} — DOOR OPEN`
+      : `${e.detail.unit} — DOOR CLOSED`, 1800);
+  });
+
+  addEventListener('lostsignal:bulkhead', (e) => {
+    flash(e.detail.open
+      ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
+      : `LEVEL ${e.detail.level} SERVICE BULKHEAD SEALED`, 2600);
   });
 
   addEventListener('lostsignal:hydroponics', (e) => {

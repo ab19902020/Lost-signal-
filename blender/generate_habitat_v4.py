@@ -13,6 +13,8 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
+# Visual rebuild revision 7: stateful quarters, smooth service vaults and
+# floor-by-floor architectural lighting.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
@@ -30,7 +32,7 @@ STAIR_RADIUS = 5.4       # the great stair spirals down the middle of the shaft
 STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
 STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
-DOOR_HALF = .62          # half-width of a doorway opening
+DOOR_HALF = .84          # 1.68 m clear opening; comfortable for a player capsule
 TUNNEL_BAY = 9           # the bay whose facade is left out of the level ring,
                          # so the arched tunnel has an opening to stand in. The
                          # ring is one mesh placed on every level, so this has
@@ -313,21 +315,21 @@ VOID = mat('HabVoid', (.002, .002, .002), 0, .98)
 PAINT = mat('HabPaint', (.19, .24, .22), .10, .62)
 # The gallery wall is the same warm plaster the homes are finished in, not
 # a cold grey-green. It is most of what you look at walking the silo.
-FACADE = mat('HabFacade', (.46, .42, .35), 0, .84)
-DOORPAINT = mat('HabDoorPaint', (.15, .28, .30), .20, .48)
+FACADE = mat('HabFacade', (.23, .22, .19), 0, .88)
+DOORPAINT = mat('HabDoorPaint', (.10, .22, .22), .16, .62)
 WARM = mat('HabWarmWood', (.30, .19, .11), 0, .68)
 # Lit from inside: a wall of these is what makes the silo read as lived in.
-WARMWINDOW = mat('HabWarmWindow', (.42, .27, .12), 0, .35, (1.0, .64, .30), 1.5)
+WARMWINDOW = mat('HabWarmWindow', (.26, .18, .10), 0, .46, (1.0, .64, .30), .58)
 CLOTH = mat('HabCloth', (.22, .24, .21), 0, .86)
 BONE = mat('HabBone', (.68, .66, .60), 0, .88)
-INNER = mat('HabInnerWall', (.60, .58, .53), 0, .86)
+INNER = mat('HabInnerWall', (.39, .38, .34), 0, .89)
 # The homes are furnished warm: rust carpet, cream plaster, a glazed tile band
 # round the walls at waist height, orange upholstery and brass fittings, lit by
 # pendants with blown orange glass.
 CARPET = mat('HabCarpet', (.33, .11, .07), 0, .93)
-CREAM = mat('HabCream', (.72, .68, .60), 0, .85)
-TILEBAND = mat('HabTileBand', (.45, .13, .08), .05, .34)
-ORANGE = mat('HabOrange', (.66, .27, .09), 0, .76)
+CREAM = mat('HabCream', (.47, .44, .38), 0, .88)
+TILEBAND = mat('HabTileBand', (.31, .11, .075), .03, .54)
+ORANGE = mat('HabOrange', (.44, .17, .065), 0, .82)
 BRASS = mat('HabBrass', (.58, .42, .17), .85, .30)
 PENDANT = mat('HabPendantGlass', (.62, .24, .05), 0, .26, (1.0, .40, .07), 1.1)
 POTTERY = mat('HabPottery', (.34, .25, .17), 0, .80)
@@ -341,9 +343,9 @@ AMBER = mat('HabAmber', (.5, .33, .07), 0, .3, (1.0, .66, .16), 4.0)
 GREENLIGHT = mat('HabGreenLight', (.10, .5, .24), 0, .3, (.20, 1.0, .48), 4.0)
 REDLIGHT = mat('HabRedLight', (.5, .07, .05), 0, .3, (1.0, .14, .09), 4.0)
 GROWLIGHT = mat('HabGrowLight', (.42, .18, .46), 0, .3, (.95, .35, 1.0), 6.0)
-WHITELIGHT = mat('HabWhiteLight', (.5, .52, .5), 0, .25, (1.0, .96, .88), 1.8)
+WHITELIGHT = mat('HabWhiteLight', (.40, .41, .39), 0, .42, (1.0, .94, .82), .62)
 # Domestic light: warmer and softer than the strip lights on the walkways.
-WARMLAMP = mat('HabWarmLamp', (.5, .42, .30), 0, .30, (1.0, .82, .55), 1.0)
+WARMLAMP = mat('HabWarmLamp', (.42, .34, .24), 0, .42, (1.0, .78, .50), .62)
 
 
 def build_shell():
@@ -470,6 +472,32 @@ def build_level():
         # walls in the same plane means the facade draws straight across the
         # mouth of the arch, dado band and all.
         if i == TUNNEL_BAY:
+            # Only the façade steps aside. The old early continue also deleted
+            # this bay's shaft parapet, structural column and ceiling lights,
+            # leaving an unguarded fall opposite the landmark arch.
+            ring_piece(f'Column_{i}', ca, DECK_OUTER - .52, 0,
+                       LEVEL_HEIGHT / 2 - .45, .26, LEVEL_HEIGHT / 2 + .45,
+                       .30, CONCRETE, edge=.04)
+            for cy in (-.62, LEVEL_HEIGHT - .60):
+                ring_piece(f'Collar_{i}_{cy:.1f}', ca, DECK_OUTER - .52, 0, cy,
+                           .31, .10, .35, BRUSHED, edge=.02)
+            rail_half = arc_half(WELL_RADIUS)
+            ring_piece(f'Parapet_{i}', a, WELL_RADIUS + .10, 0, .52,
+                       .17, .52, rail_half, CONCRETE, edge=.03)
+            ring_piece(f'ParapetFoot_{i}', a, WELL_RADIUS + .10, 0, .10,
+                       .21, .10, rail_half, CONCRETE, edge=.03)
+            ring_piece(f'ParapetReveal_{i}', a, WELL_RADIUS - .05, 0, .86,
+                       .04, .05, rail_half, DARK, edge=.006)
+            ring_piece(f'ParapetCap_{i}', a, WELL_RADIUS + .10, 0, 1.06,
+                       .23, .06, rail_half, BRUSHED, edge=.02)
+            ring_piece(f'ParapetGrip_{i}', a, WELL_RADIUS - .10, 0, 1.15,
+                       .05, .045, rail_half, BRUSHED, edge=.012)
+            for si, rad in enumerate((DECK_OUTER - 1.65, WELL_RADIUS + 1.75)):
+                span = arc_half(rad) * .42
+                ring_piece(f'Strip_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .44,
+                           .16, .05, span, WHITELIGHT, edge=.015)
+                ring_piece(f'StripHood_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .33,
+                           .22, .08, span + .10, DARK, edge=.02)
             continue
         panel_half = (front_half - DOOR_HALF - .12) / 2
         for k in (-1, 1):
@@ -489,16 +517,28 @@ def build_level():
         ring_piece(f'Threshold_{i}', a, wall_mid, 0, .02, .19, .02, DOOR_HALF + .06,
                    BRUSHED, edge=.008)
 
-        # A painted dado to waist height with a capping bead, and a skirting.
-        # A four-metre run of one flat colour reads as a blank, not a wall.
-        ring_piece(f'Dado_{i}', a, face - .02, 0, 1.20, .02, .17, front_half,
-                   TILEBAND, edge=.008)
-        ring_piece(f'DadoCap_{i}', a, face - .04, 0, 1.38, .04, .022, front_half,
-                   BRASS, edge=.008)
-        ring_piece(f'Plinth_{i}', a, face - .03, 0, .50, .03, .50, front_half,
-                   PAINT, edge=.008)
-        ring_piece(f'Skirting_{i}', a, face - .05, 0, .09, .05, .09, front_half,
-                   DARK, edge=.01)
+        # Finish bands stop at the jambs. These used to be four paper-thin
+        # slabs drawn straight across every opening: collision said "open"
+        # while the player saw a painted wall in the doorway.
+        for k in (-1, 1):
+            finish_offset = k * (DOOR_HALF + .12 + panel_half)
+            ring_piece(f'Dado_{i}_{k}', a, face - .02, finish_offset, 1.20,
+                       .02, .17, panel_half, TILEBAND, edge=.008)
+            ring_piece(f'DadoCap_{i}_{k}', a, face - .04, finish_offset, 1.38,
+                       .04, .022, panel_half, BRASS, edge=.008)
+            ring_piece(f'Plinth_{i}_{k}', a, face - .03, finish_offset, .50,
+                       .03, .50, panel_half, PAINT, edge=.008)
+            ring_piece(f'Skirting_{i}_{k}', a, face - .05, finish_offset, .09,
+                       .05, .09, panel_half, DARK, edge=.01)
+
+        # A deep lintel/canopy throws a real shadow across the threshold and
+        # stops the façade reading as a texture on one flat cylinder.
+        ring_piece(f'DoorCanopy_{i}', a, face - .20, 0, 2.72, .20, .10,
+                   DOOR_HALF + .20, DARK, edge=.025)
+        for k in (-1, 1):
+            ring_piece(f'DoorReveal_{i}_{k}', a, face - .16,
+                       k * (DOOR_HALF + .075), 1.14, .16, 1.14, .075,
+                       BRUSHED, edge=.012)
 
         # Fanlight over the door, and the unit's number plate beside it.
         ring_piece(f'Fanlight_{i}', a, face - .04, 0, 2.52, .04, .13, DOOR_HALF * .84,
@@ -511,8 +551,11 @@ def build_level():
             wo = k * (DOOR_HALF + .12 + panel_half)
             ring_piece(f'WinFrame_{i}_{k}', a, face - .03, wo, 1.55, .05, .58, .62,
                        DARK, edge=.012)
+            # Not every family has every front-room lamp on. Alternating dark
+            # and warm panes breaks the repeating wall of luminous rectangles.
+            window_material = WARMWINDOW if (i + (0 if k < 0 else 2)) % 4 < 2 else GLASS
             ring_piece(f'Win_{i}_{k}', a, face - .06, wo, 1.55, .03, .50, .54,
-                       WARMWINDOW, edge=.008)
+                       window_material, edge=.008)
             for m in (-1, 1):
                 ring_piece(f'WinBar_{i}_{k}_{m}', a, face - .07, wo + m * .18, 1.55,
                            .03, .50, .022, DARK, edge=.004)
@@ -605,9 +648,11 @@ def build_level():
                 cube(f'ParapetTie_{i}_{k}', (px, .58, pz), (.035, .035, .035), DARK, edge=.008)
 
         # --- Lighting ---------------------------------------------------------
-        # Three arcs across the width of the walkway, hung off the slab above.
-        for si, rad in enumerate((DECK_OUTER - 1.4, mid, WELL_RADIUS + 1.4)):
-            span = arc_half(rad) * .60
+        # Two compact practicals per bay. Three long luminous bars repeated 18
+        # times became the dominant shape in every mobile frame and clipped to
+        # white; the darker gaps now let the structure and door recesses read.
+        for si, rad in enumerate((DECK_OUTER - 1.65, WELL_RADIUS + 1.75)):
+            span = arc_half(rad) * (.38 if i % 2 else .46)
             ring_piece(f'Strip_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .44, .16, .05, span,
                        WHITELIGHT, edge=.015)
             ring_piece(f'StripHood_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .33, .22, .08,
@@ -779,6 +824,55 @@ def arch_head(name, xc, zc, half, spring, material, across=True, thick=.10, step
             else:
                 cube(f'{name}_{k}_{side}', (xc, (y0 + y1) / 2, zc + c),
                      (thick, (y1 - y0) / 2, w), material, edge=.012)
+
+
+def arched_ring(name, xc, zc, inner, spring, band, depth, material,
+                steps=32, edge=.012):
+    """A genuinely curved, extruded half-ring in the X/Y plane.
+
+    The first tunnel was assembled from rotated boxes. At player height those
+    boxes read as a voxel arch, and the repeated stepped `arch_head` ribs made
+    the whole passage shimmer as the camera moved. This mesh has continuous
+    inner/outer curves and only the deliberate structural seams authored on
+    top of it.
+    """
+    verts = []
+    for z_offset in (-depth, depth):
+        for radius in (inner, inner + band):
+            for i in range(steps + 1):
+                angle = math.pi * i / steps
+                verts.append((xc + math.cos(angle) * radius,
+                              spring + math.sin(angle) * radius,
+                              zc + z_offset))
+
+    stride = steps + 1
+
+    def idx(z_layer, radial, i):
+        return z_layer * stride * 2 + radial * stride + i
+
+    faces = []
+    for i in range(steps):
+        # Front/back annular faces.
+        faces.append((idx(0, 0, i), idx(0, 0, i + 1),
+                      idx(0, 1, i + 1), idx(0, 1, i)))
+        faces.append((idx(1, 0, i), idx(1, 1, i),
+                      idx(1, 1, i + 1), idx(1, 0, i + 1)))
+        # The curved soffit and outer shoulder.
+        faces.append((idx(0, 0, i), idx(1, 0, i),
+                      idx(1, 0, i + 1), idx(0, 0, i + 1)))
+        faces.append((idx(0, 1, i), idx(0, 1, i + 1),
+                      idx(1, 1, i + 1), idx(1, 1, i)))
+    for i in (0, steps):
+        faces.append((idx(0, 0, i), idx(0, 1, i),
+                      idx(1, 1, i), idx(1, 0, i)))
+
+    mesh = bpy.data.meshes.new(f'{name}_Mesh')
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    return world_uv(bevel(o, edge, segments=3))
 
 
 def pendant(name, x, z, ceiling, drop, radius):
@@ -1359,89 +1453,171 @@ def build_sump():
 
 
 def build_tunnel():
-    """An arched tunnel set into the gallery wall.
-
-    The silo's landmarks: where a run of front doors gives way to a great
-    voussoired arch with a lit passage behind it, so a level has somewhere that
-    is not another home and you can tell one bearing from another. Authored
-    facing -Z toward the walkway, like a home, so the runtime rotates a copy
-    into a bay.
-    """
+    """Smooth arched passage and playable maintenance room behind its bulkhead."""
     clear_scene()
-    SPAN = 1.55          # half-width of the opening
-    SPRING = 2.05        # springing line
-    DEPTH = 2.60         # how far the passage runs back
+    SPAN = 1.80          # half-width of the landmark arch
+    SPRING = 1.95        # springing line
+    DEPTH = 3.20         # ribbed passage before the bulkhead
+    DOOR_Z = 3.72        # shared with src/silo.js
+    BULKHEAD_HALF = .98
+    ROOM_HALF = 2.72
+    ROOM_BACK = 9.45
     HEAD = SPRING + SPAN
 
     # The wall the arch is cut through, built as the two haunches and the
     # spandrel above, so the opening is a real hole rather than a painted one.
     for k in (-1, 1):
-        cube(f'Tun_Haunch_{k}', (k * (SPAN + .95), HEAD / 2, 0), (.95, HEAD / 2, .30),
+        cube(f'Tun_Haunch_{k}', (k * (SPAN + .82), HEAD / 2, 0), (.82, HEAD / 2, .30),
              CONCRETE, edge=.04)
     cube('Tun_Spandrel', (0, (HEAD + LEVEL_HEIGHT) / 2, 0),
-         (SPAN + 1.90, (LEVEL_HEIGHT - HEAD) / 2, .30), CONCRETE, edge=.04)
-    arch_head('Tun_Arch', 0, 0, SPAN, SPRING, CONCRETE, across=True, thick=.30, steps=14)
+         (SPAN + 1.64, (LEVEL_HEIGHT - HEAD) / 2, .30), CONCRETE, edge=.04)
+    arch_head('Tun_Arch', 0, 0, SPAN, SPRING, CONCRETE,
+              across=True, thick=.30, steps=32)
 
-    # Voussoirs: radiating blocks round the arch, with a keystone at the crown.
-    VOUS = 15
-    for i in range(VOUS):
-        t = math.pi * (i + .5) / VOUS           # 0 at the right springing
-        r = SPAN + .26
-        x = math.cos(t) * r
-        y = SPRING + math.sin(t) * r
-        cube(f'Tun_Vous_{i}', (x, y, -.02), (.16, .30, .36), CONCRETE,
-             rotation=(0, 0, t - math.pi / 2), edge=.025)
-    cube('Tun_Key', (0, SPRING + SPAN + .30, -.02), (.20, .36, .40), CONCRETE, edge=.03)
+    # One continuous weathered-steel collar replaces the toy-like stack of
+    # rotated voussoir boxes. Small recessed fasteners retain the bunker-built
+    # character without turning the silhouette back into a staircase.
+    arched_ring('Tun_EntryCollar', 0, -.34, SPAN, SPRING, .22, .10,
+                BRUSHED, steps=40, edge=.015)
+    for k in (-1, 1):
+        cube(f'Tun_EntryLeg_{k}', (k * (SPAN + .11), SPRING / 2, -.34),
+             (.11, SPRING / 2, .10), BRUSHED, edge=.018)
+    for i in range(13):
+        t = math.pi * (i + .5) / 13
+        r = SPAN + .11
+        cyl(f'Tun_CollarBolt_{i}', (math.cos(t) * r,
+             SPRING + math.sin(t) * r, -.455), .035, .025,
+             DARK, verts=12, edge=.004)
     # Impost bands where the arch springs from the haunches.
     for k in (-1, 1):
         cube(f'Tun_Impost_{k}', (k * (SPAN + .22), SPRING - .06, -.03),
              (.42, .09, .38), BRUSHED, edge=.02)
 
-    # The passage: a barrel running back, ribbed, with the soffit lit.
+    # A continuous concrete barrel and wall pair forms the passage. Five slim
+    # inset steel ribs then articulate its depth; they project by centimetres,
+    # not by whole block courses, so camera motion stays visually stable.
+    arched_ring('Tun_Vault', 0, DEPTH / 2, SPAN, SPRING, .16,
+                DEPTH / 2, CONCRETE, steps=40, edge=.010)
+    for k in (-1, 1):
+        cube(f'Tun_PassageWall_{k}', (k * (SPAN + .08), SPRING / 2, DEPTH / 2),
+             (.08, SPRING / 2, DEPTH / 2), CONCRETE, edge=.025)
     for i in range(5):
-        z = .45 + i * (DEPTH / 5)
-        # The rib is a frame round the passage, not a slab across it: a cube of
-        # the opening's full width and height is a plug, and the tunnel was
-        # solid below the springing line.
-        arch_head(f'Tun_RibArch_{i}', 0, z, SPAN + .04, SPRING, CONCRETE,
-                  across=True, thick=.10, steps=10)
+        z = .42 + i * ((DEPTH - .78) / 4)
+        arched_ring(f'Tun_RibArch_{i}', 0, z, SPAN - .045, SPRING,
+                    .13, .055, DARK, steps=32, edge=.009)
         for k in (-1, 1):
-            cube(f'Tun_Side_{i}_{k}', (k * (SPAN - .04), SPRING / 2, z),
-                 (.10, SPRING / 2, DEPTH / 10), CONCRETE, edge=.02)
-        # A light in the crown of every second rib bay.
+            cube(f'Tun_RibLeg_{i}_{k}', (k * (SPAN + .02), SPRING / 2, z),
+                 (.065, SPRING / 2, .055), DARK, edge=.010)
         if i % 2 == 0:
-            cube(f'Tun_Soffit_{i}', (0, SPRING + SPAN * .62, z + .18),
-                 (.30, .05, .16), WARMLAMP, edge=.012)
-            cube(f'Tun_SoffitHood_{i}', (0, SPRING + SPAN * .70, z + .18),
-                 (.38, .07, .22), DARK, edge=.02)
-    cube('Tun_Floor', (0, .03, DEPTH / 2 + .3), (SPAN, .03, DEPTH / 2 + .3), DECKPLATE, edge=.01)
+            cube(f'Tun_Soffit_{i}', (0, SPRING + SPAN - .12, z + .14),
+                 (.28, .035, .15), WARMLAMP, edge=.010)
+            cube(f'Tun_SoffitHood_{i}', (0, SPRING + SPAN - .04, z + .14),
+                 (.36, .055, .20), DARK, edge=.016)
+    cube('Tun_PassageFloor', (0, .03, DOOR_Z / 2),
+         (SPAN, .03, DOOR_Z / 2), DECKPLATE, edge=.01)
     for k in (-1, 1):
-        cube(f'Tun_Skirt_{k}', (k * (SPAN - .10), .16, DEPTH / 2 + .3),
-             (.08, .16, DEPTH / 2 + .3), DARK, edge=.012)
+        cube(f'Tun_Skirt_{k}', (k * (SPAN - .10), .16, DOOR_Z / 2),
+             (.08, .16, DOOR_Z / 2), DARK, edge=.012)
 
-    # A bulkhead door at the far end, shut, with a wheel and a warning plate.
-    cube('Tun_Bulkhead', (0, SPRING / 2 + .1, DEPTH + .55), (SPAN + .10, SPRING / 2 + .1, .18),
-         DARK, edge=.03)
-    cube('Tun_DoorLeaf', (0, 1.15, DEPTH + .40), (.86, 1.15, .10), DOORPAINT, edge=.03)
+    # Bulkhead frame, with a genuinely empty doorway in it. The moving leaf is
+    # a separate GLB so runtime animation and collision share one state.
+    frame_half = (SPAN - BULKHEAD_HALF) / 2
     for k in (-1, 1):
-        cube(f'Tun_DoorRib_{k}', (k * .42, 1.15, DEPTH + .32), (.10, 1.05, .05), BRUSHED, edge=.012)
-    bpy.ops.mesh.primitive_torus_add(location=(0, 1.20, DEPTH + .28),
-                                     major_radius=.28, minor_radius=.045,
-                                     major_segments=26, minor_segments=10)
+        cube(f'Tun_BulkheadReturn_{k}',
+             (k * (BULKHEAD_HALF + frame_half), 1.18, DOOR_Z),
+             (frame_half, 1.18, .20), DARK, edge=.035)
+        cube(f'Tun_BulkheadBoltLine_{k}',
+             (k * (BULKHEAD_HALF + .10), 1.18, DOOR_Z - .22),
+             (.045, 1.02, .035), BRUSHED, edge=.009)
+    cube('Tun_BulkheadHead', (0, 3.10, DOOR_Z),
+         (SPAN, .72, .20), DARK, edge=.035)
+    cube('Tun_BulkheadLamp', (0, 2.62, DOOR_Z - .23),
+         (.20, .08, .06), GREENLIGHT, edge=.012)
+
+    # Beyond the leaf is a complete maintenance room rather than a black cap.
+    room_depth = ROOM_BACK - DOOR_Z
+    room_mid = (ROOM_BACK + DOOR_Z) / 2
+    cube('Service_Floor', (0, .03, room_mid), (ROOM_HALF, .03, room_depth / 2),
+         DECKPLATE, edge=.012)
+    cube('Service_Ceiling', (0, 3.52, room_mid), (ROOM_HALF, .12, room_depth / 2),
+         CONCRETE, edge=.035)
+    for k in (-1, 1):
+        cube(f'Service_Side_{k}', (k * ROOM_HALF, 1.78, room_mid),
+             (.16, 1.78, room_depth / 2), CONCRETE, edge=.045)
+        cube(f'Service_Raceway_{k}', (k * (ROOM_HALF - .18), 2.78, room_mid),
+             (.12, .16, room_depth / 2 - .25), DARK, edge=.018)
+    cube('Service_Back', (0, 1.78, ROOM_BACK), (ROOM_HALF, 1.78, .20),
+         CONCRETE, edge=.05)
+
+    # Raised threshold and hazard inserts make the open state legible from the
+    # gallery without putting anything high enough to snag the player capsule.
+    for i in range(8):
+        x = -BULKHEAD_HALF + (i + .5) * BULKHEAD_HALF * 2 / 8
+        cube(f'Service_Hazard_{i}', (x, .055, DOOR_Z + .18),
+             (BULKHEAD_HALF / 8, .025, .16), AMBER if i % 2 == 0 else DARK,
+             rotation=(0, 0, -.22 if i % 2 else .22), edge=.004)
+
+    # Equipment with depth, rounded tanks, readable controls and cable runs.
+    for k in (-1, 1):
+        x = k * 1.72
+        cube(f'Service_Bench_{k}', (x, .62, 6.45), (.72, .08, 1.12), STEEL, edge=.045)
+        cube(f'Service_Cabinet_{k}', (x, 1.12, 7.20), (.68, .92, .32), PAINT, edge=.055)
+        cube(f'Service_Panel_{k}', (x, 1.38, 6.84), (.50, .38, .035), DARK, edge=.018)
+        for row in range(2):
+            for col in range(3):
+                lamp_mat = GREENLIGHT if (row + col + (1 if k > 0 else 0)) % 3 else AMBER
+                cyl(f'Service_Indicator_{k}_{row}_{col}',
+                    (x - .28 + col * .28, 1.18 + row * .28, 6.79),
+                    .035, .025, lamp_mat, rotation=(0, 0, 0), verts=12, edge=.004)
+    for i, x in enumerate((-1.62, 0, 1.62)):
+        cyl(f'Service_Tank_{i}', (x, 1.00, 8.65), .48, 1.85,
+            PAINT if i % 2 else BRUSHED, rotation=UP, verts=28, edge=.028)
+        cyl(f'Service_TankBand_{i}', (x, 1.18, 8.65), .51, .10,
+            DARK, rotation=UP, verts=28, edge=.012)
+    for i, x in enumerate((-1.30, 0, 1.30)):
+        cube(f'Service_LightHood_{i}', (x, 3.34, 6.35), (.42, .08, .22), DARK, edge=.018)
+        cube(f'Service_Light_{i}', (x, 3.25, 6.35), (.34, .035, .15), WARMLAMP, edge=.01)
+    for i, x in enumerate((-2.30, 2.30)):
+        cyl(f'Service_Pipe_{i}', (x, 2.90, room_mid), .065, room_depth - .5,
+            BRUSHED, rotation=(0, math.pi / 2, 0), verts=12, edge=.012)
+
+    join_all('HabTunnel')
+    export('hab_tunnel_v6.glb')
+
+
+def build_bulkhead_door():
+    """Animated service leaf authored around a hinge at local x=0."""
+    clear_scene()
+    half = .98
+    cube('Bulkhead_Leaf', (half, 1.15, 0), (half, 1.15, .11),
+         DOORPAINT, edge=.045)
+    for x in (.22, .72, 1.24, 1.74):
+        cube(f'Bulkhead_Rib_{x:.2f}', (x, 1.15, -.13), (.075, 1.02, .045),
+             BRUSHED, edge=.014)
+    for y in (.34, 1.14, 1.94):
+        cube(f'Bulkhead_Cross_{y:.2f}', (half, y, -.14), (half - .10, .055, .05),
+             DARK, edge=.012)
+    bpy.ops.mesh.primitive_torus_add(location=(1.38, 1.18, -.22),
+                                     major_radius=.31, minor_radius=.045,
+                                     major_segments=30, minor_segments=10)
     wheel = bpy.context.object
-    wheel.name = 'Tun_Wheel'
+    wheel.name = 'Bulkhead_Wheel'
     wheel.data.materials.append(BRUSHED)
     for poly in wheel.data.polygons:
         poly.use_smooth = True
-    for i in range(4):
-        a = i * math.tau / 4
-        cube(f'Tun_Spoke_{i}', (math.cos(a) * .14, 1.20 + math.sin(a) * .14, DEPTH + .28),
-             (.14, .028, .028), BRUSHED, rotation=(0, 0, a), edge=.006)
-    cube('Tun_Plate', (0, 1.92, DEPTH + .30), (.36, .13, .02), AMBER, edge=.008)
-    cube('Tun_Lamp', (0, 2.28, DEPTH + .34), (.16, .07, .06), REDLIGHT, edge=.012)
-
-    join_all('HabTunnel')
-    export('hab_tunnel_v5.glb')
+    for i in range(5):
+        a = i * math.tau / 5
+        cube(f'Bulkhead_Spoke_{i}',
+             (1.38 + math.cos(a) * .15, 1.18 + math.sin(a) * .15, -.22),
+             (.15, .026, .026), BRUSHED, rotation=(0, 0, a), edge=.006)
+    cube('Bulkhead_WarningPlate', (.55, 1.78, -.23), (.32, .14, .025),
+         AMBER, edge=.008)
+    cube('Bulkhead_Handle', (1.70, .72, -.23), (.14, .045, .04),
+         DARK, rotation=(0, 0, -.22), edge=.01)
+    cube('Bulkhead_HingeLow', (.04, .48, .02), (.06, .16, .16), DARK, edge=.018)
+    cube('Bulkhead_HingeHigh', (.04, 1.82, .02), (.06, .16, .16), DARK, edge=.018)
+    join_all('HabBulkheadDoor')
+    export('hab_bulkhead_door_v6.glb')
 
 
 def build_hydroponics():
@@ -1860,6 +2036,7 @@ build_door()
 build_crown()
 build_sump()
 build_tunnel()
+build_bulkhead_door()
 build_hydroponics()
 build_commons()
 build_secure_door()

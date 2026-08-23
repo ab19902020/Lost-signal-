@@ -23,6 +23,11 @@ export class ColliderSet {
     // axis-aligned box round a slab that is wide along the ring and thin
     // through it is far larger than the slab. A ring is exact, and one test.
     this.rings = [];
+    // Short curved barriers such as individual silo doors. Keeping these in
+    // polar space avoids the oversized invisible corners produced by an AABB
+    // around a thin door that is rotated forty-five degrees.
+    this.arcs = [];
+    this.orientedBoxes = [];
     this.bounds = bounds;
   }
 
@@ -44,6 +49,55 @@ export class ColliderSet {
     };
     this.rings.push(ring);
     return ring;
+  }
+
+  /** A solid angular section of a ring, used for doors that can be enabled. */
+  addArc({ innerRadius, outerRadius, minY, maxY, centre, halfWidth,
+    climbable = false, enabled = true }) {
+    const arc = {
+      r0: Math.min(innerRadius, outerRadius),
+      r1: Math.max(innerRadius, outerRadius),
+      minY, maxY, climbable, enabled,
+      centre: normaliseAngle(centre),
+      halfWidth: Math.abs(halfWidth),
+    };
+    this.arcs.push(arc);
+    return arc;
+  }
+
+  /** A thin wall in arbitrary orientation, without an oversized world AABB. */
+  addOrientedBox({ cx, cz, halfX, halfZ, rotationY = 0, minY, maxY,
+    climbable = false, enabled = true }) {
+    const collider = {
+      cx, cz, halfX: Math.abs(halfX), halfZ: Math.abs(halfZ),
+      cos: Math.cos(rotationY), sin: Math.sin(rotationY),
+      minY, maxY, climbable, enabled,
+    };
+    this.orientedBoxes.push(collider);
+    return collider;
+  }
+
+  static _local(obb, x, z) {
+    const dx = x - obb.cx;
+    const dz = z - obb.cz;
+    return {
+      x: dx * obb.cos - dz * obb.sin,
+      z: dx * obb.sin + dz * obb.cos,
+    };
+  }
+
+  static _overlapsOriented(obb, x, z, radius) {
+    const local = ColliderSet._local(obb, x, z);
+    const closestX = Math.max(-obb.halfX, Math.min(local.x, obb.halfX));
+    const closestZ = Math.max(-obb.halfZ, Math.min(local.z, obb.halfZ));
+    return (local.x - closestX) ** 2 + (local.z - closestZ) ** 2 <= radius * radius + EPSILON;
+  }
+
+  static _inArc(arc, angle, margin) {
+    let d = normaliseAngle(angle) - arc.centre;
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return Math.abs(d) <= arc.halfWidth + margin;
   }
 
   // Is this angle far enough inside one of the ring's gaps for a capsule of
@@ -76,7 +130,7 @@ export class ColliderSet {
     }
     box.getSize(_size);
     if (_size.x < 0.02 || _size.z < 0.02) return null;
-    const collider = { box, climbable };
+    const collider = { box, climbable, enabled: options.enabled ?? true };
     this.boxes.push(collider);
     return collider;
   }
@@ -84,7 +138,8 @@ export class ColliderSet {
   // Height of the highest climbable surface under the given circle, or 0.
   floorAt(x, z, radius, maxHeight) {
     let floor = 0;
-    for (const { box, climbable } of this.boxes) {
+    for (const { box, climbable, enabled = true } of this.boxes) {
+      if (!enabled) continue;
       if (!climbable) continue;
       if (box.max.y > maxHeight || box.max.y <= floor) continue;
       if (x < box.min.x - radius || x > box.max.x + radius) continue;
@@ -99,6 +154,20 @@ export class ColliderSet {
       if (ColliderSet._inGap(ring, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
       floor = ring.maxY;
     }
+    for (const arc of this.arcs) {
+      if (!arc.enabled || !arc.climbable) continue;
+      if (arc.maxY > maxHeight || arc.maxY <= floor) continue;
+      const d = Math.hypot(x, z);
+      if (d < arc.r0 - radius || d > arc.r1 + radius) continue;
+      if (!ColliderSet._inArc(arc, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
+      floor = arc.maxY;
+    }
+    for (const obb of this.orientedBoxes) {
+      if (!obb.enabled || !obb.climbable) continue;
+      if (obb.maxY > maxHeight || obb.maxY <= floor) continue;
+      if (!ColliderSet._overlapsOriented(obb, x, z, radius)) continue;
+      floor = obb.maxY;
+    }
     return floor;
   }
 
@@ -108,7 +177,8 @@ export class ColliderSet {
     let corrected = false;
     for (let pass = 0; pass < 3; pass++) {
       let moved = false;
-      for (const { box, climbable } of this.boxes) {
+      for (const { box, climbable, enabled = true } of this.boxes) {
+        if (!enabled) continue;
         if (box.max.y <= feetY + EPSILON || box.min.y >= headY - EPSILON) continue;
         if (climbable && box.max.y <= feetY + stepHeight + EPSILON) continue;
 
@@ -155,6 +225,56 @@ export class ColliderSet {
         moved = true;
         corrected = true;
       }
+      for (const arc of this.arcs) {
+        if (!arc.enabled) continue;
+        if (arc.maxY <= feetY + EPSILON || arc.minY >= headY - EPSILON) continue;
+        if (arc.climbable && arc.maxY <= feetY + stepHeight + EPSILON) continue;
+        const d = Math.hypot(position.x, position.z);
+        if (d < arc.r0 - radius || d > arc.r1 + radius) continue;
+        const angle = Math.atan2(position.z, position.x);
+        if (!ColliderSet._inArc(arc, angle, radius / Math.max(d, 0.01))) continue;
+        const target = (d - arc.r0 < arc.r1 - d) ? arc.r0 - radius : arc.r1 + radius;
+        if (target <= 0) continue;
+        position.x = Math.cos(angle) * target;
+        position.z = Math.sin(angle) * target;
+        moved = true;
+        corrected = true;
+      }
+      for (const obb of this.orientedBoxes) {
+        if (!obb.enabled) continue;
+        if (obb.maxY <= feetY + EPSILON || obb.minY >= headY - EPSILON) continue;
+        if (obb.climbable && obb.maxY <= feetY + stepHeight + EPSILON) continue;
+        const local = ColliderSet._local(obb, position.x, position.z);
+        const closestX = Math.max(-obb.halfX, Math.min(local.x, obb.halfX));
+        const closestZ = Math.max(-obb.halfZ, Math.min(local.z, obb.halfZ));
+        const dx = local.x - closestX;
+        const dz = local.z - closestZ;
+        const distSq = dx * dx + dz * dz;
+        if (distSq >= radius * radius) continue;
+
+        let nextX = local.x;
+        let nextZ = local.z;
+        if (distSq > EPSILON) {
+          const dist = Math.sqrt(distSq);
+          const push = radius - dist;
+          nextX += (dx / dist) * push;
+          nextZ += (dz / dist) * push;
+        } else {
+          const left = local.x + obb.halfX;
+          const right = obb.halfX - local.x;
+          const back = local.z + obb.halfZ;
+          const front = obb.halfZ - local.z;
+          const min = Math.min(left, right, back, front);
+          if (min === left) nextX = -obb.halfX - radius;
+          else if (min === right) nextX = obb.halfX + radius;
+          else if (min === back) nextZ = -obb.halfZ - radius;
+          else nextZ = obb.halfZ + radius;
+        }
+        position.x = obb.cx + nextX * obb.cos + nextZ * obb.sin;
+        position.z = obb.cz - nextX * obb.sin + nextZ * obb.cos;
+        moved = true;
+        corrected = true;
+      }
       if (!moved) break;
     }
 
@@ -176,7 +296,8 @@ export class ColliderSet {
       if (x < b.minX + radius || x > b.maxX - radius) return true;
       if (z < b.minZ + radius || z > b.maxZ - radius) return true;
     }
-    for (const { box } of this.boxes) {
+    for (const { box, enabled = true } of this.boxes) {
+      if (!enabled) continue;
       if (box.max.y <= feetY || box.min.y >= headY) continue;
       if (x > box.min.x - radius && x < box.max.x + radius &&
           z > box.min.z - radius && z < box.max.z + radius) return true;
@@ -188,6 +309,19 @@ export class ColliderSet {
       if (d < ring.r0 - radius || d > ring.r1 + radius) continue;
       if (ColliderSet._inGap(ring, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
       return true;
+    }
+    for (const arc of this.arcs) {
+      if (!arc.enabled || arc.climbable) continue;
+      if (arc.maxY <= feetY || arc.minY >= headY) continue;
+      const d = Math.hypot(x, z);
+      if (d < arc.r0 - radius || d > arc.r1 + radius) continue;
+      if (!ColliderSet._inArc(arc, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
+      return true;
+    }
+    for (const obb of this.orientedBoxes) {
+      if (!obb.enabled || obb.climbable) continue;
+      if (obb.maxY <= feetY || obb.minY >= headY) continue;
+      if (ColliderSet._overlapsOriented(obb, x, z, radius)) return true;
     }
     return false;
   }
