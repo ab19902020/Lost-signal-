@@ -112,6 +112,9 @@ await desktop.evaluate(() => {
   ls.world('silo');
   ls.simulate(90);
   ls.freecam(1.8, 9.2, -1.8, 8.7, 7.7, 0, 54);
+  ls.game.camera.near = .12;
+  ls.game.camera.far = 15;
+  ls.game.camera.updateProjectionMatrix();
 });
 await save(desktop, '06-silo-stair-and-landings');
 
@@ -120,6 +123,8 @@ await desktop.evaluate(() => {
   ls.world('silo');
   ls.simulate(90);
   ls.freecam(15.2, 1.72, 0, 25.2, 1.55, 0, 62);
+  ls.game.camera.far = 18;
+  ls.game.camera.updateProjectionMatrix();
 });
 await save(desktop, '07-silo-home');
 
