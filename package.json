@@ -9,7 +9,7 @@
     "qa:visual": "node qa/visual.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/visual",
     "qa:physics": "node qa/physics.mjs http://127.0.0.1:5173/Lost-signal-/",
     "qa": "node qa/assert.mjs",
-    "build": "node qa/unit.mjs && vite build",
+    "build": "node qa/unit.mjs && node qa/glb-floor.mjs && vite build",
     "qa:unit": "node qa/unit.mjs",
     "assets": "node tools/externalize-glb-images.mjs",
     "preview": "vite preview --host 0.0.0.0"

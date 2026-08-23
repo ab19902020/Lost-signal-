@@ -13,8 +13,9 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
-# Visual rebuild revision 7: stateful quarters, smooth service vaults and
-# floor-by-floor architectural lighting.
+# Visual rebuild revision 8: a watertight gallery deck, exact stair openings
+# and continuous guarded landings, in addition to the stateful quarters and
+# smooth service vaults from revision 7.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
@@ -41,10 +42,12 @@ TUNNEL_BAY = 9           # the bay whose facade is left out of the level ring,
                          # landing, so the tunnel faces it across the well.
 LANDING_HALF = 1.8       # half-width of the stair landing, and of the gap it
                          # needs in the gallery railing to reach the floor
-# Treads beside both ends of a flight whose outer balustrade is left open. The
-# lower opening lets the stair discharge; the upper one lets a person on the
-# landing enter the descending flight.
-LANDING_STEPS = max(2, int(round((LANDING_HALF / STAIR_RADIUS) / (math.tau / STAIR_STEPS))) + 1)
+# The stair guard follows a circle, while the landing opening has straight
+# sides. Their exact meeting angle is therefore asin(width / radius). Clipping
+# the first and last guard panels to this bearing avoids both an unsafe metre-
+# wide void and a rail intruding across the accessible route.
+STAIR_GUARD_RADIUS = STAIR_RADIUS + .16
+LANDING_OPENING_ANGLE = math.asin(LANDING_HALF / STAIR_GUARD_RADIUS)
 
 
 def clear_scene():
@@ -68,7 +71,8 @@ def mat(name, color, metallic=0.0, roughness=0.7, emission=None, strength=0.0):
     return m
 
 
-def image_pbr(name, color_file, normal_file, rough_file, tint=(1, 1, 1, 1), metallic=0.0):
+def image_pbr(name, color_file, normal_file, rough_file, tint=(1, 1, 1, 1), metallic=0.0,
+              normal_strength=.7, roughness_range=None):
     existing = bpy.data.materials.get(name)
     if existing:
         return existing
@@ -96,11 +100,18 @@ def image_pbr(name, color_file, normal_file, rough_file, tint=(1, 1, 1, 1), meta
     if c:
         nt.links.new(c.outputs['Color'], bsdf.inputs['Base Color'])
     if r:
-        nt.links.new(r.outputs['Color'], bsdf.inputs['Roughness'])
+        if roughness_range:
+            ramp = nt.nodes.new('ShaderNodeValToRGB')
+            ramp.color_ramp.elements[0].color = (*([roughness_range[0]] * 3), 1.0)
+            ramp.color_ramp.elements[1].color = (*([roughness_range[1]] * 3), 1.0)
+            nt.links.new(r.outputs['Color'], ramp.inputs['Fac'])
+            nt.links.new(ramp.outputs['Color'], bsdf.inputs['Roughness'])
+        else:
+            nt.links.new(r.outputs['Color'], bsdf.inputs['Roughness'])
     if n:
         nm = nt.nodes.new('ShaderNodeNormalMap')
-        nm.inputs['Strength'].default_value = .7
-        nt.links.new(n.outputs['Color'], bsdf.inputs['Normal'])
+        nm.inputs['Strength'].default_value = normal_strength
+        nt.links.new(n.outputs['Color'], nm.inputs['Color'])
         nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
     return m
 
@@ -304,7 +315,8 @@ CONCRETE = image_pbr('HabConcrete', 'concrete__Concrete034_1K_Color.jpg',
                      'concrete__Concrete034_1K_Roughness.jpg')
 DECKPLATE = image_pbr('HabDeck', 'metal_floor_plate__DiamondPlate008C_1K_Color.jpg',
                       'metal_floor_plate__DiamondPlate008C_1K_NormalGL.jpg',
-                      'metal_floor_plate__DiamondPlate008C_1K_Roughness.jpg', metallic=.45)
+                      'metal_floor_plate__DiamondPlate008C_1K_Roughness.jpg', metallic=.20,
+                      normal_strength=.36, roughness_range=(.62, .92))
 STEEL = mat('HabSteel', (.21, .23, .22), .78, .36)
 BRUSHED = mat('HabBrushed', (.35, .37, .35), .72, .32)
 DARK = mat('HabDarkSteel', (.06, .065, .062), .74, .42)
@@ -416,6 +428,54 @@ def ring_band(name, radius, half_radial, y, half_y, material, segs=48, edge=.02)
                    math.pi * radius / segs * 1.08, material, edge=edge)
 
 
+def annular_slab(name, inner, outer, top, thickness, material, segs=72, edge=.015):
+    """Build one closed annulus with no overlapping or duplicate top faces.
+
+    The old gallery deck was eighteen broad boxes enlarged by six percent so
+    their chord ends would meet. That put pairs of coplanar top faces over one
+    another at every bay boundary: as a mobile camera moved, the depth buffer
+    alternated between them and the whole floor appeared to flash. This mesh
+    shares vertices at every boundary, so every visible point is drawn once.
+    """
+    bottom = top - thickness
+    verts = []
+    for i in range(segs):
+        a = i * math.tau / segs
+        c, s = math.cos(a), math.sin(a)
+        verts.extend([
+            (c * inner, top, s * inner),
+            (c * outer, top, s * outer),
+            (c * inner, bottom, s * inner),
+            (c * outer, bottom, s * outer),
+        ])
+
+    faces = []
+    for i in range(segs):
+        n = (i + 1) % segs
+        it, ot, ib, ob = i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 3
+        nit, not_, nib, nob = n * 4, n * 4 + 1, n * 4 + 2, n * 4 + 3
+        faces.extend([
+            (it, nit, not_, ot),       # top
+            (ib, ob, nob, nib),        # underside
+            (ot, not_, nob, ob),       # outer fascia
+            (it, ib, nib, nit),        # inner fascia
+        ])
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    mesh.update()
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    return world_uv(bevel(o, edge))
+
+
 def build_level():
     """One residential level: a walkway ring carried on the wall it hangs off.
 
@@ -437,16 +497,24 @@ def build_level():
                                      # wall and left a blank panel.
     edge_r = WELL_RADIUS + .26       # centre of the ring beam at the well edge
 
+    # One watertight annulus replaces the overlapping box per bay. The concrete
+    # carrier is continuous too, and meets the deck underside without sharing a
+    # coplanar face. Raised dark joints retain readable bay rhythm without ever
+    # competing with the walking surface in the depth buffer.
+    annular_slab('Gallery_Deck', WELL_RADIUS, DECK_OUTER, 0, .11,
+                 DECKPLATE, segs=SEGMENTS * 4, edge=.012)
+    annular_slab('Gallery_Slab', WELL_RADIUS, DECK_OUTER, -.11, .25,
+                 CONCRETE, segs=SEGMENTS * 4, edge=.018)
+    for i in range(SEGMENTS):
+        joint = (i + .5) * step
+        ring_piece(f'DeckJoint_{i}', joint, mid, 0, .009, depth - .06, .006, .028,
+                   DARK, edge=.004)
+
     for i in range(SEGMENTS):
         a = i * step
         ca = a + step / 2            # bay boundary: where the columns and beams go
         bay = arc_half(mid)
         front_half = arc_half(face)
-
-        # --- Floor -----------------------------------------------------------
-        # Walking surface, then the slab that carries it.
-        ring_piece(f'Deck_{i}', a, mid, 0, -.055, depth, .055, bay, DECKPLATE, edge=.02)
-        ring_piece(f'Slab_{i}', a, mid, 0, -.23, depth, .13, bay, CONCRETE, edge=.03)
 
         # Radial beams on every bay boundary, haunched: deep where they take
         # the moment at the wall, shallow where they reach the well.
@@ -607,16 +675,28 @@ def build_level():
         rail_half = arc_half(WELL_RADIUS)
         gate = (i == 0)
         if gate:
-            # Short returns either side of the opening, so the gap is exactly
-            # as wide as the landing and the edge stays guarded up to it.
+            # Solid returns either side of the opening match the rest of the
+            # gallery parapet. The earlier pair of thin horizontal bars made
+            # this whole bay look missing even though the centre had to remain
+            # open for the landing.
             for k in (-1, 1):
-                ring_piece(f'RailReturn_{i}_{k}', a, WELL_RADIUS + .06,
-                           k * (LANDING_HALF + (rail_half - LANDING_HALF) / 2), .10,
-                           .10, .10, (rail_half - LANDING_HALF) / 2, CONCRETE, edge=.02)
-                for h in (.58, 1.06):
-                    ring_piece(f'RailR_{i}_{k}_{h}', a, WELL_RADIUS + .04,
-                               k * (LANDING_HALF + (rail_half - LANDING_HALF) / 2), h,
-                               .045, .045, (rail_half - LANDING_HALF) / 2, BRUSHED, edge=.012)
+                return_half = (rail_half - LANDING_HALF) / 2
+                return_offset = k * (LANDING_HALF + return_half)
+                ring_piece(f'GateParapet_{i}_{k}', a, WELL_RADIUS + .10,
+                           return_offset, .52, .17, .52, return_half,
+                           CONCRETE, edge=.03)
+                ring_piece(f'GateFoot_{i}_{k}', a, WELL_RADIUS + .10,
+                           return_offset, .10, .21, .10, return_half,
+                           CONCRETE, edge=.03)
+                ring_piece(f'GateReveal_{i}_{k}', a, WELL_RADIUS - .05,
+                           return_offset, .86, .04, .05, return_half,
+                           DARK, edge=.006)
+                ring_piece(f'GateCap_{i}_{k}', a, WELL_RADIUS + .10,
+                           return_offset, 1.06, .23, .06, return_half,
+                           BRUSHED, edge=.02)
+                ring_piece(f'GateGrip_{i}_{k}', a, WELL_RADIUS - .10,
+                           return_offset, 1.15, .05, .045, return_half,
+                           BRUSHED, edge=.012)
                 # A newel post on the edge of the opening, and a stub of rail
                 # turned back along the landing so the corner is never open.
                 nx = math.cos(a) * (WELL_RADIUS + .04) + math.sin(a) * (k * LANDING_HALF)
@@ -709,18 +789,34 @@ def build_stair():
         cube(f'StringerIn_{i}', (ix2, i * rise - .34, iz2), (.16, .30, going * 1.06), CONCRETE,
              rotation=(0, -a, 0), edge=.025)
 
-        # Solid outer balustrade, capped with a steel handrail — except beside
-        # the landing at both ends. Opening only the foot left the upper landing
-        # walled off from the descending flight.
-        ox, oz = math.cos(a) * (outer + .16), math.sin(a) * (outer + .16)
-        if LANDING_STEPS <= i < STAIR_STEPS - LANDING_STEPS:
-            cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, going * 1.04), CONCRETE,
-                 rotation=(0, -a, 0), edge=.03)
-            cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, going * 1.06), BRUSHED,
-                 rotation=(0, -a, 0), edge=.015)
-        if i in (LANDING_STEPS, STAIR_STEPS - LANDING_STEPS - 1):
-            # Newels make both ends of the guarded run visually deliberate.
-            cube(f'ExitNewel_{i}', (ox, i * rise + .62, oz), (.20, .62, .20), CONCRETE, edge=.03)
+        # The solid outer balustrade is clipped to the exact two bearings where
+        # the straight landing sides meet its circle. Whole missing tread panels
+        # previously left a roughly six-metre ragged void around every landing.
+        panel_start = a - turn / 2
+        panel_end = a + turn / 2
+        guard_start = max(panel_start, LANDING_OPENING_ANGLE)
+        guard_end = min(panel_end, math.tau - LANDING_OPENING_ANGLE)
+        if guard_end > guard_start:
+            guard_angle = (guard_start + guard_end) / 2
+            guard_going = (guard_end - guard_start) * STAIR_GUARD_RADIUS / 2 * 1.015
+            ox = math.cos(guard_angle) * STAIR_GUARD_RADIUS
+            oz = math.sin(guard_angle) * STAIR_GUARD_RADIUS
+            cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, guard_going), CONCRETE,
+                 rotation=(0, -guard_angle, 0), edge=.03)
+            cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, guard_going * 1.02), BRUSHED,
+                 rotation=(0, -guard_angle, 0), edge=.015)
+
+            # Newels sit on the mathematically exact edges of the opening and
+            # overlap the landing's inner returns, so neither corner can show
+            # daylight as the camera approaches it.
+            for suffix, boundary in (('start', guard_start), ('end', guard_end)):
+                if abs(boundary - LANDING_OPENING_ANGLE) > 1e-5 and \
+                   abs(boundary - (math.tau - LANDING_OPENING_ANGLE)) > 1e-5:
+                    continue
+                nx = math.cos(boundary) * STAIR_GUARD_RADIUS
+                nz = math.sin(boundary) * STAIR_GUARD_RADIUS
+                cube(f'ExitNewel_{i}_{suffix}', (nx, i * rise + .62, nz),
+                     (.20, .62, .20), CONCRETE, edge=.03)
         # ...and a rail on the core side, because the inside of a four-metre
         # tread is as long a drop as the outside.
         ix, iz = math.cos(a) * (inner + .12), math.sin(a) * (inner + .12)
@@ -788,12 +884,29 @@ def build_landing():
     for r in range(6):
         cube(f'Landing_Rib_{r}', (0, -.42, (r / 5 - .5) * 1.82 * span), (half * .92, .11, .07),
              DARK, edge=.02)
+    guard_overlap = .30
+    gallery_inset = .18
+    guard_inner = -span - guard_overlap
+    guard_outer = span - gallery_inset
+    guard_span = (guard_outer - guard_inner) / 2
+    guard_mid = (guard_outer + guard_inner) / 2
     for side in (-1, 1):
-        # Cast parapets, matching the galleries the landing runs out to.
-        cube(f'Landing_Parapet_{side}', (side * half, .52, 0), (.15, .52, span), CONCRETE, edge=.03)
-        cube(f'Landing_Foot_{side}', (side * half, .10, 0), (.19, .10, span), CONCRETE, edge=.03)
-        cube(f'Landing_Cap_{side}', (side * half, 1.06, 0), (.21, .06, span), BRUSHED, edge=.02)
-        cube(f'Landing_Reveal_{side}', (side * (half - .16), .86, 0), (.04, .05, span), DARK, edge=.006)
+        # Cast parapets, matching the galleries the landing runs out to. They
+        # extend 300 mm past the inner deck edge to overlap the exact stair
+        # newels. At the outer end they terminate flush in the gallery's solid
+        # returns, making one continuous safety line.
+        cube(f'Landing_Parapet_{side}', (side * half, .52, guard_mid),
+             (.15, .52, guard_span), CONCRETE, edge=.03)
+        cube(f'Landing_Foot_{side}', (side * half, .10, guard_mid),
+             (.19, .10, guard_span), CONCRETE, edge=.03)
+        cube(f'Landing_Cap_{side}', (side * half, 1.06, guard_mid),
+             (.21, .06, guard_span), BRUSHED, edge=.02)
+        cube(f'Landing_Reveal_{side}', (side * (half - .16), .86, guard_mid),
+             (.04, .05, guard_span), DARK, edge=.006)
+        cube(f'Landing_InnerNewel_{side}', (side * half, .62, -span - .18),
+             (.20, .62, .20), CONCRETE, edge=.03)
+        cube(f'Landing_OuterNewel_{side}', (side * half, .62, guard_outer - .06),
+             (.18, .62, .18), CONCRETE, edge=.03)
         for k in range(4):
             cube(f'Landing_Tie_{side}_{k}', (side * (half - .16), .58, (k / 3 - .5) * 1.7 * span),
                  (.03, .03, .03), DARK, edge=.006)

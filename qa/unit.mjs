@@ -33,6 +33,7 @@ const solidAt = (x, y, z) => colliders.contains(x, z, 0, y - 0.01, y + 0.01) &&
 
 const turn = SILO.stairTurn / SILO.stairSteps;
 const landingRadius = SILO.stairRadius + 0.16;
+const landingOpeningAngle = Math.asin(SILO.landingHalf / landingRadius);
 for (let level = 0; level < SILO.levels; level++) {
   const base = level * SILO.levelHeight;
   const footAngle = level * SILO.stairTurn;
@@ -51,6 +52,19 @@ for (let level = 0; level < SILO.levels; level++) {
     Math.cos(middleAngle) * landingRadius, base + SILO.levelHeight / 2 + 0.55,
     Math.sin(middleAngle) * landingRadius), true,
   `level ${level}: unguarded outer edge in the middle of the flight`);
+
+  // The balustrade must begin immediately outside the exact landing opening,
+  // not two or three complete treads later. This is the gap visible in the
+  // supplied mobile recording.
+  for (const angle of [landingOpeningAngle + 0.035,
+    SILO.stairTurn - landingOpeningAngle - 0.035]) {
+    const step = Math.round(angle / turn) % SILO.stairSteps;
+    const guardY = base + step * (SILO.levelHeight / SILO.stairSteps) + 0.58;
+    assert.equal(solidAt(
+      Math.cos(angle) * landingRadius, guardY,
+      Math.sin(angle) * landingRadius), true,
+    `level ${level}: stair guard does not meet the landing at ${(angle * 180 / Math.PI).toFixed(1)} degrees`);
+  }
 }
 
 // The floor bridge must stay continuous from the stair edge, over the landing,
@@ -70,6 +84,23 @@ for (let level = 0; level <= SILO.levels; level++) {
 // slab — better than a third of every walkway was solid to the player and
 // invisible on screen, leaving a single walkable lane down the middle.
 const PLAYER_RADIUS = 0.34;
+
+// Both long sides of every landing are physical guards, while the 3.6 m centre
+// route remains open from the gallery to the stair.
+for (let level = 0; level <= SILO.levels; level++) {
+  const y = level * SILO.levelHeight;
+  for (const radius of [6.0, 9.0, 12.7]) {
+    for (const side of [-1, 1]) {
+      assert.equal(colliders.contains(radius, -side * SILO.landingHalf, 0.12,
+        y + 0.40, y + 1.15), true,
+      `level ${level}: landing side ${side} is unguarded at radius ${radius}`);
+    }
+    assert.equal(colliders.contains(radius, 0, PLAYER_RADIUS,
+      y + 0.20, y + 1.70), false,
+    `level ${level}: landing centre is blocked at radius ${radius}`);
+  }
+}
+
 for (let level = 0; level <= SILO.levels; level++) {
   const y = level * SILO.levelHeight;
   const blocked = [];

@@ -179,6 +179,24 @@ await desktop.evaluate(() => {
 });
 await saveChecked(desktop, '05-silo-stair-and-landings', { minMean: 0.055, maxDark: 0.82 });
 
+// A player-height close-up of the guarded threshold catches the two defects
+// from the second mobile recording: missing returns beside the stair and floor
+// surfaces that shimmer as broad panels rather than reading as one deck.
+await desktop.setViewportSize({ width: 960, height: 540 });
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  const reviewPosition = { x: 16.8, y: 29.6, z: -4.8 };
+  for (let i = 0; i < 150; i++) ls.game.siloWorld.update(1 / 60, reviewPosition);
+  ls.freecam(reviewPosition.x, reviewPosition.y, reviewPosition.z,
+    7.8, 28.62, 0, 61);
+  ls.game.camera.near = .08;
+  ls.game.camera.far = 24;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '05a-silo-landing-guard-closeup', {
+  minMean: 0.055, maxMean: 0.48, maxBright: 0.055,
+});
+
 // The user's mobile recording was made at eye height while moving along a
 // gallery. An overhead proof image cannot catch blown façade panels, repeating
 // ceiling bars or doorway finishes drawn over an opening, so review that exact
