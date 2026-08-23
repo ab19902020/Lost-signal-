@@ -33,11 +33,11 @@ jobs:
           node qa/assert.mjs "http://127.0.0.1:5173/Lost-signal-/"
 
       - name: Capture visual QA views
-        if: always()
+        if: success()
         run: node qa/visual.mjs "http://127.0.0.1:5173/Lost-signal-/" qa/out/visual
 
       - name: Upload visual QA views
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: lost-signal-visual-qa

@@ -292,6 +292,8 @@ await mobile.evaluate(() => {
   ls.body.teleport(Math.cos(angle) * 15.8, 8.5, Math.sin(angle) * 15.8);
   ls.look(angle - .82, -.015);
   ls.simulate(180);
+  ls.game.camera.far = 30;
+  ls.game.camera.updateProjectionMatrix();
 });
 await saveChecked(mobile, '08-mobile-silo-gallery', {
   minMean: 0.065, maxMean: 0.48, maxBright: 0.06,
