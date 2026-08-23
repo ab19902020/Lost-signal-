@@ -180,7 +180,9 @@ export function createGameWorld(assets) {
       // This represents empty depth, not painted metal: keep it black under
       // the shelter's bright practical lights even if the GLB is rebuilt by an
       // older Blender version with slightly different material conversion.
-      hatchVoid.position.y = Math.max(hatchVoid.position.y, .135);
+      // The authored ring is a solid cylinder whose top face is y=.15. Lift
+      // the dark centre past it so the ring remains a rim, not a grey cover.
+      hatchVoid.position.y = Math.max(hatchVoid.position.y, .165);
       hatchVoid.material = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
     }
 
