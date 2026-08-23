@@ -1,0 +1,128 @@
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+
+const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/Lost-signal-/';
+const outDir = process.argv[3] || 'qa/out/visual';
+await mkdir(outDir, { recursive: true });
+
+const withQuality = (url, tier) => {
+  const parsed = new URL(url);
+  parsed.searchParams.set('quality', tier);
+  return parsed.href;
+};
+
+async function pumpFrames(page) {
+  const client = await page.context().newCDPSession(page);
+  client.on('Page.screencastFrame', ({ sessionId }) => {
+    client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await client.send('Page.startScreencast', {
+    format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64, everyNthFrame: 1,
+  });
+  return () => client.send('Page.stopScreencast').catch(() => {});
+}
+
+async function boot(page, quality = 'high') {
+  await page.goto(withQuality(baseUrl, quality), { waitUntil: 'load', timeout: 90000 });
+  await page.waitForFunction(() => {
+    const button = document.getElementById('start');
+    return button && !button.disabled && button.textContent.includes('ENTER');
+  }, null, { timeout: 90000, polling: 100 });
+  await page.evaluate(() => document.getElementById('start').click());
+  await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+    { timeout: 30000, polling: 100 });
+  await page.evaluate(() => globalThis.__ls.simulate(90));
+}
+
+async function save(page, name) {
+  await page.waitForTimeout(350);
+  const path = join(outDir, `${name}.png`);
+  await page.screenshot({ path, timeout: 180000 });
+  console.log(`visual: ${path}`);
+}
+
+const browser = await chromium.launch({
+  executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: [
+    '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion',
+  ],
+});
+
+const errors = [];
+const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+desktop.on('console', (message) => {
+  if (message.type() === 'error') errors.push(message.text().slice(0, 240));
+});
+desktop.on('pageerror', (error) => errors.push(String(error).slice(0, 240)));
+const stopDesktopPump = await pumpFrames(desktop);
+
+await boot(desktop, 'high');
+await save(desktop, '01-bunker-player-view');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('bunker');
+  ls.simulate(30);
+  ls.freecam(-5.6, 2.45, 5.7, 1.2, 1.2, -2.8, 66);
+});
+await save(desktop, '02-bunker-overview');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('outside');
+  ls.simulate(90);
+  ls.freecam(-17, 8.5, 13.5, 0, 1.1, -8, 62);
+});
+await save(desktop, '03-surface-compound');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('silo');
+  ls.simulate(120);
+  ls.freecam(10.5, 32.5, 10.5, 0, 25.5, 0, 68);
+});
+await save(desktop, '04-silo-top-landing');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('silo');
+  ls.simulate(90);
+  ls.freecam(11.8, 9.4, 4.8, 0, 4.7, 0, 65);
+});
+await save(desktop, '05-silo-stair-and-landings');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('silo');
+  ls.simulate(90);
+  ls.freecam(15.2, 1.72, 0, 25.2, 1.55, 0, 62);
+});
+await save(desktop, '06-silo-home');
+
+await stopDesktopPump();
+await desktop.close();
+
+const mobile = await browser.newPage({
+  viewport: { width: 844, height: 390 },
+  hasTouch: true,
+  isMobile: true,
+});
+mobile.on('console', (message) => {
+  if (message.type() === 'error') errors.push(message.text().slice(0, 240));
+});
+mobile.on('pageerror', (error) => errors.push(String(error).slice(0, 240)));
+const stopMobilePump = await pumpFrames(mobile);
+await boot(mobile, 'mobile');
+await save(mobile, '07-mobile-landscape');
+await stopMobilePump();
+await mobile.close();
+
+await browser.close();
+
+if (errors.length) {
+  console.error('VISUAL ERRORS:', [...new Set(errors)].slice(0, 12).join(' | '));
+  process.exitCode = 1;
+}
