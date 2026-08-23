@@ -31,6 +31,11 @@ STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
 STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .62          # half-width of a doorway opening
+LANDING_HALF = 1.8       # half-width of the stair landing, and of the gap it
+                         # needs in the gallery railing to reach the floor
+# Treads at the foot of a flight whose outer balustrade is left open, so the
+# stair discharges onto that level's landing instead of arriving walled in.
+EXIT_STEPS = max(2, int(round((LANDING_HALF / STAIR_RADIUS) / (math.tau / STAIR_STEPS))) + 1)
 
 
 def clear_scene():
@@ -317,19 +322,28 @@ WARMLAMP = mat('HabWarmLamp', (.5, .42, .30), 0, .30, (1.0, .82, .55), 3.2)
 
 
 def build_shell():
-    """The outer concrete shell: forty-seven metres of silo wall."""
+    """The outer concrete shell, and the ring beams that stiffen it."""
     clear_scene()
     height = LEVELS * LEVEL_HEIGHT + LEVEL_HEIGHT * 2
     panels = SEGMENTS * 2
     for i in range(panels):
         a = i * math.tau / panels
-        x, z = math.cos(a) * (SHELL_RADIUS + .6), math.sin(a) * (SHELL_RADIUS + .6)
-        cube(f'Shell_Panel_{i}', (x, height / 2, z),
-             (math.pi * (SHELL_RADIUS + .6) / panels * 1.08, height / 2, .6), CONCRETE,
-             rotation=(0, -a, 0), edge=.07)
+        wide = math.pi * (SHELL_RADIUS + .6) / panels * 1.08
+        # Radial thickness .6, tangential width `wide`. Sized the other way
+        # round this was a ring of fins rather than a wall.
+        cube(f'Shell_Panel_{i}', (math.cos(a) * (SHELL_RADIUS + .6), height / 2,
+                                  math.sin(a) * (SHELL_RADIUS + .6)),
+             (.6, height / 2, wide), CONCRETE, rotation=(0, -a, 0), edge=.07)
         rib = a + math.tau / (panels * 2)
         cube(f'Shell_Rib_{i}', (math.cos(rib) * SHELL_RADIUS, height / 2, math.sin(rib) * SHELL_RADIUS),
-             (.20, height / 2, .26), DARK, rotation=(0, -rib, 0), edge=.03)
+             (.26, height / 2, .20), DARK, rotation=(0, -rib, 0), edge=.03)
+        # A ring beam at every floor line, so the shell is banded the way a
+        # poured structure is rather than being one unbroken tube.
+        for level in range(LEVELS + 2):
+            y = level * LEVEL_HEIGHT
+            cube(f'Shell_Ring_{i}_{level}', (math.cos(a) * (SHELL_RADIUS + .18), y,
+                                             math.sin(a) * (SHELL_RADIUS + .18)),
+                 (.22, .34, wide), CONCRETE, rotation=(0, -a, 0), edge=.04)
 
     cube('Shell_Base', (0, -.5, 0), (SHELL_RADIUS + 1.4, .5, SHELL_RADIUS + 1.4), CONCRETE, edge=.1)
     cube('Shell_Cap', (0, height + .7, 0), (SHELL_RADIUS + 1.4, .7, SHELL_RADIUS + 1.4), CONCRETE, edge=.1)
@@ -347,133 +361,209 @@ def arc_half(radius, overlap=1.06):
     return math.pi * radius / SEGMENTS * overlap
 
 
-def build_level():
-    """One residential level: a narrow gallery ring against a dense facade.
+def ring_piece(name, angle, radius, offset, y, radial, half_y, tangential, material, edge=.025):
+    """A slab standing in the ring at `angle`, `offset` along the bay's chord.
 
-    The reference silo reads as a wall of small dwellings — stacked units,
-    pipes, vents, meter boxes and lit windows at different heights, broken up by
-    heavy structural columns — not as flat painted panels.
+    Sizes are given the way you think about the thing: how deep it is from the
+    wall, how tall, how wide along the walkway. A piece rotated into the ring
+    has its local X along the radius and its local Z along the tangent, which
+    is the opposite of what you get placing a whole asset at runtime — and
+    getting them the wrong way round turns a handrail into a row of spikes
+    across the walkway and a facade into a row of fins.
+    """
+    x = math.cos(angle) * radius + math.sin(angle) * offset
+    z = math.sin(angle) * radius - math.cos(angle) * offset
+    return cube(name, (x, y, z), (radial, half_y, tangential), material,
+                rotation=(0, -angle, 0), edge=edge)
+
+
+def build_level():
+    """One residential level: a walkway ring carried on the wall it hangs off.
+
+    Built so the structure holds itself up and reads that way from the level
+    below: a checker-plate deck on a concrete slab, the slab spanning between
+    haunched radial beams that cantilever off the wall, the beams landing on a
+    ring beam at the well edge, and the whole floor bearing on columns that run
+    the full height of the silo. The wall between the doors is a wall — flat,
+    three hundred millimetres thick — not a fin sticking out into the walkway.
     """
     clear_scene()
     step = math.tau / SEGMENTS
-    deck_half = arc_half(DECK_OUTER)
-    front_half = arc_half(DECK_OUTER - .35)
-    rail_half = arc_half(WELL_RADIUS)
     mid = (DECK_OUTER + WELL_RADIUS) / 2
     depth = (DECK_OUTER - WELL_RADIUS) / 2
+    wall_mid = DECK_OUTER - .30      # centre of the 300 mm wall
+    face = DECK_OUTER - .45          # the side of it you see from the walkway.
+                                     # This was on the far side, which buried
+                                     # every window, meter and vent inside the
+                                     # wall and left a blank panel.
+    edge_r = WELL_RADIUS + .26       # centre of the ring beam at the well edge
 
     for i in range(SEGMENTS):
         a = i * step
-        x, z = math.cos(a) * mid, math.sin(a) * mid
+        ca = a + step / 2            # bay boundary: where the columns and beams go
+        bay = arc_half(mid)
+        front_half = arc_half(face)
 
-        cube(f'Deck_{i}', (x, -.14, z), (deck_half, .14, depth), DECKPLATE, rotation=(0, -a, 0), edge=.03)
-        # Balcony underside: ribbed, and visible from every level below.
-        cube(f'Soffit_{i}', (x, -.30, z), (deck_half, .10, depth * .92), CONCRETE,
-             rotation=(0, -a, 0), edge=.04)
-        for r in range(3):
-            cube(f'SoffitRib_{i}_{r}', (math.cos(a) * (WELL_RADIUS + 1.1 + r * 1.5), -.42,
-                                        math.sin(a) * (WELL_RADIUS + 1.1 + r * 1.5)),
-                 (deck_half * .92, .09, .12), DARK, rotation=(0, -a, 0), edge=.02)
-        cube(f'Ceiling_{i}', (x, LEVEL_HEIGHT - .18, z), (deck_half, .18, depth), CONCRETE,
-             rotation=(0, -a, 0), edge=.04)
+        # --- Floor -----------------------------------------------------------
+        # Walking surface, then the slab that carries it.
+        ring_piece(f'Deck_{i}', a, mid, 0, -.055, depth, .055, bay, DECKPLATE, edge=.02)
+        ring_piece(f'Slab_{i}', a, mid, 0, -.23, depth, .13, bay, CONCRETE, edge=.03)
 
-        # --- Facade -----------------------------------------------------------
-        # Built as two panels and a lintel around a real doorway, so a home is
-        # somewhere you walk into rather than a painted rectangle.
-        ox, oz = math.cos(a) * (DECK_OUTER - .35), math.sin(a) * (DECK_OUTER - .35)
-        panel_half = (front_half - DOOR_HALF) / 2
-        # Centred in the bay. It used to sit off to one side, which put it a
-        # metre and a half away from the opening in the home's own front wall —
-        # an open door that led into a wall.
-        door_centre = 0
+        # Radial beams on every bay boundary, haunched: deep where they take
+        # the moment at the wall, shallow where they reach the well.
+        outer_run = depth * .45
+        ring_piece(f'Haunch_{i}', ca, DECK_OUTER - outer_run, 0, -.62, outer_run, .28, .17,
+                   CONCRETE, edge=.03)
+        ring_piece(f'Rib_{i}', ca, WELL_RADIUS + (depth * 2 - outer_run) / 2, 0, -.47,
+                   (depth * 2 - outer_run) / 2, .13, .15, CONCRETE, edge=.025)
+
+        # The ring beam the radial beams land on, running the whole circle.
+        ring_piece(f'EdgeBeam_{i}', a, edge_r, 0, -.52, .26, .29, arc_half(edge_r),
+                   CONCRETE, edge=.03)
+        ring_piece(f'EdgeNose_{i}', a, WELL_RADIUS + .02, 0, -.30, .06, .18, arc_half(WELL_RADIUS),
+                   DARK, edge=.02)
+
+        # Services run under the walkway between the beams, clipped to the slab.
+        for r, rad in enumerate((WELL_RADIUS + 1.5, WELL_RADIUS + 3.4)):
+            ring_piece(f'Conduit_{i}_{r}', a, rad, 0, -.46, .07, .07, arc_half(rad),
+                       BRUSHED, edge=.012)
+
+        # --- The wall between the doors ---------------------------------------
+        panel_half = (front_half - DOOR_HALF - .12) / 2
         for k in (-1, 1):
-            offset = door_centre + k * (DOOR_HALF + panel_half)
-            px = math.cos(a) * (DECK_OUTER - .35) + math.sin(a) * offset
-            pz = math.sin(a) * (DECK_OUTER - .35) - math.cos(a) * offset
-            cube(f'Front_{i}_{k}', (px, LEVEL_HEIGHT / 2, pz), (panel_half, LEVEL_HEIGHT / 2, .35),
-                 PAINT, rotation=(0, -a, 0), edge=.04)
-        lx = math.cos(a) * (DECK_OUTER - .35) + math.sin(a) * door_centre
-        lz = math.sin(a) * (DECK_OUTER - .35) - math.cos(a) * door_centre
-        cube(f'Lintel_{i}', (lx, (LEVEL_HEIGHT + 2.18) / 2, lz),
-             (DOOR_HALF, (LEVEL_HEIGHT - 2.18) / 2, .35), PAINT, rotation=(0, -a, 0), edge=.04)
-        cube(f'Reveal_{i}', (lx, 1.09, lz), (DOOR_HALF + .07, 1.09, .38), DARK,
-             rotation=(0, -a, 0), edge=.02)
+            offset = k * (DOOR_HALF + .12 + panel_half)
+            ring_piece(f'Front_{i}_{k}', a, wall_mid, offset, LEVEL_HEIGHT / 2,
+                       .15, LEVEL_HEIGHT / 2, panel_half, PAINT, edge=.03)
+        # Head of the wall over the opening.
+        ring_piece(f'Lintel_{i}', a, wall_mid, 0, (LEVEL_HEIGHT + 2.24) / 2,
+                   .15, (LEVEL_HEIGHT - 2.24) / 2, DOOR_HALF + .12, PAINT, edge=.03)
+        # A frame around the opening rather than a block filling it: jambs
+        # either side and a head, with the doorway itself left open.
+        for k in (-1, 1):
+            ring_piece(f'Jamb_{i}_{k}', a, wall_mid, k * (DOOR_HALF + .06), 1.12,
+                       .19, 1.12, .06, DARK, edge=.015)
+        ring_piece(f'DoorHead_{i}', a, wall_mid, 0, 2.30, .19, .06, DOOR_HALF + .12,
+                   DARK, edge=.015)
+        ring_piece(f'Threshold_{i}', a, wall_mid, 0, .02, .19, .02, DOOR_HALF + .06,
+                   BRUSHED, edge=.008)
 
-        def bay_point(offset, inset):
-            """A point `offset` along the bay's chord, `inset` in from the wall."""
-            return (math.cos(a) * (DECK_OUTER - inset) + math.sin(a) * offset,
-                    math.sin(a) * (DECK_OUTER - inset) - math.cos(a) * offset)
+        # A painted dado to waist height with a capping bead, and a skirting.
+        # A four-metre run of one flat colour reads as a blank, not a wall.
+        ring_piece(f'Dado_{i}', a, face - .02, 0, .55, .02, .55, front_half,
+                   DOORPAINT, edge=.008)
+        ring_piece(f'DadoCap_{i}', a, face - .04, 0, 1.12, .04, .03, front_half,
+                   BRUSHED, edge=.008)
+        ring_piece(f'Skirting_{i}', a, face - .05, 0, .09, .05, .09, front_half,
+                   DARK, edge=.01)
 
-        # A lit fanlight over the opening, and the unit's number plate.
-        fx, fz = bay_point(door_centre, .30)
-        cube(f'Fanlight_{i}', (fx, 2.42, fz), (DOOR_HALF * .82, .13, .05), WARMWINDOW,
-             rotation=(0, -a, 0), edge=.012)
-        nx, nz = bay_point(door_centre + DOOR_HALF + .28, .30)
-        cube(f'Plate_{i}', (nx, 1.92, nz), (.13, .09, .02), AMBER, rotation=(0, -a, 0), edge=.006)
+        # Fanlight over the door, and the unit's number plate beside it.
+        ring_piece(f'Fanlight_{i}', a, face - .04, 0, 2.52, .04, .13, DOOR_HALF * .84,
+                   WARMWINDOW, edge=.012)
+        ring_piece(f'Plate_{i}', a, face - .02, DOOR_HALF + .34, 1.94, .02, .09, .13,
+                   AMBER, edge=.006)
 
-        # Two stacked dwellings' windows, warm from inside, with a shared sill.
-        for row, (wy, wh) in enumerate(((1.22, .40), (2.28, .30))):
-            for k in (-1, 1):
-                wx, wz = bay_point(door_centre + k * (DOOR_HALF + panel_half) + k * .12, .30)
-                cube(f'Win_{i}_{row}_{k}', (wx, wy, wz), (.34, wh, .04), WARMWINDOW,
-                     rotation=(0, -a, 0), edge=.008)
-                cube(f'WinFrame_{i}_{row}_{k}', (wx, wy, wz), (.40, wh + .07, .03), DARK,
-                     rotation=(0, -a, 0), edge=.01)
-                sx, sz = bay_point(door_centre + k * (DOOR_HALF + panel_half) + k * .12, .38)
-                cube(f'WinSill_{i}_{row}_{k}', (sx, wy - wh - .09, sz), (.44, .05, .10), BRUSHED,
-                     rotation=(0, -a, 0), edge=.012)
+        # A window either side, warm from inside, on a sill.
+        for k in (-1, 1):
+            wo = k * (DOOR_HALF + .12 + panel_half)
+            ring_piece(f'WinFrame_{i}_{k}', a, face - .03, wo, 1.55, .05, .58, .62,
+                       DARK, edge=.012)
+            ring_piece(f'Win_{i}_{k}', a, face - .06, wo, 1.55, .03, .50, .54,
+                       WARMWINDOW, edge=.008)
+            for m in (-1, 1):
+                ring_piece(f'WinBar_{i}_{k}_{m}', a, face - .07, wo + m * .18, 1.55,
+                           .03, .50, .022, DARK, edge=.004)
+            ring_piece(f'WinSill_{i}_{k}', a, face - .09, wo, .94, .11, .05, .70,
+                       BRUSHED, edge=.012)
 
-        # Service greeble: meter box, vent grille, riser pipes, cable run.
-        mx, mz = bay_point(front_half * .80, .30)
-        cube(f'Meter_{i}', (mx, 1.62, mz), (.20, .26, .09), BRUSHED, rotation=(0, -a, 0), edge=.02)
-        cube(f'MeterFace_{i}', (mx, 1.62, mz - .0), (.14, .18, .10), DARK, rotation=(0, -a, 0), edge=.01)
-        vx, vz = bay_point(front_half * .55, .30)
-        cube(f'Vent_{i}', (vx, 2.72, vz), (.42, .22, .06), DARK, rotation=(0, -a, 0), edge=.015)
+        # Service greeble, flat against the wall where it belongs.
+        ring_piece(f'Meter_{i}', a, face - .09, -(front_half * .74), 1.66, .09, .26, .20,
+                   BRUSHED, edge=.02)
+        ring_piece(f'MeterFace_{i}', a, face - .17, -(front_half * .74), 1.66, .02, .18, .14,
+                   DARK, edge=.01)
+        ring_piece(f'Vent_{i}', a, face - .07, front_half * .70, LEVEL_HEIGHT - .70,
+                   .07, .22, .42, DARK, edge=.015)
         for b in range(5):
-            cube(f'VentBar_{i}_{b}', (vx, 2.60 + b * .06, vz), (.38, .015, .08), BRUSHED,
-                 rotation=(0, -a, 0), edge=.004)
-        for pi, po in enumerate((-.72, -.60)):
-            px, pz = bay_point(front_half * po, .46)
+            ring_piece(f'VentBar_{i}_{b}', a, face - .12, front_half * .70,
+                       LEVEL_HEIGHT - .82 + b * .06, .04, .015, .38, BRUSHED, edge=.004)
+
+        # Risers climb the wall between the bays, banded at each floor.
+        for pi, po in enumerate((-.90, -.82)):
+            px = math.cos(a) * (face - .10) + math.sin(a) * (front_half * po)
+            pz = math.sin(a) * (face - .10) - math.cos(a) * (front_half * po)
             cyl(f'Riser_{i}_{pi}', (px, LEVEL_HEIGHT / 2, pz), .055, LEVEL_HEIGHT, BRUSHED,
                 rotation=UP, verts=10)
-        cx, cz = bay_point(front_half * .3, .52)
-        cube(f'CableTray_{i}', (cx, LEVEL_HEIGHT - .46, cz), (front_half * .9, .05, .13), DARK,
-             rotation=(0, -a, 0), edge=.015)
-
-        # Strip lights across the width of the walkway. One row against the
-        # doors left the outer half of a six-metre ring in the dark.
-        for si, inset in enumerate((1.30, 3.40, 5.50)):
-            lx, lz = bay_point(0, inset)
-            span = arc_half(DECK_OUTER - inset) * .62
-            cube(f'Strip_{i}_{si}', (lx, LEVEL_HEIGHT - .42, lz), (span, .05, .17), WHITELIGHT,
-                 rotation=(0, -a, 0), edge=.015)
-            cube(f'StripHood_{i}_{si}', (lx, LEVEL_HEIGHT - .31, lz), (span + .10, .08, .24), DARK,
-                 rotation=(0, -a, 0), edge=.02)
+            ring_piece(f'RiserClamp_{i}_{pi}', a, face - .10, front_half * po, .55,
+                       .10, .05, .10, DARK, edge=.008)
+        # Cable tray runs the ring under the ceiling.
+        ring_piece(f'CableTray_{i}', a, face - .26, 0, LEVEL_HEIGHT - .52, .13, .05,
+                   arc_half(face - .26), DARK, edge=.015)
 
         # --- Structure --------------------------------------------------------
-        # The walkway is a clear circle: nothing stands on it. The structure
-        # that used to be a pair of columns in the middle of the deck is a
-        # pilaster built into the wall between two front doors instead, so you
-        # can walk the whole ring without stepping round anything.
-        ca = a + step / 2
-        px, pz = math.cos(ca) * (DECK_OUTER - .48), math.sin(ca) * (DECK_OUTER - .48)
-        cube(f'Pilaster_{i}', (px, LEVEL_HEIGHT / 2, pz), (.34, LEVEL_HEIGHT / 2, .22),
-             CONCRETE, rotation=(0, -ca, 0), edge=.05)
-        for cy in (.52, LEVEL_HEIGHT - .52):
-            cube(f'PilasterBand_{i}_{cy:.1f}', (px, cy, pz), (.40, .09, .26),
-                 BRUSHED, rotation=(0, -ca, 0), edge=.02)
+        # The column at every bay boundary runs the full height of the silo and
+        # carries the floor. It passes through the deck, so the levels stack
+        # into one continuous column rather than a stack of separate stubs.
+        ring_piece(f'Column_{i}', ca, DECK_OUTER - .52, 0, LEVEL_HEIGHT / 2 - .45,
+                   .26, LEVEL_HEIGHT / 2 + .45, .30, CONCRETE, edge=.04)
+        for cy in (-.62, LEVEL_HEIGHT - .60):
+            ring_piece(f'Collar_{i}_{cy:.1f}', ca, DECK_OUTER - .52, 0, cy,
+                       .31, .10, .35, BRUSHED, edge=.02)
 
         # --- Gallery railing --------------------------------------------------
-        rx, rz = math.cos(a) * WELL_RADIUS, math.sin(a) * WELL_RADIUS
-        cube(f'Kerb_{i}', (rx, .12, rz), (rail_half, .12, .09), CONCRETE, rotation=(0, -a, 0), edge=.02)
-        for h in (.60, 1.08):
-            cube(f'Rail_{i}_{h}', (rx, h, rz), (rail_half, .05, .05), BRUSHED,
-                 rotation=(0, -a, 0), edge=.012)
-        for k in range(5):
-            offset = (k / 4 - .5) * 2 * rail_half
-            px = math.cos(a) * WELL_RADIUS + math.sin(a) * offset
-            pz = math.sin(a) * WELL_RADIUS - math.cos(a) * offset
-            cube(f'Baluster_{i}_{k}', (px, .60, pz), (.035, .48, .035), BRUSHED, edge=.008)
+        # Circumferential, following the well edge. This used to be sized the
+        # other way round, which put a two-metre bar across the walkway on
+        # every bay.
+        #
+        # Bay 0 is where the stair's landing arrives, on every level, because
+        # the flight turns a full circle per storey. The railing opens there:
+        # an unbroken ring runs straight across the mouth of the landing and
+        # there is then no way to step off the stair onto the floor.
+        rail_half = arc_half(WELL_RADIUS)
+        gate = (i == 0)
+        if gate:
+            # Short returns either side of the opening, so the gap is exactly
+            # as wide as the landing and the edge stays guarded up to it.
+            for k in (-1, 1):
+                ring_piece(f'RailReturn_{i}_{k}', a, WELL_RADIUS + .06,
+                           k * (LANDING_HALF + (rail_half - LANDING_HALF) / 2), .10,
+                           .10, .10, (rail_half - LANDING_HALF) / 2, CONCRETE, edge=.02)
+                for h in (.58, 1.06):
+                    ring_piece(f'RailR_{i}_{k}_{h}', a, WELL_RADIUS + .04,
+                               k * (LANDING_HALF + (rail_half - LANDING_HALF) / 2), h,
+                               .045, .045, (rail_half - LANDING_HALF) / 2, BRUSHED, edge=.012)
+                # A newel post on the edge of the opening, and a stub of rail
+                # turned back along the landing so the corner is never open.
+                nx = math.cos(a) * (WELL_RADIUS + .04) + math.sin(a) * (k * LANDING_HALF)
+                nz = math.sin(a) * (WELL_RADIUS + .04) - math.cos(a) * (k * LANDING_HALF)
+                cube(f'RailNewel_{i}_{k}', (nx, .58, nz), (.055, .58, .055), BRUSHED, edge=.01)
+                ring_piece(f'RailTurn_{i}_{k}', a, WELL_RADIUS - .34, k * LANDING_HALF, 1.06,
+                           .38, .045, .045, BRUSHED, edge=.012)
+        else:
+            ring_piece(f'Kerb_{i}', a, WELL_RADIUS + .06, 0, .10, .10, .10, rail_half,
+                       CONCRETE, edge=.02)
+            for h in (.58, 1.06):
+                ring_piece(f'Rail_{i}_{h}', a, WELL_RADIUS + .04, 0, h, .045, .045, rail_half,
+                           BRUSHED, edge=.012)
+            for k in range(4):
+                offset = (k / 3 - .5) * 1.92 * rail_half
+                px = math.cos(a) * (WELL_RADIUS + .04) + math.sin(a) * offset
+                pz = math.sin(a) * (WELL_RADIUS + .04) - math.cos(a) * offset
+                cube(f'Baluster_{i}_{k}', (px, .58, pz), (.032, .58, .032), BRUSHED, edge=.008)
+            ring_piece(f'Toeboard_{i}', a, WELL_RADIUS + .01, 0, .28, .03, .12, rail_half,
+                       DARK, edge=.008)
+
+        # --- Lighting ---------------------------------------------------------
+        # Three arcs across the width of the walkway, hung off the slab above.
+        for si, rad in enumerate((DECK_OUTER - 1.4, mid, WELL_RADIUS + 1.4)):
+            span = arc_half(rad) * .60
+            ring_piece(f'Strip_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .44, .16, .05, span,
+                       WHITELIGHT, edge=.015)
+            ring_piece(f'StripHood_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .33, .22, .08,
+                       span + .10, DARK, edge=.02)
+            for k in (-1, 1):
+                cube(f'StripStem_{i}_{si}_{k}',
+                     (math.cos(a) * rad + math.sin(a) * (k * span * .8), LEVEL_HEIGHT - .22,
+                      math.sin(a) * rad - math.cos(a) * (k * span * .8)),
+                     (.018, .16, .018), BRUSHED, edge=.004)
 
     join_all('HabLevel')
     export('hab_level_v4.glb')
@@ -506,13 +596,33 @@ def build_stair():
              rotation=(0, -a, 0), edge=.01)
         cube(f'Nose_{i}', (x, i * rise + .02, z), (band, .03, going * 1.02), DARK,
              rotation=(0, -a, 0), edge=.008)
-
-        # Solid outer balustrade, capped with a steel handrail.
-        ox, oz = math.cos(a) * (outer + .16), math.sin(a) * (outer + .16)
-        cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, going * 1.04), CONCRETE,
+        # The underside. Without it a four-metre tread is a slat cantilevered
+        # off a slim core with daylight between it and the next one; with it the
+        # flight is a solid helical ramp of concrete, stepped the way a cast
+        # soffit is.
+        cube(f'Soffit_{i}', (x, i * rise - .30, z), (band, .18, going * 1.04), CONCRETE,
              rotation=(0, -a, 0), edge=.03)
-        cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, going * 1.06), BRUSHED,
-             rotation=(0, -a, 0), edge=.015)
+        # Stringers: the beams the treads span between. The outer one carries
+        # the balustrade, the inner one ties the flight back to the core.
+        sx, sz = math.cos(a) * (outer - .10), math.sin(a) * (outer - .10)
+        cube(f'StringerOut_{i}', (sx, i * rise - .40, sz), (.18, .40, going * 1.06), CONCRETE,
+             rotation=(0, -a, 0), edge=.025)
+        ix2, iz2 = math.cos(a) * (inner + .16), math.sin(a) * (inner + .16)
+        cube(f'StringerIn_{i}', (ix2, i * rise - .34, iz2), (.16, .30, going * 1.06), CONCRETE,
+             rotation=(0, -a, 0), edge=.025)
+
+        # Solid outer balustrade, capped with a steel handrail — except at the
+        # foot of the flight, where it opens onto the landing. A flight walled
+        # in for its whole turn arrives at the floor with nowhere to step off.
+        ox, oz = math.cos(a) * (outer + .16), math.sin(a) * (outer + .16)
+        if i >= EXIT_STEPS:
+            cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, going * 1.04), CONCRETE,
+                 rotation=(0, -a, 0), edge=.03)
+            cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, going * 1.06), BRUSHED,
+                 rotation=(0, -a, 0), edge=.015)
+        if i == EXIT_STEPS:
+            # A newel where the balustrade stops, so the opening has an edge.
+            cube(f'ExitNewel_{i}', (ox, i * rise + .62, oz), (.20, .62, .20), CONCRETE, edge=.03)
         # ...and a rail on the core side, because the inside of a four-metre
         # tread is as long a drop as the outside.
         ix, iz = math.cos(a) * (inner + .12), math.sin(a) * (inner + .12)
@@ -560,9 +670,18 @@ def build_landing():
     span = (WELL_RADIUS + .3 - STAIR_RADIUS) / 2
     half = 1.8
     cube('Landing_Deck', (0, -.09, 0), (half, .09, span), DECKPLATE, edge=.02)
-    cube('Landing_Soffit', (0, -.26, 0), (half * .94, .10, span * .94), CONCRETE, edge=.03)
-    for r in range(3):
-        cube(f'Landing_Rib_{r}', (0, -.40, (r / 2 - .5) * span * 1.2), (half * .9, .08, .11),
+    cube('Landing_Plate', (0, -.24, 0), (half * .97, .07, span * .99), STEEL, edge=.02)
+    # Two deep girders down the long sides carry the span from the stair's
+    # stringer to the walkway's ring beam; cross ribs between them stop the
+    # deck reading as a plank laid over nothing.
+    for side in (-1, 1):
+        cube(f'Landing_Girder_{side}', (side * (half - .16), -.52, 0), (.15, .38, span),
+             DARK, edge=.03)
+        for k in range(5):
+            cube(f'Landing_Web_{side}_{k}', (side * (half - .16), -.52, (k / 4 - .5) * 1.7 * span),
+                 (.19, .30, .05), BRUSHED, edge=.01)
+    for r in range(6):
+        cube(f'Landing_Rib_{r}', (0, -.42, (r / 5 - .5) * 1.82 * span), (half * .92, .11, .07),
              DARK, edge=.02)
     for side in (-1, 1):
         cube(f'Landing_Kerb_{side}', (side * half, .10, 0), (.07, .10, span), DARK, edge=.015)

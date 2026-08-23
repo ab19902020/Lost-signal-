@@ -44,7 +44,8 @@ for (const a of actions) {
   else if (a.startsWith('click:')) await page.click(a.slice(6)).catch(e => errors.push('click ' + a + ': ' + e.message));
 }
 await page.waitForTimeout(600);
-await page.screenshot({ path: out });
+// Software rendering: a heavy frame can take well over the 30 s default.
+await page.screenshot({ path: out, timeout: 180000 });
 console.error('state:', await page.evaluate(() => { const l = globalThis.__ls; return l ? JSON.stringify({ quality: l.quality.name, pos: l.body.position.toArray().map(v => +v.toFixed(2)), grounded: l.body.grounded }) : 'no hook'; }).catch(() => 'n/a'));
 if (errors.length) console.error('ERRORS:', [...new Set(errors)].slice(0, 6).join(' | '));
 console.error('shot ->', out);

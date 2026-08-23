@@ -60,6 +60,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const treadDepth = (stairRadius - stairColumn) / 2;      // radial half-extent
   const stairMid = stairColumn + treadDepth;
   const goingHalf = (stairTurn / stairSteps) * stairRadius / 2 * 1.06;
+  const landingHalf = 1.8;
+  // Matches the Blender ring: the treads at the foot of a flight whose outer
+  // balustrade is open, so the stair discharges onto the landing.
+  const exitSteps = Math.max(2,
+    Math.round((landingHalf / stairRadius) / (stairTurn / stairSteps)) + 1);
 
   const shaftHeight = levels * levelHeight;
   // Each ring piece is a flat slab at its own radius, so each needs its own
@@ -91,9 +96,22 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       // Deck: walkable, with the light well left open through the middle.
       colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, y - 0.3, y + 0.02),
         { climbable: true });
-      // Apartment frontage, and the gallery railing over the well.
-      colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, y, y + levelHeight), {});
-      colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
+      // The gallery railing over the well. The frontage is NOT sealed here:
+      // the homes loop below authors it panel by panel around a real doorway,
+      // and a solid ring across it walled every one of them shut.
+      //
+      // Bay 0 is where the landing arrives on every level, so the railing
+      // opens there and only its short returns are solid.
+      if (i === 0) {
+        const rail = arcHalf(wellRadius);
+        for (const side of [-1, 1]) {
+          const centre = side * (landingHalf + (rail - landingHalf) / 2);
+          colliders.addBox(ringBox(angle + centre / wellRadius, wellRadius,
+            (rail - landingHalf) / 2, 0.1, y + 0.02, y + 1.15), {});
+        }
+      } else {
+        colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
+      }
     }
     gallery.push({ level, y });
   }
@@ -111,8 +129,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
         { climbable: true });
       // The balustrade: without it you walk off the outer edge of the stair.
-      colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
-        top, top + 1.05), {});
+      // Open for the first few treads, where the flight discharges onto the
+      // level's landing — a flight walled in for its whole turn arrives at the
+      // floor with nowhere to step off.
+      if (i >= exitSteps) {
+        colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
+          top, top + 1.05), {});
+      }
     }
     // The core the helix wraps is solid; the shaft around it stays open.
     colliders.addBox(box(-(stairColumn - 0.15), base, -(stairColumn - 0.15),
@@ -143,7 +166,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const angle = (bay * Math.PI * 2) / segments;
       const open = doorwayAngle(level, bay);
 
-      if (assets.habApartment) {
+      // The interior is only built where the door stands open. Behind a shut
+      // door you can never see it, and a hundred and twenty-six furnished
+      // rooms nobody can look into is a hundred and twenty-six draw calls
+      // spent on nothing.
+      if (assets.habApartment && open) {
         homes.push(place(assets.habApartment, scene,
           [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
           [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false }));
@@ -193,18 +220,22 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       colliders.addBox(ringBox(angle, apartmentBack, arcHalf(apartmentBack), 0.3, y, y + levelHeight), {});
 
       // Facade: a panel either side of the doorway, and a lintel over it. A
-      // shut door fills the gap; an open one leaves it walkable.
-      const panelHalf = (arcHalf(deckOuter - 0.35) - doorHalf) / 2;
+      // shut door fills the gap; an open one leaves it walkable. These match
+      // the wall the Blender ring builds — 300 mm thick at deckOuter - 0.30,
+      // with a 1.24 m clear opening between the jambs.
+      const wallMid = deckOuter - 0.30;
+      const reveal = doorHalf + 0.12;
+      const panelHalf = (arcHalf(deckOuter - 0.15) - reveal) / 2;
       for (const side of [-1, 1]) {
-        const offset = doorOffset + side * (doorHalf + panelHalf);
-        colliders.addBox(ringBox(angle + offset / deckOuter, deckOuter - 0.35, panelHalf, 0.36,
+        const offset = doorOffset + side * (reveal + panelHalf);
+        colliders.addBox(ringBox(angle + offset / deckOuter, wallMid, panelHalf, 0.30,
           y, y + levelHeight), {});
       }
-      colliders.addBox(ringBox(angle + doorOffset / deckOuter, deckOuter - 0.35, doorHalf, 0.36,
-        y + 2.18, y + levelHeight), {});
+      colliders.addBox(ringBox(angle + doorOffset / deckOuter, wallMid, reveal, 0.30,
+        y + 2.24, y + levelHeight), {});
       if (!open) {
-        colliders.addBox(ringBox(angle + doorOffset / deckOuter, deckOuter - 0.35, doorHalf, 0.36,
-          y, y + 2.18), {});
+        colliders.addBox(ringBox(angle + doorOffset / deckOuter, wallMid, doorHalf, 0.30,
+          y, y + 2.24), {});
       }
     }
   }
@@ -223,7 +254,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         [Math.cos(angle) * landingMid, y, Math.sin(angle) * landingMid],
         [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
     }
-    colliders.addBox(ringBox(angle, landingMid, 1.8, landingSpan, y - 0.3, y + 0.02),
+    colliders.addBox(ringBox(angle, landingMid, landingHalf, landingSpan, y - 0.3, y + 0.02),
       { climbable: true });
   }
 
@@ -274,6 +305,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       { climbable: true });
     colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, topY, topY + levelHeight), {});
     colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, topY + 0.02, topY + 1.15), {});
+    // The level ring carries a doorway in every bay. On the residential levels
+    // a home stands behind each one; up here there is only the secure unit, so
+    // the openings get shut doors rather than being left as holes onto nothing.
+    if (assets.habDoor) {
+      const hinge = -doorHalf + 0.04;
+      place(assets.habDoor, scene,
+        [Math.cos(angle) * (deckOuter - 0.28) + Math.sin(angle) * hinge, topY,
+         Math.sin(angle) * (deckOuter - 0.28) - Math.cos(angle) * hinge],
+        [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
+    }
   }
 
   const secureAngle = Math.PI * 0.25;

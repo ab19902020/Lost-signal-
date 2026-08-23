@@ -55,6 +55,15 @@ if (physics.silo.present) {
   check(physics.silo.stairFoot.grounded, 'the player did not stay on their feet down the stair');
   check(physics.silo.stairFoot.radius > 1.2 && physics.silo.stairFoot.radius < 6.0,
     `walking the stair ended at radius ${physics.silo.stairFoot.radius}, off the flight`);
+  // ...and the stair has to join the floor. Walking straight off the foot of a
+  // flight should cross the landing and put you out on the walkway. An
+  // unbroken gallery railing runs across the mouth of the landing and this
+  // walk stops dead at the well edge.
+  check(physics.silo.ontoFloor.radius > 15,
+    `walking off the stair stopped at radius ${physics.silo.ontoFloor.radius}, short of the walkway`);
+  check(physics.silo.ontoFloor.grounded, 'walking off the stair did not end on the floor');
+  check(Math.abs(physics.silo.ontoFloor.y - physics.silo.offStart.y) < 1.0,
+    'walking off the stair onto the floor changed level');
   check(physics.silo.interactions >= 3, 'the silo has nothing in it to interact with');
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
