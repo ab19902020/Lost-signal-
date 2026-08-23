@@ -87,6 +87,25 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const levelY = (index) => index * levelHeight;
   const gallery = [];
 
+  // Bay 0 is where the stair's landing arrives, on every level, because the
+  // flight turns a full circle per storey. The railing opens there and only
+  // its short returns are solid — an unbroken ring runs across the mouth of
+  // the landing and the floor is then unreachable from the stairwell. Every
+  // level goes through here, the secure unit at the top included, because it
+  // used to have its own copy of this without the opening.
+  function galleryRail(i, angle, y) {
+    if (i !== 0) {
+      colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
+      return;
+    }
+    const rail = arcHalf(wellRadius);
+    for (const side of [-1, 1]) {
+      const centre = side * (landingHalf + (rail - landingHalf) / 2);
+      colliders.addBox(ringBox(angle + centre / wellRadius, wellRadius,
+        (rail - landingHalf) / 2, 0.1, y + 0.02, y + 1.15), {});
+    }
+  }
+
   for (let level = 0; level < levels; level++) {
     const y = levelY(level);
     place(assets.habLevel, scene, [0, y, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
@@ -99,19 +118,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       // The gallery railing over the well. The frontage is NOT sealed here:
       // the homes loop below authors it panel by panel around a real doorway,
       // and a solid ring across it walled every one of them shut.
-      //
-      // Bay 0 is where the landing arrives on every level, so the railing
-      // opens there and only its short returns are solid.
-      if (i === 0) {
-        const rail = arcHalf(wellRadius);
-        for (const side of [-1, 1]) {
-          const centre = side * (landingHalf + (rail - landingHalf) / 2);
-          colliders.addBox(ringBox(angle + centre / wellRadius, wellRadius,
-            (rail - landingHalf) / 2, 0.1, y + 0.02, y + 1.15), {});
-        }
-      } else {
-        colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
-      }
+      galleryRail(i, angle, y);
     }
     gallery.push({ level, y });
   }
@@ -182,9 +189,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       if (open) {
         // Two: the front room and the sleeping end. One lamp at the door left
         // eight metres of the home in the dark.
-        for (const [depth, base] of [[2.6, 34], [7.6, 26]]) {
-          const lamp = new THREE.PointLight(0xffc078, base, 11, 2);
-          lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 2.5,
+        // Up at the ceiling and much dimmer than they were. These were set
+        // when a home was one open room and you were never near one; in a
+        // four-metre bedroom an inverse-square light at head height is a
+        // white-out.
+        for (const [depth, base] of [[2.2, 15], [5.0, 17], [8.4, 14]]) {
+          const lamp = new THREE.PointLight(0xffc078, base, 9, 2);
+          lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 3.15,
             Math.sin(angle) * (deckOuter + depth));
           lamp.visible = false;
           scene.add(lamp);
@@ -202,6 +213,36 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       if (assets.habDoor) {
         place(assets.habDoor, scene, [dx, y, dz],
           [0, -angle + Math.PI / 2 - (open ? 1.85 : 0), 0], 1, { world: 'silo', collide: false });
+      }
+
+      // The partitions inside the home, so the rooms are rooms rather than a
+      // drawing of rooms. Only for homes that are actually built — behind a
+      // shut door there is no interior to walk into. These numbers are the
+      // room plan from blender/generate_habitat_v4.py: keep them in step.
+      if (open && assets.habApartment) {
+        const homeWidth = 2 * (Math.PI * deckOuter / segments) - 0.3;
+        const halfW = homeWidth / 2;
+        const halfD = (apartmentBack - deckOuter) / 2;
+        const centre = (deckOuter + apartmentBack) / 2;
+        const T = 0.10, DW = 0.48, WIDE = 0.85, top = y + levelHeight - 0.5;
+        // A partition running across the width, at local z, between x0 and x1.
+        const across = (z, x0, x1) => colliders.addBox(
+          ringBox(angle + ((x0 + x1) / 2) / centre, centre + z,
+            (x1 - x0) / 2, T, y, top), {});
+        // A partition running back into the home, at local x, from z0 to z1.
+        const along = (x, z0, z1) => colliders.addBox(
+          ringBox(angle + x / centre, centre + (z0 + z1) / 2, T, (z1 - z0) / 2, y, top), {});
+
+        const HALL_BACK = -3.0, KITCHEN_X = -0.85, KITCHEN_BACK = -0.70, BED_FRONT = 1.30;
+        const kitchenDoor = -2.05, livingGap = 1.45, bedA = -1.62, bedB = 1.62;
+        across(HALL_BACK, -halfW, kitchenDoor - DW);
+        across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
+        across(HALL_BACK, livingGap + WIDE, halfW);
+        along(KITCHEN_X, HALL_BACK, KITCHEN_BACK);
+        across(BED_FRONT, -halfW, bedA - DW);
+        across(BED_FRONT, bedA + DW, bedB - DW);
+        across(BED_FRONT, bedB + DW, halfW);
+        along(0, BED_FRONT, halfD);
       }
 
       // The floor of the home itself. Without it the deck collision stopped at
@@ -304,7 +345,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, topY - 0.3, topY + 0.02),
       { climbable: true });
     colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, topY, topY + levelHeight), {});
-    colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, topY + 0.02, topY + 1.15), {});
+    galleryRail(i, angle, topY);
     // The level ring carries a doorway in every bay. On the residential levels
     // a home stands behind each one; up here there is only the secure unit, so
     // the openings get shut doors rather than being left as holes onto nothing.

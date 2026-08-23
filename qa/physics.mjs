@@ -102,21 +102,29 @@ results.silo = await page.evaluate(async () => {
                       radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
                       groundedFrames: stairSteps };
 
-  // Walk off the stair, across the landing, onto the floor. This is the join
-  // the whole silo hangs on: the flight discharges at bay 0 on every level,
-  // through a gap in its balustrade and a gap in the gallery railing.
-  ls.world('silo');
-  settle(20);
-  const floorY = head.levelHeight * 3;
-  ls.body.teleport((head.stairColumn + head.stairRadius) / 2, floorY + 0.4, 0);
-  settle(20);
-  const offStart = { y: +ls.body.position.y.toFixed(2),
-                     radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2) };
-  ls.look(-Math.PI / 2, 0);        // face straight out along the landing
-  ls.walkFrames(420);
-  settle(20);
-  const ontoFloor = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded,
-                      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2) };
+  // Walk off the stair, across the landing, onto the floor — on every level,
+  // not one. This is the join the whole silo hangs on: the flight discharges
+  // at bay 0 of each storey, through a gap in its balustrade and a gap in the
+  // gallery railing, and a floor you cannot reach from the stairwell is a
+  // floor that is not in the game.
+  const floors = [];
+  for (let level = 0; level <= head.levels; level++) {
+    ls.world('silo');
+    settle(10);
+    const floorY = head.levelHeight * level;
+    ls.body.teleport((head.stairColumn + head.stairRadius) / 2, floorY + 0.5, 0);
+    settle(25);
+    const startY = ls.body.position.y;
+    ls.look(-Math.PI / 2, 0);      // face straight out along the landing
+    ls.walkFrames(420);
+    settle(20);
+    floors.push({
+      level,
+      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+      drop: +(startY - ls.body.position.y).toFixed(2),
+      grounded: ls.body.grounded,
+    });
+  }
 
   // Step into the light well: the player should fall the full height of the
   // shaft and land at the bottom. The drop point is the open ring between the
@@ -133,8 +141,7 @@ results.silo = await page.evaluate(async () => {
     arrival,
     stairTop,
     stairFoot,
-    offStart,
-    ontoFloor,
+    floors,
     overCentre,
     colliders: ls.game.colliders.silo.boxes.length,
     interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,
