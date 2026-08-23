@@ -91,11 +91,10 @@ jobs:
           done
 
       - name: Commit generated assets to source branch
-        # Same-repository PRs may publish their generated GLBs once so visual QA
-        # runs against the asset code under review. The resulting synchronize
-        # event is authored by github-actions[bot], which this guard skips to
-        # prevent Blender metadata from creating an endless commit loop.
-        if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]')
+        # Pull-request runs validate the generators without repeatedly changing
+        # Blender metadata. The reviewed V6 assets were published to this branch
+        # by the initial same-repository build before this guard was restored.
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
