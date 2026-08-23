@@ -164,7 +164,9 @@ results.silo = await page.evaluate(async () => {
   head.setHomeDoor(homeLevel, homeBay, true);
   ls.body.teleport(Math.cos(homeAngle) * 18.1, .5, Math.sin(homeAngle) * 18.1);
   settle(30);
-  ls.look(homeAngle - Math.PI / 2, 0);
+  // Camera yaw uses -sin(yaw), -cos(yaw) as forward, so radial-outward is
+  // -angle - PI/2 (angle - PI/2 mirrors Z and walks beside the doorway).
+  ls.look(-homeAngle - Math.PI / 2, 0);
   ls.walkFrames(105);
   settle(12);
   const homeEntry = {
@@ -185,7 +187,7 @@ results.silo = await page.evaluate(async () => {
   head.setTunnelDoor(tunnelLevel, true);
   ls.body.teleport(Math.cos(tunnelAngle) * 18.1, .5, Math.sin(tunnelAngle) * 18.1);
   settle(30);
-  ls.look(tunnelAngle - Math.PI / 2, 0);
+  ls.look(-tunnelAngle - Math.PI / 2, 0);
   ls.walkFrames(190);
   settle(30);
   const tunnelEntry = {
