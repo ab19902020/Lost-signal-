@@ -102,22 +102,12 @@ await desktop.evaluate(() => {
   ls.simulate(120);
   ls.freecam(10.5, 32.5, 10.5, 0, 25.5, 0, 68);
 });
-await save(desktop, '05-silo-top-landing');
+await save(desktop, '05-silo-stair-and-landings');
 
-// A close, narrow view proves the upper landing really opens onto the last
-// treads without asking SwiftShader to draw all 126 homes through the well.
+// The wide shaft view above shows the stair/landing relationship. A second
+// mid-well angle makes SwiftShader draw every joined level at once and can take
+// minutes per frame, so the remaining silo view moves close to one home.
 await desktop.setViewportSize({ width: 960, height: 540 });
-await desktop.evaluate(() => {
-  const ls = globalThis.__ls;
-  ls.world('silo');
-  ls.simulate(90);
-  ls.freecam(1.8, 9.2, -1.8, 8.7, 7.7, 0, 54);
-  ls.game.camera.near = .12;
-  ls.game.camera.far = 15;
-  ls.game.camera.updateProjectionMatrix();
-});
-await save(desktop, '06-silo-stair-and-landings');
-
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
@@ -126,7 +116,7 @@ await desktop.evaluate(() => {
   ls.game.camera.far = 18;
   ls.game.camera.updateProjectionMatrix();
 });
-await save(desktop, '07-silo-home');
+await save(desktop, '06-silo-home');
 
 await stopDesktopPump();
 await desktop.close();
@@ -149,7 +139,7 @@ const mobileOverlap = await mobile.evaluate(() => {
     Math.max(0, Math.min(help.bottom, stats.bottom) - Math.max(help.top, stats.top));
 });
 if (mobileOverlap > 0) throw new Error(`mobile help button overlaps survival stats by ${mobileOverlap}px²`);
-await save(mobile, '08-mobile-landscape');
+await save(mobile, '07-mobile-landscape');
 await stopMobilePump();
 await mobile.close();
 
