@@ -96,18 +96,24 @@ await desktop.evaluate(() => {
 });
 await save(desktop, '04-surface-compound');
 
+// The joined habitation rings are intentionally broad draw calls. A compact
+// target and a finite review depth keep this shot representative of the top
+// three landings without making CI rasterise the entire shaft in software.
+await desktop.setViewportSize({ width: 800, height: 450 });
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
   ls.simulate(120);
   ls.freecam(10.5, 32.5, 10.5, 0, 25.5, 0, 68);
+  ls.game.camera.near = .12;
+  ls.game.camera.far = 24;
+  ls.game.camera.updateProjectionMatrix();
 });
 await save(desktop, '05-silo-stair-and-landings');
 
 // The wide shaft view above shows the stair/landing relationship. A second
 // mid-well angle makes SwiftShader draw every joined level at once and can take
 // minutes per frame, so the remaining silo view moves close to one home.
-await desktop.setViewportSize({ width: 960, height: 540 });
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
