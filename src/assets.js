@@ -37,7 +37,25 @@ const bunkerUrls = {
 const creatureUrls = {
   deer: `${BASE}assets/blender/deer_v3.glb`,
   rabbit: `${BASE}assets/blender/rabbit_v3.glb`,
-  infected: `${BASE}assets/blender/infected_v3.glb`,
+};
+
+// The silo beneath the shelter. Loaded best-effort like the creatures, so a
+// checkout without the generated assets still boots into the bunker.
+const siloUrls = {
+  habShell: `${BASE}assets/blender/hab_shell_v4.glb`,
+  habLevel: `${BASE}assets/blender/hab_level_v4.glb`,
+  habStair: `${BASE}assets/blender/hab_stair_v4.glb`,
+  habHydroponics: `${BASE}assets/blender/hab_hydroponics_v4.glb`,
+  habCommons: `${BASE}assets/blender/hab_commons_v4.glb`,
+  habSecureDoor: `${BASE}assets/blender/hab_secure_door_v4.glb`,
+  habDirectory: `${BASE}assets/blender/hab_directory_v4.glb`,
+  habLanding: `${BASE}assets/blender/hab_landing_v4.glb`,
+  habApartment: `${BASE}assets/blender/hab_apartment_v4.glb`,
+  habDoor: `${BASE}assets/blender/hab_door_v4.glb`,
+  resident: `${BASE}assets/blender/resident_v4.glb`,
+  residentStill: `${BASE}assets/blender/resident_still_v4.glb`,
+  accessHatch: `${BASE}assets/blender/access_hatch_v3.glb`,
+  siloCache: `${BASE}assets/blender/silo_cache_v3.glb`,
 };
 
 const exteriorUrls = {
@@ -89,6 +107,14 @@ function retileUVs(mesh) {
   if (!uv || geometry.userData.lsRetiled) return;
   geometry.userData.lsRetiled = true;
 
+  // A world-scale cube projection from Blender already runs past the unit
+  // square. Rescaling that would tile it a second time.
+  let maxUV = 0;
+  for (let i = 0; i < uv.count; i++) {
+    maxUV = Math.max(maxUV, Math.abs(uv.getX(i)), Math.abs(uv.getY(i)));
+    if (maxUV > 1.05) return;
+  }
+
   geometry.computeBoundingBox();
   _tileBox.copy(geometry.boundingBox);
   _tileBox.getSize(_tileSize);
@@ -96,12 +122,18 @@ function retileUVs(mesh) {
   const scale = new THREE.Vector3().setFromMatrixScale(mesh.matrixWorld);
   const extents = [_tileSize.x * scale.x, _tileSize.y * scale.y, _tileSize.z * scale.z]
     .sort((a, b) => b - a);
-  const repeatU = Math.max(1, Math.round(extents[0] / TILE_METRES));
-  const repeatV = Math.max(1, Math.round(extents[1] / TILE_METRES));
-  if (repeatU === 1 && repeatV === 1) return;
+
+  // A box unwrap gives every face its own 0..1 island, so there is no single
+  // world axis that maps to U. Scaling both axes by the same factor — derived
+  // from the surface's area — keeps the texture square. Scaling them
+  // independently by sorted extents smeared tall thin surfaces like the silo's
+  // wall panels into vertical streaks.
+  const repeat = THREE.MathUtils.clamp(
+    Math.round(Math.sqrt(extents[0] * extents[1]) / TILE_METRES), 1, 24);
+  if (repeat === 1) return;
 
   for (let i = 0; i < uv.count; i++) {
-    uv.setXY(i, uv.getX(i) * repeatU, uv.getY(i) * repeatV);
+    uv.setXY(i, uv.getX(i) * repeat, uv.getY(i) * repeat);
   }
   uv.needsUpdate = true;
 }
@@ -164,11 +196,11 @@ export async function loadGameAssets(onProgress = () => {}) {
     loadSet(exteriorEntries, assets, tick),
   ]);
 
-  await Promise.all(Object.entries(creatureUrls).map(async ([key, url]) => {
+  await Promise.all(Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {
     try {
       assets[key] = await loadModel(url);
     } catch (error) {
-      console.warn(`Creature asset unavailable (${key}); the surface will be empty until the Blender workflow publishes it.`, error);
+      console.warn(`Optional asset unavailable (${key}); that part of the world stays sealed until the Blender workflow publishes it.`, error);
     }
   }));
 

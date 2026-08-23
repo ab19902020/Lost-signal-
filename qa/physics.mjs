@@ -24,6 +24,8 @@ await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
 await page.waitForFunction(() => { const b = document.getElementById('start'); return b && !b.disabled; }, null, { timeout: 60000, polling: 100 });
 await page.evaluate(() => document.getElementById('start').click());
 await page.waitForTimeout(800);
+await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+  { timeout: 30000, polling: 100 });
 
 const setup = (x, z, yaw) => page.evaluate(([x, z, yaw]) => {
   globalThis.__ls.moveTo(x, z);
@@ -69,6 +71,83 @@ results.crouch = await read();
 await frames(30);
 results.standBackUp = await read();
 
+// The silo is the one place the player stands on authored collision rather
+// than the ground plane, so it gets its own checks.
+results.silo = await page.evaluate(async () => {
+  const ls = globalThis.__ls;
+  if (!ls.game.siloWorld) return { present: false };
+  const settle = (frames) => ls.simulate(frames);
+
+  ls.world('silo');
+  settle(20);
+  const arrival = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
+
+  // Walk down the stair. This is the check that the great stair is a stair:
+  // step onto the head of the flight and hold forward along the helix, and the
+  // player should end up a level or more below, still on their feet.
+  const head = ls.game.siloWorld;
+  ls.body.teleport(0, arrival.y, -(head.stairRadius + head.stairColumn) / 2);
+  settle(10);
+  const stairTop = +ls.body.position.y.toFixed(2);
+  let stairSteps = 0;
+  for (let i = 0; i < 260; i++) {
+    // Follow the helix: face along the tangent at wherever the player now is.
+    const p = ls.body.position;
+    ls.look(Math.atan2(-p.z, p.x), 0);   // clockwise: the direction the helix descends
+    ls.walkFrames(4);
+    if (ls.body.grounded) stairSteps++;
+  }
+  settle(20);   // let the last step land before reading
+  const stairFoot = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded,
+                      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+                      groundedFrames: stairSteps };
+
+  // Walk off the stair, across the landing, onto the floor — on every level,
+  // not one. This is the join the whole silo hangs on: the flight discharges
+  // at bay 0 of each storey, through a gap in its balustrade and a gap in the
+  // gallery railing, and a floor you cannot reach from the stairwell is a
+  // floor that is not in the game.
+  const floors = [];
+  for (let level = 0; level <= head.levels; level++) {
+    ls.world('silo');
+    settle(10);
+    const floorY = head.levelHeight * level;
+    ls.body.teleport((head.stairColumn + head.stairRadius) / 2, floorY + 0.5, 0);
+    settle(25);
+    const startY = ls.body.position.y;
+    ls.look(-Math.PI / 2, 0);      // face straight out along the landing
+    ls.walkFrames(420);
+    settle(20);
+    floors.push({
+      level,
+      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+      drop: +(startY - ls.body.position.y).toFixed(2),
+      grounded: ls.body.grounded,
+    });
+  }
+
+  // Step into the light well: the player should fall the full height of the
+  // shaft and land at the bottom. The drop point is the open ring between the
+  // great stair and the galleries, a quarter turn off the landings, which all
+  // stack on the same bearing.
+  ls.world('silo');
+  settle(20);
+  ls.body.teleport(0, ls.body.position.y, 9.0);
+  settle(900);
+  const overCentre = { y: +ls.body.position.y.toFixed(2), grounded: ls.body.grounded };
+
+  return {
+    present: true,
+    arrival,
+    stairTop,
+    stairFoot,
+    floors,
+    overCentre,
+    colliders: ls.game.colliders.silo.boxes.length,
+    interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,
+  };
+});
+
 // A 1x1 map means a texture failed to load and three substituted a placeholder.
 results.textures = await page.evaluate(() => {
   const seen = [];
@@ -84,12 +163,13 @@ results.textures = await page.evaluate(() => {
 
 results.world = await page.evaluate(() => ({
   wildlife: globalThis.__ls.game.wildlife.length,
-  zombies: globalThis.__ls.game.zombies.length,
+  residents: globalThis.__ls.game.residents?.residents.length ?? 0,
   bunkerColliders: globalThis.__ls.game.colliders.bunker.boxes.length,
   outsideColliders: globalThis.__ls.game.colliders.outside.boxes.length,
+  siloColliders: globalThis.__ls.game.colliders.silo.boxes.length,
 }));
 
 console.log(JSON.stringify(results, null, 1));
-if (errors.length) console.log('ERRORS:', [...new Set(errors)].join(' | '));
+if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));
 await stopPump();
 await browser.close();

@@ -5,10 +5,12 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { loadGameAssets } from './assets.js';
 import { createGameWorld } from './world.js';
 import { CharacterBody } from './physics.js';
 import { GradeShader, CameraFeedShader } from './grade.js';
+import { Survival, loadRun, saveRun, clearRun } from './survival.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -25,8 +27,13 @@ const healthEl = document.getElementById('healthStat');
 const motionEl = document.getElementById('motion');
 const staminaBar = document.getElementById('staminaBar');
 const staminaFill = document.getElementById('staminaFill');
+const taskListEl = document.getElementById('taskList');
+const dayEl = document.getElementById('dayStat');
+const powerEl = document.getElementById('powerStat');
+const waterEl = document.getElementById('waterStat');
+const airEl = document.getElementById('airStat');
 
-let renderer, composer, renderPass, bloomPass, gradePass, feedComposer, feedPass, game;
+let renderer, composer, renderPass, bloomPass, gradePass, aoPass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
 let started = false;
 let modal = false;
@@ -38,8 +45,11 @@ let armed = false;
 let ammo = 5;
 let reserve = 20;
 let reloading = false;
-let foodDays = 8;
 let health = 100;
+const survival = new Survival();
+let saveTimer = 0;
+let recovery = 0;
+let hatchOpen = false;
 let hurtFlash = 0;
 let recoil = 0;
 let sprinting = false;
@@ -51,6 +61,11 @@ const clock = new THREE.Clock();
 const keys = {};
 const ray = new THREE.Raycaster();
 let msgTimer = 0;
+
+// The world the player is standing in: shelter, surface compound or silo.
+function activeScene() {
+  return game.scenes?.[currentWorld] || game.bunker;
+}
 
 function updateOrientation() {
   document.body.classList.toggle('portrait', innerHeight > innerWidth);
@@ -75,11 +90,21 @@ function fail(error) {
 
 // One quality tier decides pixel ratio, shadow resolution and how much of the
 // post stack we can afford, so a phone and a desktop run the same code path.
+const TIERS = {
+  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026, ao: false },
+  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03, ao: false },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032, ao: true },
+};
 const quality = (() => {
+  // ?quality=high forces a tier. A headless browser reports four cores and a
+  // coarse pointer, so without this the screenshots that decide how the game
+  // looks are always taken on the lowest settings.
+  const forced = TIERS[new URLSearchParams(location.search).get('quality')];
+  if (forced) return forced;
   const cores = navigator.hardwareConcurrency || 4;
-  if (coarse || cores <= 4) return { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026 };
-  if (cores <= 8) return { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03 };
-  return { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032 };
+  if (coarse || cores <= 4) return TIERS.mobile;
+  if (cores <= 8) return TIERS.balanced;
+  return TIERS.high;
 })();
 
 function createRenderer() {
@@ -110,6 +135,16 @@ function createComposer() {
   composer = new EffectComposer(renderer, target);
   renderPass = new RenderPass(game.bunker, game.camera);
   composer.addPass(renderPass);
+
+  // Ambient occlusion does most of the work of grounding objects in a room lit
+  // by a handful of point lights: railings, deck edges and door recesses stop
+  // floating. Desktop only — it is a second depth-normal pass per frame.
+  if (quality.ao) {
+    aoPass = new GTAOPass(game.bunker, game.camera, size.x, size.y);
+    aoPass.output = GTAOPass.OUTPUT.Default;
+    aoPass.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.4, thickness: 0.6, scale: 1.1 });
+    composer.addPass(aoPass);
+  }
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.26, 0.5, 0.92);
   composer.addPass(bloomPass);
@@ -154,19 +189,34 @@ async function prepare() {
         game, body, quality,
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
-        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, 0, spawn.z); },
+        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); },
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
+        // Walk under the same input path the player uses, from inside an
+        // evaluated block where synthetic key events are not available.
+        walkFrames: (count = 1, code = 'KeyW', dt = 1 / 60) => {
+          keys[code] = true;
+          for (let i = 0; i < count; i++) simulate(dt);
+          keys[code] = false;
+        },
         arm: () => { armed = true; game.setArmed(true); ammo = 5; reserve = 20; updateAmmo(); },
         aimAt: (target) => {
-          const to = target.clone().sub(game.camera.getWorldPosition(new THREE.Vector3()));
+          const point = target.isVector3 ? target.clone() : new THREE.Vector3(target.x, target.y, target.z);
+          const to = point.sub(game.camera.getWorldPosition(new THREE.Vector3()));
           yaw = Math.atan2(-to.x, -to.z);
           pitch = Math.atan2(to.y, Math.hypot(to.x, to.z));
         },
         fire: () => fire(),
+        bounds: (object) => new THREE.Box3().setFromObject(object),
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
-        state: () => ({ health, foodDays, ammo, reserve, armed, doorOpen: game.doorOpen(), breached: game.creatures.breached.length }),
+        state: () => ({ health, ammo, reserve, armed,
+          survival: survival.snapshot, blackout: survival.blackout,
+          doorOpen: game.doorOpen(), hatchOpen: game.hatchOpen?.() ?? false,
+          residents: game.residents?.residents.length ?? 0,
+          objectives: [...completed] }),
+        newRun: () => clearRun(),
+        survival,
         debug: () => ({ started, modal, cctv, keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
           climbable,
@@ -177,7 +227,7 @@ async function prepare() {
           started = false;
           const cam = game.camera;
           cam.parent?.remove(cam);
-          (currentWorld === 'outside' ? game.outside : game.bunker).add(cam);
+          activeScene().add(cam);
           cam.position.set(px, py, pz);
           cam.rotation.set(0, 0, 0);
           cam.lookAt(tx, ty, tz);
@@ -204,7 +254,18 @@ async function prepare() {
 function wireGameEvents() {
   addEventListener('lostsignal:computer', () => openModal('computer'));
   addEventListener('lostsignal:radio', () => { openModal('radio'); setRadioNoise(0.2); });
-  addEventListener('lostsignal:generator', () => flash('GENERATOR 61% LOAD // FUEL 73%'));
+  addEventListener('lostsignal:generator', () => {
+    const result = survival.refuel();
+    flash(result.reason, 2600);
+    updateStats();
+    if (result.ok) clickSound(180, .3, .06);
+  });
+  addEventListener('lostsignal:filtration', () => {
+    const result = survival.serviceFilters();
+    flash(result.reason, 2600);
+    updateStats();
+    if (result.ok) clickSound(340, .18, .05);
+  });
   addEventListener('lostsignal:vaultopen', () => flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE'));
   addEventListener('lostsignal:takegun', () => {
     armed = true;
@@ -213,13 +274,14 @@ function wireGameEvents() {
     updateAmmo();
     flash('SURVIVAL RIFLE EQUIPPED', 2200);
     clickSound(360, .08, .05);
+    completeObjective('rifle');
   });
   addEventListener('lostsignal:door', (e) => flash(e.detail.open ? 'BLAST SEAL RELEASED' : 'BLAST SEAL LOCKED'));
   addEventListener('lostsignal:surface', (e) => {
     if (!e.detail.allowed) { flash('OPEN THE BLAST DOOR FIRST'); return; }
     currentWorld = 'outside';
     const spawn = game.setWorld('outside');
-    body.teleport(spawn.x, 0, spawn.z);
+    body.teleport(spawn.x, spawn.y, spawn.z);
     yaw = Math.PI;
     pitch = -0.03;
     setOutdoorAudio(true);
@@ -228,26 +290,220 @@ function wireGameEvents() {
   addEventListener('lostsignal:return', () => {
     currentWorld = 'bunker';
     const spawn = game.setWorld('bunker');
-    body.teleport(spawn.x, 0, spawn.z);
+    body.teleport(spawn.x, spawn.y, spawn.z);
     yaw = 0;
     pitch = -0.02;
     setOutdoorAudio(false);
     flash('SHELTER 47 — BLAST CHAMBER');
   });
   addEventListener('lostsignal:cctv', openCCTV);
-  addEventListener('lostsignal:breach', () => {
-    flash('SOMETHING CAME THROUGH THE BLAST DOOR', 3000);
-    breachAlarm();
+  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+
+  addEventListener('lostsignal:hatch', (e) => {
+    hatchOpen = e.detail.open;
+    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
+    clickSound(hatchOpen ? 210 : 160, .22, .06);
+    completeObjective('hatch');
   });
-  addEventListener('lostsignal:attack', () => {
-    if (!started) return;
-    health = Math.max(0, health - (8 + Math.random() * 6));
-    hurtFlash = 1;
-    updateHealth();
-    hurtSound();
-    if (health <= 0) collapse();
-    else flash('INFECTED ON YOU — FIGHT OR RUN', 1200);
+
+  addEventListener('lostsignal:descend', (e) => {
+    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
+    enterWorld('silo', Math.PI * 0.5, -0.05);
+    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
+    completeObjective('descend');
   });
+
+  addEventListener('lostsignal:ascend', () => {
+    enterWorld('bunker', 0, -0.02);
+    flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:hydroponics', (e) => {
+    survival.resupply({ food: 2 });
+    updateStats();
+    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
+    completeObjective('hydroponics');
+  });
+
+  addEventListener('lostsignal:secureunit', () => {
+    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
+    clickSound(150, .2, .05);
+    completeObjective('secure');
+  });
+
+  addEventListener('lostsignal:resident', (e) => {
+    flash(e.detail.line, 4200);
+  });
+
+  addEventListener('lostsignal:cache', () => {
+    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
+    cacheEmptied = true;
+    reserve += 24;
+    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
+    updateAmmo();
+    updateStats();
+    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    clickSound(520, .12, .05);
+    completeObjective('cache');
+  });
+
+
+  addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+
+  addEventListener('lostsignal:hatch', (e) => {
+    hatchOpen = e.detail.open;
+    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
+    clickSound(hatchOpen ? 210 : 160, .22, .06);
+    completeObjective('hatch');
+  });
+
+  addEventListener('lostsignal:descend', (e) => {
+    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
+    enterWorld('silo', Math.PI * 0.5, -0.05);
+    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
+    completeObjective('descend');
+  });
+
+  addEventListener('lostsignal:ascend', () => {
+    enterWorld('bunker', 0, -0.02);
+    flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:hydroponics', (e) => {
+    survival.resupply({ food: 2 });
+    updateStats();
+    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
+    completeObjective('hydroponics');
+  });
+
+  addEventListener('lostsignal:secureunit', () => {
+    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
+    clickSound(150, .2, .05);
+    completeObjective('secure');
+  });
+
+  addEventListener('lostsignal:resident', (e) => {
+    flash(e.detail.line, 4200);
+  });
+
+  addEventListener('lostsignal:cache', () => {
+    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
+    cacheEmptied = true;
+    reserve += 24;
+    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
+    updateAmmo();
+    updateStats();
+    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    clickSound(520, .12, .05);
+    completeObjective('cache');
+  });
+
+
+  addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+
+  addEventListener('lostsignal:hatch', (e) => {
+    hatchOpen = e.detail.open;
+    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
+    clickSound(hatchOpen ? 210 : 160, .22, .06);
+    completeObjective('hatch');
+  });
+
+  addEventListener('lostsignal:descend', (e) => {
+    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
+    enterWorld('silo', Math.PI * 0.5, -0.05);
+    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
+    completeObjective('descend');
+  });
+
+  addEventListener('lostsignal:ascend', () => {
+    enterWorld('bunker', 0, -0.02);
+    flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:hydroponics', (e) => {
+    survival.resupply({ food: 2 });
+    updateStats();
+    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
+    completeObjective('hydroponics');
+  });
+
+  addEventListener('lostsignal:secureunit', () => {
+    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
+    clickSound(150, .2, .05);
+    completeObjective('secure');
+  });
+
+  addEventListener('lostsignal:resident', (e) => {
+    flash(e.detail.line, 4200);
+  });
+
+  addEventListener('lostsignal:cache', () => {
+    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
+    cacheEmptied = true;
+    reserve += 24;
+    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
+    updateAmmo();
+    updateStats();
+    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    clickSound(520, .12, .05);
+    completeObjective('cache');
+  });
+
+
+  addEventListener('lostsignal:cctv', openCCTV);
+  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+
+  addEventListener('lostsignal:hatch', (e) => {
+    hatchOpen = e.detail.open;
+    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
+    clickSound(hatchOpen ? 210 : 160, .22, .06);
+    completeObjective('hatch');
+  });
+
+  addEventListener('lostsignal:descend', (e) => {
+    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
+    enterWorld('silo', Math.PI * 0.5, -0.05);
+    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
+    completeObjective('descend');
+  });
+
+  addEventListener('lostsignal:ascend', () => {
+    enterWorld('bunker', 0, -0.02);
+    flash('SHELTER 47 — BLAST CHAMBER');
+  });
+
+  addEventListener('lostsignal:hydroponics', (e) => {
+    survival.resupply({ food: 2 });
+    updateStats();
+    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
+    completeObjective('hydroponics');
+  });
+
+  addEventListener('lostsignal:secureunit', () => {
+    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
+    clickSound(150, .2, .05);
+    completeObjective('secure');
+  });
+
+  addEventListener('lostsignal:resident', (e) => {
+    flash(e.detail.line, 4200);
+  });
+
+  addEventListener('lostsignal:cache', () => {
+    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
+    cacheEmptied = true;
+    reserve += 24;
+    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
+    updateAmmo();
+    updateStats();
+    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    clickSound(520, .12, .05);
+    completeObjective('cache');
+  });
+
+
 
   document.querySelectorAll('.modal .x').forEach((button) => {
     button.onclick = () => {
@@ -278,6 +534,70 @@ function wireGameEvents() {
 
 // Overlays own the screen: the shelter HUD is hidden behind them so readouts
 // like the CCTV motion detector do not collide with the survival stats.
+let cacheEmptied = false;
+
+// A short, ordered chain so the shelter always has a next thing to do. Later
+// objectives stay hidden until the ones before them are done, which keeps the
+// list to a couple of lines instead of a wall of spoilers.
+const OBJECTIVES = [
+  { id: 'rifle', text: 'Open the gun vault and take the rifle' },
+  { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
+  { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
+  { id: 'descend', text: 'Descend into Silo 47' },
+  { id: 'resident', text: 'Speak to someone who lives down there' },
+  { id: 'secure', text: 'Find the secure unit on the top landing' },
+  { id: 'hydroponics', text: 'Reach the hydroponics levels' },
+  { id: 'cache', text: 'Find the silo stores at the bottom' },
+];
+const completed = new Set();
+
+function renderObjectives() {
+  const pending = OBJECTIVES.filter(o => !completed.has(o.id));
+  const shown = [
+    ...OBJECTIVES.filter(o => completed.has(o.id)).slice(-2),
+    ...pending.slice(0, 2),
+  ];
+  taskListEl.innerHTML = '';
+  for (const objective of shown) {
+    const item = document.createElement('li');
+    item.textContent = objective.text;
+    if (completed.has(objective.id)) item.className = 'done';
+    taskListEl.appendChild(item);
+  }
+}
+
+function completeObjective(id) {
+  if (completed.has(id) || !OBJECTIVES.some(o => o.id === id)) return;
+  completed.add(id);
+  renderObjectives();
+  clickSound(700, .09, .035);
+  if (completed.size === OBJECTIVES.length) {
+    setTimeout(() => flash('EVERY SYSTEM IN SHELTER 47 IS YOURS. THE SIGNAL IS STILL TRANSMITTING.', 5000), 2600);
+  }
+}
+
+// Moving between the shelter, the surface and the silo is the same operation
+// every time: reparent the player, drop the body at the new spawn, face them
+// the right way.
+function enterWorld(name, facing, tilt) {
+  currentWorld = name;
+  const spawn = game.setWorld(name);
+  body.teleport(spawn.x, spawn.y, spawn.z);
+  yaw = facing;
+  pitch = tilt;
+  setOutdoorAudio(name === 'outside');
+}
+
+function toggleHelp(force) {
+  const panel = document.getElementById('help');
+  const open = force ?? !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  document.body.classList.toggle('overlay-open', open);
+  modal = open || cctv;
+  if (open) document.exitPointerLock?.();
+  clickSound(open ? 480 : 300, .05, .03);
+}
+
 function openModal(id) {
   modal = true;
   document.exitPointerLock?.();
@@ -302,8 +622,30 @@ function nearestDownedAnimal() {
   return best;
 }
 
+function nearestResident() {
+  if (currentWorld !== 'silo' || !game.residents) return null;
+  let best = null;
+  let bestDistance = 2.6;
+  for (const root of game.residents.residents) {
+    const distance = root.position.distanceTo(game.player.position);
+    if (distance < bestDistance && Math.abs(root.position.y - game.player.position.y) < 2.2) {
+      best = root;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 function use() {
   if (!started || modal || cctv) return;
+  const resident = nearestResident();
+  if (resident) {
+    window.dispatchEvent(new CustomEvent('lostsignal:resident', {
+      detail: { line: resident.userData.resident?.line || '…' },
+    }));
+    completeObjective('resident');
+    return;
+  }
   const interaction = game.nearestInteraction(currentWorld);
   if (interaction) {
     clickSound(420, .04, .035);
@@ -314,8 +656,8 @@ function use() {
   if (downed) {
     downed.userData.harvested = true;
     const gain = downed.userData.kind === 'deer' ? 3 : 1;
-    foodDays += gain;
-    foodEl.textContent = `${foodDays} DAYS`;
+    survival.resupply({ food: gain });
+    updateStats();
     downed.parent?.remove(downed);
     flash(`${downed.userData.kind.toUpperCase()} HARVESTED — +${gain} DAYS FOOD`, 2200);
   }
@@ -333,18 +675,15 @@ function fire() {
 
   // fire() runs from an input event, so the camera still holds last frame's
   // matrix. Aiming off by a frame of mouse movement is a miss at range.
-  const world = currentWorld === 'outside' ? game.outside : game.bunker;
+  const world = activeScene();
   world.updateMatrixWorld();
 
   ray.setFromCamera({ x: 0, y: 0 }, game.camera);
   ray.far = 90;
 
   // Everything alive is a target, including anything that got inside.
-  const living = [
-    ...game.wildlife,
-    ...game.zombies,
-    ...game.creatures.breached.map(a => a.root),
-  ].filter(t => t.parent && t.userData.alive !== false);
+  // The rifle is for hunting. Nothing in the silo is a target.
+  const living = game.wildlife.filter(t => t.parent && t.userData.alive !== false);
 
   const hits = ray.intersectObjects(living, true);
   if (hits.length) {
@@ -363,7 +702,7 @@ function fire() {
     flash('THE SHOT ECHOES THROUGH THE SHELTER', 900);
   }
 
-  if (ammo === 0 && reserve > 0) setTimeout(reload, 450);
+  if (ammo === 0 && reserve > 0) queuedReload = 0.45;
 }
 
 function resolveHit(target, point) {
@@ -388,23 +727,93 @@ function resolveHit(target, point) {
   flash('INFECTED HIT', 700);
 }
 
+let reloadTimer = 0;
+let queuedReload = 0;
+
 function reload() {
   if (reloading || ammo >= 5 || reserve <= 0) return;
   reloading = true;
+  reloadTimer = 1.2;
   game.playGun('reload');
   flash('RELOADING…', 1200);
-  clickSound(170,.1,.04);
-  setTimeout(() => {
-    const take = Math.min(5 - ammo, reserve);
-    ammo += take;
-    reserve -= take;
-    reloading = false;
-    updateAmmo();
-    clickSound(310,.08,.04);
-  }, 1200);
+  clickSound(170, .1, .04);
+}
+
+function updateReload(dt) {
+  if (queuedReload > 0) {
+    queuedReload -= dt;
+    if (queuedReload <= 0) reload();
+  }
+  if (!reloading) return;
+  reloadTimer -= dt;
+  if (reloadTimer > 0) return;
+  const take = Math.min(5 - ammo, reserve);
+  ammo += take;
+  reserve -= take;
+  reloading = false;
+  updateAmmo();
+  clickSound(310, .08, .04);
 }
 
 function updateAmmo() { ammoEl.textContent = `${ammo} / ${reserve}`; }
+
+// A flat generator is not a number going red: the shelter goes dark, and the
+// only thing still lit is the emergency lamp.
+let blackoutLights = null;
+function setBlackout(dark) {
+  if (!blackoutLights) {
+    blackoutLights = [];
+    game.bunker.traverse((object) => {
+      if (object.isPointLight && object !== game.emergency) blackoutLights.push({ light: object, base: object.intensity });
+      if (object.isSpotLight) blackoutLights.push({ light: object, base: object.intensity });
+    });
+  }
+  for (const entry of blackoutLights) entry.light.intensity = dark ? entry.base * 0.02 : entry.base;
+  flash(dark ? 'THE GENERATOR HAS STOPPED — REFUEL IT' : 'POWER RESTORED', 3200);
+  if (dark) hurtSound();
+}
+
+function persistRun() {
+  saveRun({
+    survival: survival.snapshot,
+    elapsed: survival.elapsed,
+    health, ammo, reserve, armed,
+    completed: [...completed],
+    cacheEmptied,
+  });
+}
+
+function restoreRun() {
+  const saved = loadRun();
+  if (!saved) return false;
+  Object.assign(survival, saved.survival || {});
+  survival.elapsed = saved.elapsed || 0;
+  health = saved.health ?? 100;
+  ammo = saved.ammo ?? 5;
+  reserve = saved.reserve ?? 20;
+  cacheEmptied = !!saved.cacheEmptied;
+  for (const id of saved.completed || []) completed.add(id);
+  if (saved.armed) {
+    armed = true;
+    game.setArmed(true);
+    document.body.classList.add('armed');
+  }
+  return true;
+}
+
+const statClass = (value, warn, bad) => (value <= bad ? 'bad' : (value <= warn ? 'warn' : 'ok'));
+
+function updateStats() {
+  dayEl.textContent = String(survival.day);
+  powerEl.textContent = `${Math.round(survival.power)}%`;
+  powerEl.className = statClass(survival.power, 35, 12);
+  waterEl.textContent = `${Math.floor(survival.water)} DAYS`;
+  waterEl.className = statClass(survival.water, 5, 1);
+  airEl.textContent = `${Math.round(survival.air)}%`;
+  airEl.className = statClass(survival.air, 30, 15);
+  foodEl.textContent = `${Math.floor(survival.food)} DAYS`;
+  foodEl.className = statClass(survival.food, 3, 1);
+}
 
 function updateHealth() {
   healthEl.textContent = `${Math.round(health)}%`;
@@ -415,12 +824,12 @@ function updateHealth() {
 // lost the day's foraging, which keeps a run going.
 function collapse() {
   health = 45;
-  foodDays = Math.max(0, foodDays - 2);
-  foodEl.textContent = `${foodDays} DAYS`;
+  survival.food = Math.max(0, survival.food - 2);
   updateHealth();
+  updateStats();
   currentWorld = 'bunker';
   const spawn = game.setWorld('bunker');
-  body.teleport(spawn.x, 0, spawn.z);
+  body.teleport(spawn.x, spawn.y, spawn.z);
   yaw = 0;
   pitch = -0.02;
   setOutdoorAudio(false);
@@ -428,10 +837,10 @@ function collapse() {
 }
 
 // CCTV PTZ
-const camPan = [0,0,0,0], camTilt = [0,0,0,0], camFov = [48,50,48,42];
-const camSignal = [1, 0.82, 0.93, 0.66];
+const camPan = [0,0,0,0,0], camTilt = [0,0,0,0,0], camFov = [48,50,48,42,56];
+const camSignal = [1, 0.82, 0.93, 0.66, 0.88];
 let nightVision = false;
-const camNames = ['MAIN GATE','EAST FENCE / WOODLINE','SERVICE YARD','TOWER OVERVIEW'];
+const camNames = ['MAIN GATE','EAST FENCE / WOODLINE','SERVICE YARD','TOWER OVERVIEW','SILO TOP — SECURE UNIT'];
 function openCCTV() {
   cctv = true;
   modal = true;
@@ -476,7 +885,7 @@ document.getElementById('exitCam').onclick = closeCCTV;
 document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => switchCam(+b.dataset.c));
 document.getElementById('zoomIn').onclick = () => zoom(-6);
 document.getElementById('zoomOut').onclick = () => zoom(6);
-document.getElementById('ptzReset').onclick = () => { camPan[currentCam]=0; camTilt[currentCam]=0; camFov[currentCam]=[48,50,48,42][currentCam]; updatePTZ(); };
+document.getElementById('ptzReset').onclick = () => { camPan[currentCam]=0; camTilt[currentCam]=0; camFov[currentCam]=[48,50,48,42,56][currentCam]; updatePTZ(); };
 document.getElementById('nightVision')?.addEventListener('click', toggleNightVision);
 const cctvFrame = document.querySelector('#cctv .frame');
 let ptzId=null,ptzX=0,ptzY=0;
@@ -485,9 +894,9 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>keys[e.code]=false);
-  renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)renderer.domElement.requestPointerLock?.()});
+  renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
 
   const move={x:0,y:0},pad=document.getElementById('movePad'),nub=document.getElementById('moveNub');
@@ -504,6 +913,8 @@ function wireControls() {
   document.getElementById('use').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();use()});
   document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
+  document.getElementById('helpBtn').addEventListener('click',()=>toggleHelp());
+  document.querySelector('#help .x').addEventListener('click',()=>toggleHelp(false));
 
   // Sprint and crouch are latching toggles on touch: a phone has no spare
   // finger to hold a modifier while steering with both thumbs.
@@ -601,6 +1012,8 @@ function updatePrompt() {
   if (!started || modal || cctv) { promptEl.classList.remove('on'); return; }
   const interaction=game.nearestInteraction(currentWorld);
   if(interaction){promptEl.textContent=`${coarse?'USE':'[ E ]'}  ${interaction.name}`;promptEl.classList.add('on');return}
+  const person=nearestResident();
+  if(person){promptEl.textContent=`${coarse?'USE':'[ E ]'}  SPEAK TO RESIDENT`;promptEl.classList.add('on');return}
   const animal=nearestDownedAnimal();
   if(animal){promptEl.textContent=`${coarse?'USE':'[ E ]'}  HARVEST ${animal.userData.kind.toUpperCase()}`;promptEl.classList.add('on');return}
   promptEl.classList.remove('on');
@@ -681,20 +1094,6 @@ function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.c
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
 function beacon(){clickSound(760,.25,.035)}
-function breachAlarm(){
-  if(!ac)return;
-  const t=ac.currentTime;
-  for(let i=0;i<3;i++){
-    const o=ac.createOscillator(),g=ac.createGain(),at=t+i*.42;
-    o.type='square';
-    o.frequency.setValueAtTime(520,at);
-    o.frequency.linearRampToValueAtTime(300,at+.3);
-    g.gain.setValueAtTime(0,at);
-    g.gain.linearRampToValueAtTime(.07,at+.03);
-    g.gain.exponentialRampToValueAtTime(.001,at+.34);
-    o.connect(g);g.connect(master);o.start(at);o.stop(at+.36);
-  }
-}
 function hurtSound(){
   if(!ac)return;
   const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
@@ -749,7 +1148,7 @@ const impactMaterials = {
 const debris = [];
 
 function burst(point, kind, count = 7, spread = 0.26) {
-  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  const scene = activeScene();
   for (let i = 0; i < count; i++) {
     const particle = new THREE.Mesh(impactGeometry, impactMaterials[kind]);
     particle.position.copy(point);
@@ -790,9 +1189,14 @@ startButton.onclick=async()=>{
   if(!game){location.reload();return}
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
-  started=true;document.body.classList.add('playing');boot.style.display='none';updateOrientation();
+  started=true;
+  if (restoreRun()) flash(`RUN RESUMED — DAY ${survival.day}`, 2600);
+  updateStats();updateAmmo();updateHealth();renderObjectives();
+  document.body.classList.add('playing');boot.style.display='none';updateOrientation();
   setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
-  if(!coarse)renderer.domElement.requestPointerLock?.();
+  // Requesting pointer lock without a trusted gesture rejects; that is normal
+  // when the game is driven by a test harness and is not worth reporting.
+  if(!coarse)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{});
   flash('SHELTER 47 // REPOSITORY BUILD',2200);
 };
 
@@ -827,13 +1231,15 @@ function detectMotion(camera) {
   feedFrustum.setFromProjectionMatrix(feedMatrix);
   let contacts = 0;
   let hostile = false;
-  for (const target of [...game.zombies, ...game.wildlife]) {
+  const watched = game.cctvScenes?.[currentCam] === 'silo'
+    ? (game.residents?.residents || [])
+    : game.wildlife;
+  for (const target of watched) {
     if (!target.parent || target.userData.alive === false) continue;
     feedPoint.copy(target.position);
     feedPoint.y += 0.9;
     if (!feedFrustum.containsPoint(feedPoint)) continue;
     contacts++;
-    if (target.userData.kind === 'zombie') hostile = true;
   }
   return { contacts, hostile };
 }
@@ -848,7 +1254,8 @@ function renderCameraFeed() {
   // browser window's aspect or every camera looks stretched.
   cam.aspect = 16 / 9;
   cam.updateProjectionMatrix();
-  feedComposer.passes[0].scene = game.outside;
+  // Four cameras watch the surface; the fifth is inside the silo.
+  feedComposer.passes[0].scene = game.scenes[game.cctvScenes?.[currentCam] || 'outside'];
   feedComposer.passes[0].camera = cam;
   feedPass.uniforms.time.value = clock.elapsedTime;
   feedPass.uniforms.nightVision.value = nightVision ? 1 : 0;
@@ -869,15 +1276,34 @@ function renderCameraFeed() {
 // frame clock, which headless Chromium does not run on an idle page.
 function simulate(dt) {
   updatePlayer(dt);
-  (currentWorld === 'outside' ? game.outside : game.bunker).updateMatrixWorld();
+  activeScene().updateMatrixWorld();
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
   updateWeapon(dt);
+  updateReload(dt);
   updateEffects(dt);
   updateAmbience();
+  const tick = survival.tick(dt, { indoors: currentWorld !== 'outside' });
+  if (tick.damage > 0) {
+    health = Math.max(0, health - tick.damage);
+    updateHealth();
+    if (health <= 0) collapse();
+  }
+  if (tick.dayChanged) {
+    updateStats();
+    flash(`DAY ${survival.day} IN SHELTER 47`, 2600);
+  }
+  if (tick.blackoutChanged) setBlackout(survival.blackout);
+
+  saveTimer += dt;
+  if (saveTimer > 5) { saveTimer = 0; persistRun(); }
+
   hurtFlash = THREE.MathUtils.damp(hurtFlash, 0, 1.6, dt);
-  if (health < 100 && currentWorld === 'bunker') {
+  // Recovery only starts once nothing has hit you for a while, and only in the
+  // shelter. Bleeding out on the surface is the player's problem.
+  recovery += dt;
+  if (health < 100 && currentWorld === 'bunker' && recovery > 6 && survival.strain === 0) {
     health = Math.min(100, health + dt * 1.6);
     updateHealth();
   }
@@ -894,9 +1320,10 @@ function loop() {
     return;
   }
 
-  const scene = currentWorld === 'outside' ? game.outside : game.bunker;
+  const scene = activeScene();
   renderPass.scene = scene;
   renderPass.camera = game.camera;
+  if (aoPass) { aoPass.scene = scene; aoPass.camera = game.camera; }
   gradePass.uniforms.time.value = clock.elapsedTime;
   const wounded = THREE.MathUtils.clamp(1 - health / 100, 0, 1);
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);

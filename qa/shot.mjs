@@ -9,6 +9,6 @@ await page.goto(url, { waitUntil: 'load', timeout: 60000 });
 await page.waitForFunction(() => document.title === 'READY', null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for READY'));
 await page.waitForTimeout(400);
 await page.screenshot({ path: out, fullPage: true });
-if (errors.length) console.log('ERRORS:', errors.slice(0, 8).join(' | '));
-console.log('shot ->', out);
+if (errors.length) console.error('ERRORS:', errors.slice(0, 8).join(' | '));
+console.error('shot ->', out);
 await browser.close();

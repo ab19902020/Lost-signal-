@@ -67,6 +67,15 @@ function gradeMaterials(scene) {
         if ('metalness' in m && m.metalness > 0.8) m.metalness = 0.7;
       }
       if (m.normalScale) m.normalScale.multiplyScalar(0.65);
+      // Emissive fittings carry the room when their point light is culled, so
+      // a strip light forty metres away still reads as a strip light.
+      // Fittings carry the room when their point light is culled, so a strip
+      // light forty metres away still reads as one. Lit windows are held lower:
+      // a wall of them at full strength blows out to white up close.
+      if (m.emissive && Math.max(m.emissive.r, m.emissive.g, m.emissive.b) > 0.05) {
+        const window = name.includes('window');
+        m.emissiveIntensity = window ? 0.42 : Math.max(m.emissiveIntensity ?? 1, 1.5);
+      }
       m.needsUpdate = true;
     }
   });
@@ -80,6 +89,7 @@ export function createGameWorld(assets) {
   bunker.fog = new THREE.FogExp2(0x171b19, 0.019);
   gradeMaterials(bunker);
   gradeMaterials(outside);
+  if (game.silo) gradeMaterials(game.silo);
 
   // --- Shelter ambience -----------------------------------------------------
   // A weak sky/ground term stands in for concrete bounce. Everything else in

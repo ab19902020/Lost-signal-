@@ -36,14 +36,35 @@ jobs:
           blender --version
           blender -b --python-expr "import numpy; print('Blender numpy', numpy.__version__)"
 
+      - name: Lint the generator scripts
+        run: |
+          python3 -m pip install --quiet pyflakes
+          # Blender exits 0 on an uncaught Python error, so a typo silently
+          # drops an asset. Catch undefined names before we spend a minute
+          # rendering the ones that still work.
+          python3 -m pyflakes blender/*.py | grep -E 'undefined name' && {
+            echo 'Generator script references an undefined name'; exit 1; } || true
+
       - name: Generate Blender furniture kit
-        run: blender -b --python blender/generate_bunker_v2.py
+        run: blender -b --python-exit-code 1 --python blender/generate_bunker_v2.py
 
       - name: Generate Blender environment kit
-        run: blender -b --python blender/generate_environment_v3.py
+        run: blender -b --python-exit-code 1 --python blender/generate_environment_v3.py
 
       - name: Generate Blender creature kit
-        run: blender -b --python blender/generate_creatures_v3.py
+        run: blender -b --python-exit-code 1 --python blender/generate_creatures_v3.py
+
+      - name: Generate Blender habitation silo kit
+        run: blender -b --python-exit-code 1 --python blender/generate_habitat_v4.py
+
+      - name: Check the apartment layout
+        run: |
+          # The habitat generator prints LAYOUT OK when no furniture is
+          # standing inside a wall or inside another piece of furniture. It
+          # raises on a fault, so the generate step above already failed —
+          # this makes the reason obvious in the log.
+          blender -b --python-exit-code 1 --python blender/generate_habitat_v4.py 2>&1 \
+            | grep -E 'LAYOUT (OK|FAULTS)' || { echo 'no layout report'; exit 1; }
 
       - name: Detach placeholder images so the shared textures load
         run: node tools/externalize-glb-images.mjs
@@ -55,7 +76,12 @@ jobs:
             desk_station.glb radio.glb cctv_console_v2.glb gun_vault_v2.glb hunting_rifle.glb generator.glb bed.glb chair.glb storage_rack.glb blast_door_v2.glb pipe_cluster.glb ceiling_light.glb \
             bunker_environment_v3.glb ventilation_unit_v3.glb electrical_wall_v3.glb locker_bank_v3.glb maintenance_bench_v3.glb survival_clutter_v3.glb status_board_v3.glb access_control_v3.glb wall_camera_v3.glb \
             exterior_ground_v3.glb exterior_entrance_v3.glb perimeter_fence_v3.glb perimeter_gate.glb floodlight.glb dead_tree.glb concrete_barrier_v3.glb rubble_cluster_v3.glb \
-            deer_v3.glb rabbit_v3.glb infected_v3.glb; do
+            deer_v3.glb rabbit_v3.glb infected_v3.glb \
+            hab_shell_v4.glb hab_level_v4.glb hab_stair_v4.glb hab_hydroponics_v4.glb \
+            hab_commons_v4.glb hab_secure_door_v4.glb hab_directory_v4.glb hab_landing_v4.glb \
+            hab_apartment_v4.glb hab_door_v4.glb \
+            resident_v4.glb resident_still_v4.glb \
+            access_hatch_v3.glb silo_cache_v3.glb; do
             test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
           done
 

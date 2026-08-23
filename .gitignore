@@ -2,3 +2,7 @@ node_modules/
 dist/
 .DS_Store
 qa/out/
+
+# Python bytecode from the Blender generators
+__pycache__/
+*.pyc

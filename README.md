@@ -43,6 +43,21 @@ cameras) never block, because the test is a vertical span rather than a footprin
 - R: reload
 - N: toggle infrared while a CCTV feed is open
 
+## The world
+
+Three connected spaces: the blast chamber, the ruined surface compound above it,
+and Silo 47 below — a habitation silo of seven residential levels and a secure
+unit on top, built around an open light well, home to three hundred people.
+Nobody in it knows why the world above ended.
+
+Life support in the shelter drains against an in-game day: refuel the generator,
+change the filters, find food and water before they run out. The surface has
+deer and hare worth hunting and nothing that hunts back. The hatch in the floor
+needs unsealing before the silo will let you down, and the fifth CCTV feed
+watches the secure unit's entrance on the top landing.
+
+Press **H** in game for the field manual.
+
 ## Visual QA
 
 Rendering bugs have to be looked at, so `qa/` drives the real game in headless

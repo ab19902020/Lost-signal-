@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
 import { ColliderSet } from './physics.js';
-import { createCreatureSystem } from './creatures.js';
+import { createCreatureSystem, populateSilo } from './creatures.js';
+import { buildSilo } from './silo.js';
 
 // V3 WORLD RULE:
 // No visible architecture/props are authored with Three.js geometry.
@@ -16,6 +17,9 @@ export function createGameWorld(assets) {
   outside.background = new THREE.Color(0x06090a);
   outside.fog = new THREE.FogExp2(0x0b1010, 0.020);
 
+  // Silo 47-A, reached through the hatch in the shelter floor.
+  const silo = new THREE.Scene();
+
   const player = new THREE.Group();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.035, 180);
   camera.rotation.order = 'YXZ';
@@ -28,6 +32,8 @@ export function createGameWorld(assets) {
   const colliders = {
     bunker: new ColliderSet({ minX: -6.55, maxX: 6.55, minZ: -6.85, maxZ: 6.85 }),
     outside: new ColliderSet({ minX: -19.2, maxX: 19.2, minZ: -26.0, maxZ: 17.2 }),
+    // The silo's enclosure is its ring of wall panels, not a rectangle.
+    silo: new ColliderSet(null),
   };
   const bunkerLights = [];
 
@@ -44,7 +50,7 @@ export function createGameWorld(assets) {
     root.rotation.set(...rot);
     root.scale.setScalar(scale);
     parent.add(root);
-    const world = options.world ?? (parent === outside ? 'outside' : 'bunker');
+    const world = options.world ?? (parent === outside ? 'outside' : (parent === silo ? 'silo' : 'bunker'));
     if (options.collide !== false && colliders[world]) {
       colliders[world].addObject(root, {
         shrink: options.shrink ?? 0.04,
@@ -80,7 +86,7 @@ export function createGameWorld(assets) {
   place(assets.pipes, bunker, [-6.25,.14,1.8], [0,0,0]);
 
   const ventilation = place(assets.ventilation, bunker, [5.20,0,-4.85], [0,-Math.PI/2,0], .88);
-  addInteraction(ventilation,'AIR FILTRATION UNIT','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:generator')));
+  addInteraction(ventilation,'AIR FILTRATION UNIT','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:filtration')));
 
   place(assets.electrical, bunker, [-4.85,.10,6.88], [0,0,0], .90);
   place(assets.lockers, bunker, [-2.55,0,6.55], [0,0,0], .84);
@@ -145,6 +151,37 @@ export function createGameWorld(assets) {
     doorOpen = !doorOpen;
     window.dispatchEvent(new CustomEvent('lostsignal:door',{detail:{open:doorOpen}}));
   });
+
+  // Floor hatch down to the silo. It has to be unsealed before it will open,
+  // which is one more thing the shelter asks you to do before it lets you out.
+  let hatchOpen = false;
+  const siloWorld = assets.habShell ? buildSilo({
+    scene: silo,
+    colliders: colliders.silo,
+    place,
+    addInteraction,
+    assets,
+  }) : null;
+
+  const residents = siloWorld ? populateSilo({
+    scene: silo,
+    colliders: colliders.silo,
+    assets,
+    walkable: siloWorld.walkable,
+    count: 10,
+  }) : null;
+
+  if (siloWorld) {
+    const hatch = place(assets.accessHatch, bunker, [-1.75,0,3.35], [0,0,0], 1, { climbable: true });
+    const hatchWheel = findNamed(hatch,'Hatch_Wheel') || hatch;
+    addInteraction(hatchWheel,'SILO ACCESS HATCH','bunker',()=>{
+      hatchOpen = !hatchOpen;
+      window.dispatchEvent(new CustomEvent('lostsignal:hatch',{detail:{open:hatchOpen}}));
+    });
+    addInteraction(hatch,'DESCEND TO SILO','bunker',()=>{
+      window.dispatchEvent(new CustomEvent('lostsignal:descend',{detail:{allowed:hatchOpen}}));
+    });
+  }
 
   const exitPanel = place(assets.accessControl, bunker, [-1.82,.60,-6.96], [0,0,0], .62, { collide: false });
   addInteraction(exitPanel,'SURFACE ACCESS','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:surface',{detail:{allowed:doorOpen}})));
@@ -215,16 +252,8 @@ export function createGameWorld(assets) {
     scene: outside,
     colliders: colliders.outside,
     assets,
-    // Leaving the blast door open is not free: the surface entrance is a way in.
-    breach: {
-      scene: bunker,
-      colliders: colliders.bunker,
-      entrance: new THREE.Vector3(0, 0, -13.5),
-      arrival: new THREE.Vector3(0, 0, -6.2),
-    },
   });
   const wildlife = creatures.wildlife;
-  const zombies = creatures.zombies;
 
   // Rain is an atmospheric effect, not physical world geometry.
   const rainCount=320;
@@ -261,6 +290,8 @@ export function createGameWorld(assets) {
     new THREE.PerspectiveCamera(50,16/9,.1,160),
     new THREE.PerspectiveCamera(48,16/9,.1,160),
     new THREE.PerspectiveCamera(42,16/9,.1,190),
+    // The fifth feed looks down the silo's top landing at the secure unit.
+    new THREE.PerspectiveCamera(56,16/9,.1,90),
   ];
   const targets=[
     new THREE.Vector3(0,1.5,18),
@@ -272,17 +303,30 @@ export function createGameWorld(assets) {
   cctvCameras[1].position.set(17,4.5,10);
   cctvCameras[2].position.set(-16,4,-10);
   cctvCameras[3].position.set(-18,11,20);
+  if (siloWorld) {
+    const secure = siloWorld.securePosition;
+    cctvCameras[4].position.set(secure.x * .55, siloWorld.topY + 2.9, secure.z * .55);
+    targets.push(secure.clone().setY(siloWorld.topY + 1.2));
+  } else {
+    cctvCameras[4].position.set(0, 3, 0);
+    targets.push(new THREE.Vector3(0, 1, -4));
+  }
   cctvCameras.forEach((c,i)=>c.lookAt(targets[i]));
   const cctvBaseRot=cctvCameras.map(c=>c.rotation.clone());
+  const cctvScenes=['outside','outside','outside','outside','silo'];
 
+  const scenes = { bunker, outside, silo };
   const spawnPoints = {
     bunker: new THREE.Vector3(0,0,-5.4),
     outside: new THREE.Vector3(0,0,-12.15),
+    // Arriving in the silo puts the player on the catwalk, level with the
+    // missile's midsection and a long way above the floor.
+    silo: siloWorld ? siloWorld.spawn.clone() : new THREE.Vector3(0,0,0),
   };
 
   function setWorld(world) {
     if (player.parent) player.parent.remove(player);
-    (world==='outside' ? outside : bunker).add(player);
+    (scenes[world] || bunker).add(player);
     player.position.copy(spawnPoints[world] || spawnPoints.bunker);
     return player.position;
   }
@@ -316,12 +360,9 @@ export function createGameWorld(assets) {
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
-    creatures.update(dt, world, playerPosition, (agent) => {
-      window.dispatchEvent(new CustomEvent('lostsignal:attack', { detail: { agent } }));
-    }, {
-      doorOpen,
-      onBreach: () => window.dispatchEvent(new CustomEvent('lostsignal:breach')),
-    });
+    if (world === 'silo') siloWorld?.update(dt, playerPosition);
+    creatures.update(dt, world, playerPosition);
+    residents?.update(dt, world, playerPosition);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
     dust.rotation.y += dt*.008;
@@ -344,9 +385,10 @@ export function createGameWorld(assets) {
   }
 
   return {
-    bunker,outside,player,camera,interactions,wildlife,zombies,cctvCameras,cctvBaseRot,
-    weaponView,blocked,colliders,spawnPoints,creatures,nearestInteraction,setWorld,setArmed,playGun,update,
-    bunkerLights,emergency,
+    bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
+    weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,playGun,update,
+    bunkerLights,emergency,siloWorld,
     doorOpen:()=>doorOpen,
+    hatchOpen:()=>hatchOpen,
   };
 }

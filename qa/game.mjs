@@ -32,9 +32,11 @@ await page.waitForFunction(() => {
   const b = document.getElementById('start');
   return b && !b.disabled;
 }, null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for start button'));
-console.log('boot:', await page.textContent('#engineState'));
+console.error('boot:', await page.textContent('#engineState'));
 await page.click('#start').catch(e => errors.push('click failed ' + e.message));
 await page.waitForTimeout(1500);
+await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
+  { timeout: 30000, polling: 100 });
 for (const a of actions) {
   if (a.startsWith('key:')) { await page.keyboard.down(a.slice(4)); await page.waitForTimeout(500); await page.keyboard.up(a.slice(4)); }
   else if (a.startsWith('wait:')) await page.waitForTimeout(+a.slice(5));
@@ -42,9 +44,10 @@ for (const a of actions) {
   else if (a.startsWith('click:')) await page.click(a.slice(6)).catch(e => errors.push('click ' + a + ': ' + e.message));
 }
 await page.waitForTimeout(600);
-await page.screenshot({ path: out });
-console.log('state:', await page.evaluate(() => { const l = globalThis.__ls; return l ? JSON.stringify({ quality: l.quality.name, pos: l.body.position.toArray().map(v => +v.toFixed(2)), grounded: l.body.grounded }) : 'no hook'; }).catch(() => 'n/a'));
-if (errors.length) console.log('ERRORS:', [...new Set(errors)].slice(0, 6).join(' | '));
-console.log('shot ->', out);
+// Software rendering: a heavy frame can take well over the 30 s default.
+await page.screenshot({ path: out, timeout: 180000 });
+console.error('state:', await page.evaluate(() => { const l = globalThis.__ls; return l ? JSON.stringify({ quality: l.quality.name, pos: l.body.position.toArray().map(v => +v.toFixed(2)), grounded: l.body.grounded }) : 'no hook'; }).catch(() => 'n/a'));
+if (errors.length) console.error('ERRORS:', [...new Set(errors)].slice(0, 6).join(' | '));
+console.error('shot ->', out);
 await stopPump();
 await browser.close();
