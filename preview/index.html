@@ -25,7 +25,7 @@ body.playing.portrait #rotate{display:flex}
 #hud{position:fixed;inset:0;z-index:20;pointer-events:none}
 #hud:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 42%,rgba(0,0,0,.12) 72%,rgba(0,0,0,.38) 100%);mix-blend-mode:multiply}
 #hud:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.045;background-image:repeating-radial-gradient(circle at 20% 30%,#fff 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
-#top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;justify-content:space-between;gap:10px}
+#top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
 #name{font-size:10px;letter-spacing:.16em}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
@@ -40,7 +40,7 @@ body.overlay-open #tasks{opacity:0}
 #taskList li::before{content:'\25A2  ';color:#6f8a78}
 #taskList li.done{color:#5d6f63;text-decoration:line-through}
 #taskList li.done::before{content:'\25A0  ';color:#4f7a5e}
-#helpBtn{position:absolute;right:22px;top:calc(env(safe-area-inset-top) + 12px);width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(9,15,11,.7);color:#cfe3d5;font:700 13px inherit;pointer-events:auto;z-index:6}
+#helpBtn{position:absolute;right:calc(env(safe-area-inset-right) + 186px);top:calc(env(safe-area-inset-top) + 12px);width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(9,15,11,.76);color:#cfe3d5;font:700 13px inherit;pointer-events:auto;z-index:6}
 #help{position:fixed;inset:0;display:none;place-items:center;background:rgba(3,6,4,.9);z-index:40;padding:18px}
 #help.open{display:grid}
 #helpCard{max-width:560px;width:100%;max-height:86vh;overflow:auto;border:1px solid rgba(160,210,175,.25);background:rgba(8,14,10,.97);padding:18px 20px}
@@ -56,7 +56,7 @@ body.overlay-open #tasks{opacity:0}
 #crosshair:after{width:1px;height:11px;left:8.5px;top:3.5px}
 #prompt{position:absolute;left:50%;bottom:18%;transform:translateX(-50%);padding:8px 11px;border:1px solid rgba(220,255,228,.16);background:rgba(2,6,4,.78);font-size:11px;opacity:0;transition:.12s;white-space:nowrap}
 #prompt.on{opacity:1}
-#msg{position:absolute;left:50%;top:22%;transform:translateX(-50%);font-size:12px;letter-spacing:.08em;text-align:center;text-shadow:0 2px 8px #000;opacity:0;transition:.2s}
+#msg{position:absolute;left:50%;top:22%;width:min(76vw,720px);transform:translateX(-50%);font-size:12px;line-height:1.5;letter-spacing:.08em;text-align:center;text-shadow:0 2px 8px #000;opacity:0;transition:.2s}
 #msg.on{opacity:1}
 #backend{position:absolute;left:50%;bottom:7px;transform:translateX(-50%);font-size:9px;color:#9eada3;letter-spacing:.08em;text-shadow:0 2px 4px #000}
 #controls{position:fixed;inset:0;z-index:30;pointer-events:none;display:none}
@@ -103,7 +103,7 @@ body.armed #reloadBtn{display:block}
 @media(pointer:fine){#controls{display:none!important}}
 @media(max-height:500px){#movePad{width:108px;height:108px}#moveNub{left:33px;top:33px;width:42px;height:42px}#use{width:68px;height:68px}#sprintBtn,#crouchBtn{left:calc(22px + 118px);height:40px}#staminaBar{width:108px}}
 </style>
-  <script type="module" crossorigin src="./assets/index-BDmCAvPF.js"></script>
+  <script type="module" crossorigin src="./assets/index-CEZnIyaf.js"></script>
 </head>
 <body>
 <div id="boot"><div class="card"><div class="kicker">SHELTER 47 // MOBILE BETA</div><h1>LOST SIGNAL</h1><div class="desc">REPOSITORY ASSET BUILD. The game loads its required models and PBR files from this same hosted project, with Meshopt decoding enabled.</div><button id="start" disabled>PREPARING GAME…</button><div id="engineState">Loading local game bundle…</div></div></div>
@@ -140,7 +140,7 @@ body.armed #reloadBtn{display:block}
 <div id="computer" class="modal"><button class="x">CLOSE</button><b>S47 LOCAL TERMINAL</b><br><br><div class="term">SECURE OPERATING ENVIRONMENT
 NETWORK ............... OFFLINE
 EXTERNAL LINK ......... LOST
-CAMERAS ............... 4 / 4 ONLINE
+CAMERAS ............... 5 / 5 ONLINE
 DIESEL RESERVE ........ 73%
 AIR SCRUBBER .......... NOMINAL
 
