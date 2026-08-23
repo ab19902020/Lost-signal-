@@ -91,9 +91,9 @@ function fail(error) {
 // One quality tier decides pixel ratio, shadow resolution and how much of the
 // post stack we can afford, so a phone and a desktop run the same code path.
 const TIERS = {
-  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.026, ao: false },
-  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.03, ao: false },
-  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.032, ao: true },
+  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: false, grain: 0.018, ao: false },
+  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.021, ao: false },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.024, ao: true },
 };
 const quality = (() => {
   // ?quality=high forces a tier. A headless browser reports four cores and a
@@ -146,7 +146,7 @@ function createComposer() {
     composer.addPass(aoPass);
   }
 
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.26, 0.5, 0.92);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.2, 0.42, 0.94);
   composer.addPass(bloomPass);
 
   gradePass = new ShaderPass(GradeShader);
@@ -1192,10 +1192,10 @@ function loop() {
   // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
   // where there are no bright practicals to bleed.
   const spent = 1 - stamina;
-  gradePass.uniforms.vignette.value = 0.5 + spent * 0.18;
-  gradePass.uniforms.saturation.value = 0.94 - spent * 0.14;
-  gradePass.uniforms.aberration.value = 0.0016 + spent * 0.0012;
-  bloomPass.strength = currentWorld === 'outside' ? 0.2 : 0.26;
+  gradePass.uniforms.vignette.value = 0.44 + spent * 0.16;
+  gradePass.uniforms.saturation.value = 0.96 - spent * 0.14;
+  gradePass.uniforms.aberration.value = 0.0012 + spent * 0.001;
+  bloomPass.strength = currentWorld === 'outside' ? 0.12 : 0.2;
   composer.render();
 }
 

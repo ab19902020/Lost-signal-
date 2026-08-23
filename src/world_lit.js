@@ -103,7 +103,7 @@ export function createGameWorld(assets) {
   // game.bunkerLights are the point lights sitting inside the Blender fixtures.
   const tubes = game.bunkerLights.map((light, index) => {
     light.color.setHex(0xdfe6df);
-    light.intensity = 62;
+    light.intensity = 48;
     light.distance = 13;
     light.decay = 2;
     light.castShadow = index % 2 === 0;
@@ -115,11 +115,11 @@ export function createGameWorld(assets) {
       light.shadow.camera.far = 12;
     }
     // A downward cone under each fixture reads as a real fluorescent pool.
-    const pool = new THREE.SpotLight(0xeef2e6, 40, 11, 0.95, 0.62, 2);
+    const pool = new THREE.SpotLight(0xeef2e6, 28, 11, 0.95, 0.62, 2);
     pool.position.copy(light.position);
     pool.target.position.set(light.position.x * 0.6, 0, light.position.z * 0.6);
     bunker.add(pool, pool.target);
-    return { light, pool, base: 62, poolBase: 40, phase: index * 1.7, failing: index === 2 };
+    return { light, pool, base: 48, poolBase: 28, phase: index * 1.7, failing: index === 2 };
   });
 
   // --- Practicals -----------------------------------------------------------
@@ -143,29 +143,34 @@ export function createGameWorld(assets) {
   emergency.decay = 2;
 
   // --- Exterior -------------------------------------------------------------
-  outside.background = new THREE.Color(0x121a20);
-  outside.fog = new THREE.FogExp2(0x18242b, 0.018);
+  // The compound stays moonlit and hostile, but its perimeter, rubble and
+  // approach must remain readable. A lighter sky/fog value provides distant
+  // silhouette separation while a modest ambient term lifts only the faces
+  // the moon cannot reach.
+  outside.background = new THREE.Color(0x1a2831);
+  outside.fog = new THREE.FogExp2(0x22343d, 0.0125);
   outside.traverse((object) => {
     if (object.isHemisphereLight) {
-      object.color.setHex(0x6f8ba3);
-      object.groundColor.setHex(0x22262a);
-      object.intensity = 1.9;
+      object.color.setHex(0x819caf);
+      object.groundColor.setHex(0x29332f);
+      object.intensity = 2.15;
     }
     if (object.isDirectionalLight) {
-      object.color.setHex(0xb4cbdd);
-      object.intensity = 3.1;
+      object.color.setHex(0xc0d3df);
+      object.intensity = 3.4;
       object.shadow.bias = -0.0012;
       object.shadow.normalBias = 0.03;
     }
     if (object.isSpotLight) {
       object.color.setHex(0xe6efe2);
-      object.intensity = 260;
+      object.intensity = 230;
       object.distance = 40;
       object.decay = 2;
       object.penumbra = 0.5;
       object.angle = 0.72;
     }
   });
+  outside.add(new THREE.AmbientLight(0x536875, 0.38));
 
   const baseUpdate = game.update.bind(game);
   let elapsed = 0;
