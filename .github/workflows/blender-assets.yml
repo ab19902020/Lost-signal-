@@ -86,6 +86,10 @@ jobs:
           done
 
       - name: Commit generated assets to source branch
+        # Pull-request runs validate the generators but must not push. A pushed
+        # bot commit causes another PR synchronize event; with nondeterministic
+        # Blender metadata that can otherwise become an endless commit loop.
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
