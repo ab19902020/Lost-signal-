@@ -155,6 +155,7 @@ export function createGameWorld(assets) {
   // Floor hatch down to the silo. It has to be unsealed before it will open,
   // which is one more thing the shelter asks you to do before it lets you out.
   let hatchOpen = false;
+  let hatchHinge = null;
   const siloWorld = assets.habShell ? buildSilo({
     scene: silo,
     colliders: colliders.silo,
@@ -174,6 +175,33 @@ export function createGameWorld(assets) {
   if (siloWorld) {
     const hatch = place(assets.accessHatch, bunker, [-1.75,0,3.35], [0,0,0], 1, { climbable: true });
     const hatchWheel = findNamed(hatch,'Hatch_Wheel') || hatch;
+    const hatchVoid = findNamed(hatch, 'Hatch_Void');
+    if (hatchVoid?.isMesh) {
+      // This represents empty depth, not painted metal: keep it black under
+      // the shelter's bright practical lights even if the GLB is rebuilt by an
+      // older Blender version with slightly different material conversion.
+      // The authored ring is a solid cylinder whose top face is y=.15. Lift
+      // the dark centre past it so the ring remains a rim, not a grey cover.
+      hatchVoid.position.y = Math.max(hatchVoid.position.y, .165);
+      hatchVoid.material = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
+    }
+
+    // The exported pieces stay separate so the lid, bolts and wheel can move as
+    // one assembly. Reparent them around the rear rim while preserving their
+    // authored transforms; the dark throat in the GLB remains fixed below.
+    const lidParts = [];
+    hatch.traverse((part) => {
+      if (/^Hatch_(Lid|Bolt_|Wheel$|Spoke_|Hub$)/.test(part.name)) lidParts.push(part);
+    });
+    if (lidParts.length) {
+      hatchHinge = new THREE.Group();
+      hatchHinge.name = 'Hatch_Hinge';
+      hatchHinge.position.set(0, 0, 0.84);
+      hatch.add(hatchHinge);
+      hatch.updateWorldMatrix(true, true);
+      for (const part of lidParts) hatchHinge.attach(part);
+    }
+
     addInteraction(hatchWheel,'SILO ACCESS HATCH','bunker',()=>{
       hatchOpen = !hatchOpen;
       window.dispatchEvent(new CustomEvent('lostsignal:hatch',{detail:{open:hatchOpen}}));
@@ -319,8 +347,8 @@ export function createGameWorld(assets) {
   const spawnPoints = {
     bunker: new THREE.Vector3(0,0,-5.4),
     outside: new THREE.Vector3(0,0,-12.15),
-    // Arriving in the silo puts the player on the catwalk, level with the
-    // missile's midsection and a long way above the floor.
+    // Arriving in the silo puts the player on the secure gallery beside the
+    // access shaft, a long way above the lowest residential level.
     silo: siloWorld ? siloWorld.spawn.clone() : new THREE.Vector3(0,0,0),
   };
 
@@ -357,6 +385,14 @@ export function createGameWorld(assets) {
     if(kind==='reload') weaponView.rotation.z=-.05;
   }
 
+  function setDoorOpen(open) {
+    doorOpen = !!open;
+  }
+
+  function setHatchOpen(open) {
+    hatchOpen = !!open;
+  }
+
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
@@ -365,6 +401,8 @@ export function createGameWorld(assets) {
     residents?.update(dt, world, playerPosition);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
+    if (hatchHinge) hatchHinge.rotation.x = THREE.MathUtils.damp(
+      hatchHinge.rotation.x, hatchOpen ? 1.38 : 0, 5.2, dt);
     dust.rotation.y += dt*.008;
 
     for(let i=0;i<rainData.length;i++){
@@ -386,7 +424,8 @@ export function createGameWorld(assets) {
 
   return {
     bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
-    weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,playGun,update,
+    weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
+    playGun,setDoorOpen,setHatchOpen,update,
     bunkerLights,emergency,siloWorld,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,

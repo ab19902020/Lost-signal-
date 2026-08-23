@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 
-const BASE = globalThis.__LS_BASE__ || import.meta.env.BASE_URL;
+const BASE = globalThis.__LS_BASE__ || import.meta.env?.BASE_URL || '/';
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);
 

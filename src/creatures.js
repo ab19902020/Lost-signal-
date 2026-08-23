@@ -90,7 +90,12 @@ class Creature {
     _step.set(Math.sin(this.root.rotation.y), 0, Math.cos(this.root.rotation.y)).multiplyScalar(speed * dt);
     const nextX = this.root.position.x + _step.x;
     const nextZ = this.root.position.z + _step.z;
-    if (colliders.contains(nextX, nextZ, this.radius, 0.25, 1.2)) {
+    // Collision lives at the creature's actual storey. The old absolute
+    // 0.25–1.2 m span worked for surface wildlife and silently let residents
+    // on every upper gallery walk through its wall and balustrade.
+    const feetY = this.root.position.y + 0.05;
+    const headY = feetY + (this.kind === 'resident' ? 1.72 : 1.15);
+    if (colliders.contains(nextX, nextZ, this.radius, feetY, headY)) {
       // Slide around the obstacle for a moment rather than reversing into the
       // open and immediately turning back into it.
       this.detourTimer = 0.8 + Math.random() * 0.7;
@@ -161,7 +166,7 @@ class Prey extends Creature {
 // and have something to say if you ask. They are not a threat — nobody in the
 // silo knows what ended the world, and nothing followed them down.
 const RESIDENT_LINES = [
-  'Level nine is out of filters again. Nobody upstairs wants to hear it.',
+  'Level six is out of filters again. Nobody upstairs wants to hear it.',
   'You are the one from the shelter. We wondered if anyone was still up there.',
   'Three hundred of us. Three hundred and one, if you are staying.',
   'My grandmother was born on this level. She never saw the outside either.',
@@ -169,7 +174,7 @@ const RESIDENT_LINES = [
   'Hydroponics is short again this quarter. We are all short this quarter.',
   'The stair goes all the way down. Do not take it in the dark.',
   'You get used to the hum. It is when it stops that you should worry.',
-  'Someone painted the sky on eleven. It is not right, but it is something.',
+  'Someone painted the sky on four. It is not right, but it is something.',
   'Whatever happened up there, it happened fast. That is all anyone agrees on.',
 ];
 
@@ -207,11 +212,15 @@ class Resident extends Creature {
         this.state = Math.random() < 0.35 ? 'rest' : 'stroll';
         if (this.state === 'stroll') {
           // Walk the gallery: follow the ring rather than crossing the well.
-          const tangent = Math.atan2(this.root.position.x, this.root.position.z) + Math.PI / 2;
-          this.steer(tangent + (Math.random() < 0.5 ? 0 : Math.PI));
+          this.orbitDirection = Math.random() < 0.5 ? 0 : Math.PI;
         }
         this.timer = 3 + Math.random() * 7;
       }
+    }
+
+    if (this.state === 'stroll') {
+      const tangent = Math.atan2(this.root.position.x, this.root.position.z) + Math.PI / 2;
+      this.steer(tangent + (this.orbitDirection || 0));
     }
 
     const speed = this.state === 'stroll' ? this.speed : 0;

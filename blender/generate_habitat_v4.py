@@ -33,9 +33,10 @@ APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .62          # half-width of a doorway opening
 LANDING_HALF = 1.8       # half-width of the stair landing, and of the gap it
                          # needs in the gallery railing to reach the floor
-# Treads at the foot of a flight whose outer balustrade is left open, so the
-# stair discharges onto that level's landing instead of arriving walled in.
-EXIT_STEPS = max(2, int(round((LANDING_HALF / STAIR_RADIUS) / (math.tau / STAIR_STEPS))) + 1)
+# Treads beside both ends of a flight whose outer balustrade is left open. The
+# lower opening lets the stair discharge; the upper one lets a person on the
+# landing enter the descending flight.
+LANDING_STEPS = max(2, int(round((LANDING_HALF / STAIR_RADIUS) / (math.tau / STAIR_STEPS))) + 1)
 
 
 def clear_scene():
@@ -299,6 +300,10 @@ DECKPLATE = image_pbr('HabDeck', 'metal_floor_plate__DiamondPlate008C_1K_Color.j
 STEEL = mat('HabSteel', (.21, .23, .22), .78, .36)
 BRUSHED = mat('HabBrushed', (.35, .37, .35), .72, .32)
 DARK = mat('HabDarkSteel', (.06, .065, .062), .74, .42)
+# A non-metallic near-black used where geometry represents an opening rather
+# than a surface. Metallic DARK caught the shelter lights and made the hatch
+# throat read as a bright steel plate when the lid lifted.
+VOID = mat('HabVoid', (.002, .002, .002), 0, .98)
 PAINT = mat('HabPaint', (.19, .24, .22), .10, .62)
 # The gallery wall is the same warm plaster the homes are finished in, not
 # a cold grey-green. It is most of what you look at walking the silo.
@@ -627,17 +632,17 @@ def build_stair():
         cube(f'StringerIn_{i}', (ix2, i * rise - .34, iz2), (.16, .30, going * 1.06), CONCRETE,
              rotation=(0, -a, 0), edge=.025)
 
-        # Solid outer balustrade, capped with a steel handrail — except at the
-        # foot of the flight, where it opens onto the landing. A flight walled
-        # in for its whole turn arrives at the floor with nowhere to step off.
+        # Solid outer balustrade, capped with a steel handrail — except beside
+        # the landing at both ends. Opening only the foot left the upper landing
+        # walled off from the descending flight.
         ox, oz = math.cos(a) * (outer + .16), math.sin(a) * (outer + .16)
-        if i >= EXIT_STEPS:
+        if LANDING_STEPS <= i < STAIR_STEPS - LANDING_STEPS:
             cube(f'Balustrade_{i}', (ox, i * rise + .50, oz), (.16, .50, going * 1.04), CONCRETE,
                  rotation=(0, -a, 0), edge=.03)
             cube(f'Handrail_{i}', (ox, i * rise + 1.06, oz), (.11, .05, going * 1.06), BRUSHED,
                  rotation=(0, -a, 0), edge=.015)
-        if i == EXIT_STEPS:
-            # A newel where the balustrade stops, so the opening has an edge.
+        if i in (LANDING_STEPS, STAIR_STEPS - LANDING_STEPS - 1):
+            # Newels make both ends of the guarded run visually deliberate.
             cube(f'ExitNewel_{i}', (ox, i * rise + .62, oz), (.20, .62, .20), CONCRETE, edge=.03)
         # ...and a rail on the core side, because the inside of a four-metre
         # tread is as long a drop as the outside.
@@ -687,6 +692,11 @@ def build_landing():
     half = 1.8
     cube('Landing_Deck', (0, -.09, 0), (half, .09, span), DECKPLATE, edge=.02)
     cube('Landing_Plate', (0, -.24, 0), (half * .97, .07, span * .99), STEEL, edge=.02)
+    # Bright threshold strips make the two joins readable in the dim shaft and
+    # expose a gap immediately in a screenshot if the landing drifts.
+    for side in (-1, 1):
+        cube(f'Landing_Threshold_{side}', (0, .015, side * (span - .14)),
+             (half - .14, .018, .11), AMBER, edge=.008)
     # Two deep girders down the long sides carry the span from the stair's
     # stringer to the walkway's ring beam; cross ribs between them stop the
     # deck reading as a plank laid over nothing.
@@ -1416,6 +1426,12 @@ def build_access_hatch():
     clear_scene()
     cube('Hatch_Frame', (0, .06, 0), (1.05, .06, 1.05), DARK, edge=.03)
     cyl('Hatch_Ring', (0, .10, 0), .92, .10, BRUSHED, rotation=UP, verts=32, edge=.015)
+    # A dark throat beneath the moving lid keeps an opened hatch from revealing
+    # the shelter floor mesh underneath it.
+    # Keep the cap clearly above the ring's .15 m top face. Putting it just
+    # above the frame still left the solid reflective ring across the opening,
+    # so the raised lid revealed a grey plate instead of a dark shaft.
+    cyl('Hatch_Void', (0, .165, 0), .77, .025, VOID, rotation=UP, verts=32, edge=.01)
     cyl('Hatch_Lid', (0, .17, 0), .84, .10, STEEL, rotation=UP, verts=32, edge=.02)
     for i in range(8):
         a = i * math.tau / 8

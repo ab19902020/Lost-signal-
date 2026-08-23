@@ -61,9 +61,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const stairMid = stairColumn + treadDepth;
   const goingHalf = (stairTurn / stairSteps) * stairRadius / 2 * 1.06;
   const landingHalf = 1.8;
-  // Matches the Blender ring: the treads at the foot of a flight whose outer
-  // balustrade is open, so the stair discharges onto the landing.
-  const exitSteps = Math.max(2,
+  // Matches the Blender stair: treads beside a landing at either end of a
+  // flight have no outer balustrade, so both arrival and departure stay open.
+  const landingSteps = Math.max(2,
     Math.round((landingHalf / stairRadius) / (stairTurn / stairSteps)) + 1);
 
   const shaftHeight = levels * levelHeight;
@@ -136,10 +136,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
         { climbable: true });
       // The balustrade: without it you walk off the outer edge of the stair.
-      // Open for the first few treads, where the flight discharges onto the
-      // level's landing — a flight walled in for its whole turn arrives at the
-      // floor with nowhere to step off.
-      if (i >= exitSteps) {
+      // Open beside both landings. The first treads discharge onto the lower
+      // floor; the last treads are where somebody on the upper floor enters
+      // the descending flight. Opening only the foot made every level look
+      // connected while a solid balustrade blocked the way down.
+      if (i >= landingSteps && i < stairSteps - landingSteps) {
         colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
           top, top + 1.05), {});
       }
@@ -481,7 +482,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
-    const fill = new THREE.PointLight(0xc7b49a, 210, 46, 1.5);
+    const fill = new THREE.PointLight(0xc7b49a, 175, 46, 1.5);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
       Math.sin(angle) * fillRadius);
@@ -491,7 +492,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xe8dcc6, 2400, shaftHeight + 12, 0.5, 0.7, 2);
+  const crown = new THREE.SpotLight(0xe8dcc6, 1500, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);
@@ -552,5 +553,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   }
 
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
-           stairRadius, stairColumn, stairTurn, levelHeight, levels };
+           stairRadius, stairColumn, stairSteps, stairTurn, wellRadius, deckOuter,
+           levelHeight, levels };
 }

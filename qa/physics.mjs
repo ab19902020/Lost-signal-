@@ -102,6 +102,30 @@ results.silo = await page.evaluate(async () => {
                       radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
                       groundedFrames: stairSteps };
 
+  // Approach the head of the descending flight from every upper landing. The
+  // old geometry opened the balustrade only at the foot, so tests that started
+  // on a tread passed while a player standing on a gallery could not get down.
+  const stairEntries = [];
+  const headAngle = ((head.stairSteps || 36) - 1) * head.stairTurn / (head.stairSteps || 36);
+  for (let level = 1; level <= head.levels; level++) {
+    ls.world('silo');
+    settle(10);
+    const floorY = head.levelHeight * level;
+    const startRadius = head.stairRadius + 2.2;
+    ls.body.teleport(Math.cos(headAngle) * startRadius, floorY + 0.5,
+      Math.sin(headAngle) * startRadius);
+    settle(25);
+    ls.look(Math.PI / 2 - headAngle, 0); // radially inward, onto the last tread
+    ls.walkFrames(95);
+    settle(16);
+    stairEntries.push({
+      level,
+      y: +ls.body.position.y.toFixed(2),
+      radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+      grounded: ls.body.grounded,
+    });
+  }
+
   // Walk off the stair, across the landing, onto the floor — on every level,
   // not one. This is the join the whole silo hangs on: the flight discharges
   // at bay 0 of each storey, through a gap in its balustrade and a gap in the
@@ -141,6 +165,7 @@ results.silo = await page.evaluate(async () => {
     arrival,
     stairTop,
     stairFoot,
+    stairEntries,
     floors,
     overCentre,
     colliders: ls.game.colliders.silo.boxes.length,
