@@ -197,6 +197,24 @@ await saveChecked(desktop, '05a-silo-landing-guard-closeup', {
   minMean: 0.055, maxMean: 0.48, maxBright: 0.055,
 });
 
+// The supplied follow-up screenshots were taken from the secure gallery while
+// looking straight over the final joint. Review the new full-depth top landing
+// from that same lane: floor must run from gallery to core with guards on both
+// sides and no emissive strip pretending to be a barrier.
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  const reviewPosition = { x: 9.2, y: 29.58, z: 2.85 };
+  for (let i = 0; i < 120; i++) ls.game.siloWorld.update(1 / 60, reviewPosition);
+  ls.freecam(reviewPosition.x, reviewPosition.y, reviewPosition.z,
+    3.15, 28.28, -0.65, 58);
+  ls.game.camera.near = .08;
+  ls.game.camera.far = 20;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '05aa-secure-top-stair-transition', {
+  minMean: 0.055, maxMean: 0.48, maxBright: 0.055,
+});
+
 // The user's mobile recording was made at eye height while moving along a
 // gallery. An overhead proof image cannot catch blown façade panels, repeating
 // ceiling bars or doorway finishes drawn over an opening, so review that exact
@@ -265,7 +283,7 @@ await desktop.evaluate(() => {
   // `world('silo')` puts the real player on the top landing. Settle the pooled
   // lights beside this ground-floor doorway before deciding which nearby
   // fixtures belong in the apartment proof image.
-  const homeReviewPosition = { x: 20.35, y: 1.65, z: -1.95 };
+  const homeReviewPosition = { x: 20.35, y: 1.65, z: 0 };
   for (let i = 0; i < 180; i++) ls.game.siloWorld.update(1 / 60, homeReviewPosition);
 
   // Review the authored apartment itself. The gallery/stair shot already
@@ -280,15 +298,38 @@ await desktop.evaluate(() => {
         child.isHemisphereLight || child.isDirectionalLight) continue;
     child.visible = false;
   }
-  // Bay zero rotates the apartment's local +X axis toward world -Z. Offset
-  // onto the living-room portal instead of staring into the partition between
-  // the kitchen and living openings.
-  ls.freecam(20.35, 1.65, -1.95, 28.2, 1.45, -1.95, 58);
+  // The entrance now opens through one broad central arch. Aim down its centre
+  // so a full-depth view proves there is no waist-high finish band or solid
+  // partition masquerading as a barrier.
+  ls.freecam(20.35, 1.65, 0, 28.2, 1.45, 0, 58);
   ls.game.camera.far = 18;
   ls.game.camera.updateProjectionMatrix();
 });
 await saveChecked(desktop, '06-silo-home', {
   minMean: 0.06, maxMean: 0.5, maxDark: 0.82, maxBright: 0.055,
+});
+
+// Conversation-distance character review. It catches black bead eyes, joined
+// brows, disconnected limbs and flat footwear that a wide populated-silo shot
+// cannot reveal.
+await desktop.setViewportSize({ width: 720, height: 720 });
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  const resident = ls.game.residents?.residents?.[0];
+  if (!resident) throw new Error('no resident available for close-up QA');
+  for (const child of ls.game.silo.children) {
+    child.visible = child === resident || child === ls.game.camera || child.isLight;
+  }
+  resident.visible = true;
+  resident.position.set(15.8, 24.02, 0);
+  resident.rotation.set(0, Math.PI, 0);
+  ls.freecam(15.8, 25.46, -2.15, 15.8, 25.10, 0, 47);
+  ls.game.camera.near = .06;
+  ls.game.camera.far = 8;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '06a-resident-conversation-closeup', {
+  minMean: 0.045, maxMean: 0.5, maxDark: 0.88, maxBright: 0.055,
 });
 
 await stopDesktopPump();
@@ -328,6 +369,19 @@ await mobile.evaluate(() => {
 });
 await saveChecked(mobile, '08-mobile-silo-gallery', {
   minMean: 0.065, maxMean: 0.48, maxBright: 0.06,
+});
+
+await mobile.evaluate(() => {
+  const ls = globalThis.__ls;
+  const topY = ls.game.siloWorld.topY;
+  ls.body.teleport(8.0, topY + .5, 0);
+  ls.look(Math.PI / 2, -0.12);
+  ls.simulate(120);
+  ls.game.camera.far = 22;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(mobile, '09-mobile-secure-top-transition', {
+  minMean: 0.055, maxMean: 0.48, maxBright: 0.06,
 });
 await stopMobilePump();
 await mobile.close();
