@@ -25,7 +25,7 @@ body.playing.portrait #rotate{display:flex}
 #hud{position:fixed;inset:0;z-index:20;pointer-events:none}
 #hud:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 42%,rgba(0,0,0,.12) 72%,rgba(0,0,0,.38) 100%);mix-blend-mode:multiply}
 #hud:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.045;background-image:repeating-radial-gradient(circle at 20% 30%,#fff 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
-#top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;justify-content:space-between;gap:10px}
+#top{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .panel{border:1px solid rgba(190,255,205,.16);background:rgba(3,7,5,.68);padding:8px 10px;backdrop-filter:blur(5px);text-shadow:0 2px 3px #000}
 #name{font-size:10px;letter-spacing:.16em}
 #stats{font-size:10px;line-height:1.55;color:#b2c1b7;min-width:164px}
