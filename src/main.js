@@ -54,6 +54,7 @@ let hurtFlash = 0;
 let recoil = 0;
 let sprinting = false;
 let stamina = 1;
+let seated = null;
 const touch = { sprint: false, crouch: false };
 let breath = 0;
 const body = new CharacterBody();
@@ -217,7 +218,8 @@ async function prepare() {
         fire: () => fire(),
         bounds: (object) => new THREE.Box3().setFromObject(object),
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
-        state: () => ({ health, ammo, reserve, armed,
+        use: () => use(),
+        state: () => ({ health, ammo, reserve, armed, seated: !!seated,
           survival: survival.snapshot, blackout: survival.blackout,
           doorOpen: game.doorOpen(), hatchOpen: game.hatchOpen?.() ?? false,
           residents: game.residents?.residents.length ?? 0,
@@ -333,6 +335,21 @@ function wireGameEvents() {
       : `${e.detail.unit} — DOOR CLOSED`, 1800);
   });
 
+  addEventListener('lostsignal:sofa', (e) => {
+    if (currentWorld !== 'silo') return;
+    const { seat, stand, yaw: seatYaw, unit } = e.detail;
+    seated = { stand: new THREE.Vector3(stand.x, stand.y, stand.z), yaw: seatYaw };
+    body.teleport(seat.x, seat.y, seat.z);
+    game.player.position.copy(body.position);
+    yaw = seatYaw;
+    pitch = 0.015;
+    touch.sprint = false;
+    touch.crouch = false;
+    document.getElementById('sprintBtn').classList.remove('on');
+    document.getElementById('crouchBtn').classList.remove('on');
+    flash(`${unit} — SEATED · USE AGAIN TO STAND`, 2600);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -443,12 +460,25 @@ function completeObjective(id) {
 // every time: reparent the player, drop the body at the new spawn, face them
 // the right way.
 function enterWorld(name, facing, tilt) {
+  seated = null;
   currentWorld = name;
   const spawn = game.setWorld(name);
   body.teleport(spawn.x, spawn.y, spawn.z);
   yaw = facing;
   pitch = tilt;
   setOutdoorAudio(name === 'outside');
+}
+
+function leaveSeat(showMessage = true) {
+  if (!seated) return false;
+  const { stand, yaw: standYaw } = seated;
+  seated = null;
+  body.teleport(stand.x, stand.y, stand.z);
+  game.player.position.copy(body.position);
+  yaw = standYaw;
+  pitch = -0.02;
+  if (showMessage) flash('STOOD UP');
+  return true;
 }
 
 function toggleHelp(force) {
@@ -504,6 +534,7 @@ function nearestResident() {
 
 function use() {
   if (!started || modal || cctv) return;
+  if (leaveSeat()) return;
   const interaction = game.nearestInteraction(currentWorld);
   if (interaction) {
     clickSound(420, .04, .035);
@@ -816,6 +847,20 @@ function updatePlayer(dt) {
   game.camera.rotation.y = yaw;
   game.camera.rotation.x = pitch;
 
+  if (seated) {
+    desiredVelocity.set(0, 0, 0);
+    body.step(dt, desiredVelocity, game.colliders[currentWorld], { crouch: false, jump: false });
+    game.player.position.set(body.position.x, body.position.y, body.position.z);
+    game.camera.position.set(0, 1.18 + Math.sin(breath) * 0.003, 0);
+    game.camera.rotation.z = 0;
+    breath += dt * 0.55;
+    sprinting = false;
+    stamina = Math.min(1, stamina + dt / 4);
+    staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
+    staminaBar.classList.toggle('on', stamina < 0.995);
+    return;
+  }
+
   let strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
   let forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
   const magnitude = Math.hypot(strafe, forward);
@@ -882,6 +927,7 @@ function footsteps(dt, speedRatio, crouching) {
 
 function updatePrompt() {
   if (!started || modal || cctv) { promptEl.classList.remove('on'); return; }
+  if(seated){promptEl.textContent=`${coarse?'USE':'[ E ]'}  STAND UP`;promptEl.classList.add('on');return}
   const interaction=game.nearestInteraction(currentWorld);
   if(interaction){promptEl.textContent=`${coarse?'USE':'[ E ]'}  ${interaction.name}`;promptEl.classList.add('on');return}
   const person=nearestResident();
