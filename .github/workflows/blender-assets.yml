@@ -91,14 +91,10 @@ jobs:
           done
 
       - name: Commit generated assets to source branch
-        # A trusted same-repository PR may publish the assets its generator
-        # authored. The bot-authored follow-up event validates but cannot
-        # publish again, preventing non-deterministic GLB metadata from making
-        # an asset-commit loop.
-        if: >-
-          github.event_name != 'pull_request' ||
-          (github.event.pull_request.head.repo.full_name == github.repository &&
-           github.actor != 'github-actions[bot]')
+        # Pull-request runs validate the generators without repeatedly changing
+        # Blender metadata. The reviewed revision-7 tunnel asset has already been
+        # published by the one-shot same-repository build above this commit.
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
