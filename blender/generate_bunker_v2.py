@@ -175,68 +175,99 @@ def build_radio():
 
 
 def build_cctv():
-    """The control room console.
+    """The security desk: six feeds on six monitors, sitting on the desk.
 
-    A curved bank of screens wrapping round an arc desk, under a big round
-    drum fixture — the room reads as a watch floor rather than a desk with four
-    televisions on it. The arc is struck about the point the operator stands,
-    so every screen faces them.
+    Fourteen small panels wrapped round a wall read as clutter rather than as a
+    watch station — you could not tell one feed from another. Six is what a
+    watch officer actually has: two rows of three on a shallow arc, each a real
+    monitor with a bezel, a stand, a caption strip and a channel light, so a
+    glance tells you which feed is which.
     """
     clear_scene()
-    EYE = 1.30                       # where the operator stands, in +Z
+    EYE = 1.05                       # the arc is struck about where you stand
     BRONZE = mat('ConsoleBronze', (0.10,0.075,0.05), .55, .42)
-    # The drum is a metre across and hangs right over the desk. At the strength
-    # the small lamps use it blows out the whole room and washes the screens
-    # flat — in the reference the screens are the light and the room is dark.
-    LAMP = mat('ConsoleLamp', (.24,.22,.18), 0, .24, (1.0,.90,.72), 0.85)
-    FEED = mat('ConsoleFeed', (0.02,0.05,0.04), 0, .18, (0.42,0.88,0.62), 4.2)
-    BLUE = mat('ConsoleBlue', (0.01,0.03,0.05), 0, .20, (0.24,0.62,1.0), 3.6)
+    CASE   = mat('ConsoleCase', (0.045,0.05,0.052), .35, .48)
+    LAMP   = mat('ConsoleLamp', (.24,.22,.18), 0, .24, (1.0,.90,.72), 0.85)
+    # Kept low on purpose. A CRT is a picture, not a lamp: at emission 3 every
+    # feed saturated to white through the bloom and you could not tell one
+    # camera from another, which is the whole job of a wall of them.
+    FEED   = mat('ConsoleFeed', (0.02,0.05,0.04), 0, .16, (0.16,0.42,0.24), 0.85)
+    FEED2  = mat('ConsoleFeedCold', (0.015,0.03,0.05), 0, .16, (0.12,0.28,0.50), 0.80)
+    FEED3  = mat('ConsoleFeedWarm', (0.05,0.035,0.01), 0, .16, (0.50,0.34,0.10), 0.70)
+    TINTS = (FEED, FEED2, FEED, FEED3, FEED2, FEED)
 
-    # --- Screen bank ---------------------------------------------------------
-    for tier, (radius, y, tilt, count, hw, hh) in enumerate((
-            (2.55, 1.62, -0.10, 7, .40, .25),
-            (2.75, 2.30, -0.26, 7, .40, .25),
-    )):
-        for k in range(count):
-            t = (k - (count - 1) / 2) * 0.285
-            x = math.sin(t) * radius
-            z = EYE - math.cos(t) * radius
-            cube('ScreenFrame_%d_%d' % (tier, k), (x, y, z), (hw + .045, hh + .045, .075),
-                 BRONZE, rotation=(tilt, t, 0), edge=.03)
-            cube('Screen_%d_%d' % (tier, k),
-                 (x + math.sin(t) * .05, y + math.sin(-tilt) * .05, z + math.cos(t) * .05),
-                 (hw, hh, .012), FEED if (k + tier) % 3 else BLUE,
-                 rotation=(tilt, t, 0), edge=.006)
-            if (k + tier) % 4 == 0:
-                cyl('ScreenLED_%d_%d' % (tier, k),
-                    (x + math.sin(t) * .10, y - hh - .07, z + math.cos(t) * .10),
-                    .014, .012, RED, rotation=(math.pi/2 + tilt, 0, 0), verts=10)
-        # A bronze rail capping each tier, and the carcass behind it.
-        for k in range(count - 1):
-            t = (k - (count - 1) / 2 + .5) * 0.285
-            cube('BankPost_%d_%d' % (tier, k),
-                 (math.sin(t) * radius, y, EYE - math.cos(t) * radius),
-                 (.035, hh + .06, .085), BRONZE, rotation=(tilt, t, 0), edge=.015)
-
-    # --- Arc desk ------------------------------------------------------------
+    # --- Desk ---------------------------------------------------------------
     for k in range(9):
-        t = (k - 4) * 0.20
-        x = math.sin(t) * 1.55
-        z = EYE - math.cos(t) * 1.55
-        cube('Desk_%d' % k, (x, .74, z), (.34, .04, .40), STEEL2, rotation=(0, t, 0), edge=.02)
-        cube('DeskBody_%d' % k, (x, .37, z + .06), (.32, .37, .30), DARK, rotation=(0, t, 0), edge=.04)
-        cube('DeskLip_%d' % k, (x + math.sin(t) * .38, .82, z + math.cos(t) * .38),
-             (.34, .05, .05), BRONZE, rotation=(0, t, 0), edge=.015)
-    for k, t in enumerate((-0.52, 0.0, 0.52)):
-        x = math.sin(t) * 1.42
-        z = EYE - math.cos(t) * 1.42
-        cube('Keyboard_%d' % k, (x, .79, z + .10), (.24, .015, .10), DARK,
+        t = (k - 4) * 0.185
+        x, z = math.sin(t) * 1.62, EYE - math.cos(t) * 1.62
+        cube('Desk_%d' % k, (x, .76, z), (.34, .045, .42), STEEL2, rotation=(0, t, 0), edge=.02)
+        cube('DeskBody_%d' % k, (x, .38, z + .07), (.32, .38, .30), DARK, rotation=(0, t, 0), edge=.04)
+        cube('DeskEdge_%d' % k, (x + math.sin(t) * .40, .78, z + math.cos(t) * .40),
+             (.34, .045, .05), BRONZE, rotation=(0, t, 0), edge=.015)
+
+    # --- Six monitors, two rows of three ------------------------------------
+    HW, HH = .40, .27               # half-width and half-height of the picture
+    for row, (radius, y, tilt) in enumerate(((1.62, 1.20, -0.13), (1.78, 1.78, -0.26))):
+        for col in range(3):
+            t = (col - 1) * 0.52
+            i = row * 3 + col
+            x, z = math.sin(t) * radius, EYE - math.cos(t) * radius
+            nx, nz = math.sin(t), math.cos(t)      # outward normal, toward you
+            def at(depth, lift=0.0):
+                return (x + nx * depth, y + lift, z + nz * depth)
+            # Case, bezel, picture.
+            cube('MonCase_%d' % i, at(-.055), (HW + .075, HH + .085, .075), CASE,
+                 rotation=(tilt, t, 0), edge=.035)
+            cube('MonBezel_%d' % i, at(.02), (HW + .035, HH + .045, .02), DARK,
+                 rotation=(tilt, t, 0), edge=.012)
+            cube('MonScreen_%d' % i, at(.042), (HW, HH, .012), TINTS[i],
+                 rotation=(tilt, t, 0), edge=.006)
+            # Scanline break across the picture, so a feed is not a flat slab.
+            for b in range(3):
+                cube('MonBand_%d_%d' % (i, b), at(.050, -HH * .5 + b * HH * .5),
+                     (HW * .96, .012, .006), DARK, rotation=(tilt, t, 0), edge=.002)
+            # Caption strip and channel light under the picture.
+            cube('MonCaption_%d' % i, at(.048, -HH - .055), (HW * .55, .028, .008), AMBER,
+                 rotation=(tilt, t, 0), edge=.004)
+            cyl('MonLed_%d' % i, at(.052, -HH - .055), .015, .012,
+                RED if i % 3 == 1 else GREEN, rotation=(math.pi/2 + tilt, t, 0), verts=10)
+            # Stand: a foot on the desk for the lower row, a bracket for the upper.
+            if row == 0:
+                cube('MonNeck_%d' % i, (x, y - HH - .19, z), (.07, .17, .07), CASE,
+                     rotation=(0, t, 0), edge=.02)
+                cube('MonFoot_%d' % i, (x, y - HH - .35, z), (.20, .022, .17), CASE,
+                     rotation=(0, t, 0), edge=.015)
+            else:
+                cube('MonArm_%d' % i, (x - nx * .18, y - HH - .16, z - nz * .18),
+                     (.06, .22, .06), BRONZE, rotation=(0, t, 0), edge=.018)
+
+    # A slim bridge behind the desk that the upper row's arms bolt to.
+    for k in range(7):
+        t = (k - 3) * 0.24
+        cube('Gantry_%d' % k, (math.sin(t) * 1.96, 1.30, EYE - math.cos(t) * 1.96),
+             (.26, .05, .09), BRONZE, rotation=(0, t, 0), edge=.02)
+        if k % 3 == 0:
+            cube('GantryPost_%d' % k, (math.sin(t) * 1.96, .90, EYE - math.cos(t) * 1.96),
+                 (.05, .45, .05), BRONZE, rotation=(0, t, 0), edge=.015)
+
+    # --- Controls -----------------------------------------------------------
+    for k, t in enumerate((-0.42, 0.0, 0.42)):
+        x, z = math.sin(t) * 1.36, EYE - math.cos(t) * 1.36
+        cube('Keyboard_%d' % k, (x, .81, z + .16), (.24, .015, .09), DARK,
              rotation=(-.06, t, 0), edge=.008)
         for r in range(3):
-            cube('Keys_%d_%d' % (k, r), (x, .805, z + .04 + r * .06), (.22, .006, .022),
+            cube('Keys_%d_%d' % (k, r), (x, .825, z + .10 + r * .06), (.22, .006, .020),
                  STEEL2, rotation=(-.06, t, 0), edge=.003)
-        cube('DeskPanel_%d' % k, (x, .80, z - .26), (.20, .012, .13), AMBER,
-             rotation=(-.55, t, 0), edge=.006)
+    for row in range(2):
+        for col in range(10):
+            t = (col - 4.5) * 0.075
+            x, z = math.sin(t) * 1.20, EYE - math.cos(t) * 1.20
+            cube('Switch_%d_%d' % (row, col), (x, .80, z - .10 - row * .11),
+                 (.035, .012, .035), AMBER if (row + col) % 4 == 0 else STEEL2,
+                 rotation=(-.30, t, 0), edge=.006)
+    torus('PTZ_Base', (0.86, .80, EYE - 1.02), .11, .022, STEEL2, rotation=(math.pi/2, 0, 0))
+    cyl('PTZ_Stick', (0.86, .94, EYE - 1.02), .032, .24, RUBBER, rotation=(.12, 0, 0), verts=20)
+    sphere('PTZ_Grip', (0.86, 1.08, EYE - 1.05), .06, RUBBER, scale=(1, 1.15, 1))
 
     # --- The drum overhead ---------------------------------------------------
     torus('DrumRim', (0, 2.92, EYE - .30), 1.05, .085, BRONZE, rotation=(math.pi/2, 0, 0))
@@ -250,16 +281,6 @@ def build_cctv():
         a = k * math.tau / 3
         between('DrumHang_%d' % k, (math.cos(a) * .9, 3.05, EYE - .30 + math.sin(a) * .9),
                 (math.cos(a) * .5, 3.6, EYE - .30 + math.sin(a) * .5), .014, DARK)
-
-    # Small task pendants over the desk, as in the reference.
-    for t in (-0.66, 0.0, 0.66):
-        x = math.sin(t) * 1.95
-        z = EYE - math.cos(t) * 1.95
-        cyl('TaskRod_%d' % int(t * 100), (x, 2.72, z), .010, .70, DARK, rotation=(math.pi/2, 0, 0), verts=6)
-        cyl('TaskShade_%d' % int(t * 100), (x, 2.33, z), .13, .11, BRONZE,
-            rotation=(math.pi/2, 0, 0), verts=16, edge=.02)
-        cyl('TaskGlow_%d' % int(t * 100), (x, 2.28, z), .105, .03, LAMP,
-            rotation=(math.pi/2, 0, 0), verts=16, edge=.006)
 
     export('cctv_console_v2.glb')
 

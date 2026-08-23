@@ -272,6 +272,20 @@ export function createGameWorld(assets) {
   [[-8,0,-9,0],[8,0,-8,.2],[-7,0,8,-.1],[7,0,7,.1]].forEach(([x,y,z,r])=>place(assets.barrier,outside,[x,y,z],[0,r,0],.9));
   [[-11,0,-14,0],[11,0,-14,.7],[-15,0,5,.2],[13,0,12,-.5],[4,0,2,.4]].forEach(([x,y,z,r])=>place(assets.rubble,outside,[x,y,z],[0,r,0],1,{ climbable: true }));
 
+  // The people who did not get inside. Nothing graphic: shapes under weighted
+  // tarpaulins, and one who sat down against the compound wall in a hooded
+  // coat and did not get up. They are what makes the surface read as after
+  // rather than as empty.
+  if (assets.remainsCovered) {
+    [[-6.4, 0, -12.8, 0.4], [9.2, 0, -5.6, -1.1], [-13.5, 0, 3.2, 2.2],
+     [5.8, 0, 15.4, 0.9]].forEach(([x, y, z, r]) =>
+      place(assets.remainsCovered, outside, [x, y, z], [0, r, 0], 1, { collide: false }));
+  }
+  if (assets.remainsSlumped) {
+    [[-8.9, 0, -8.2, 0.35], [12.4, 0, 9.1, -2.4], [2.6, 0, -19.2, 3.0]].forEach(([x, y, z, r]) =>
+      place(assets.remainsSlumped, outside, [x, y, z], [0, r, 0], 1, { collide: false }));
+  }
+
   // Surface access uses the same Blender keypad asset.
   const returnPanel = place(assets.accessControl,outside,[-2.15,.55,-13.55],[0,0,0],.64,{ collide: false });
   addInteraction(returnPanel,'RETURN TO SHELTER','outside',()=>window.dispatchEvent(new CustomEvent('lostsignal:return')));

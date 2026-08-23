@@ -65,6 +65,8 @@ const exteriorUrls = {
   gate: `${BASE}assets/blender/perimeter_gate.glb`,
   floodlight: `${BASE}assets/blender/floodlight.glb`,
   deadTree: `${BASE}assets/blender/dead_tree.glb`,
+  remainsCovered: `${BASE}assets/blender/remains_covered_v1.glb`,
+  remainsSlumped: `${BASE}assets/blender/remains_slumped_v1.glb`,
   barrier: `${BASE}assets/blender/concrete_barrier_v3.glb`,
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
 };

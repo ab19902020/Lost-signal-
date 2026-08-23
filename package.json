@@ -11,6 +11,7 @@
     "qa": "node qa/assert.mjs",
     "build": "node qa/unit.mjs && vite build",
     "qa:unit": "node qa/unit.mjs",
+    "assets": "node tools/externalize-glb-images.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

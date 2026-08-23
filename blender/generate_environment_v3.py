@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import math
 import os
 from mathutils import Vector
@@ -174,6 +175,56 @@ def add_orientation_marker():
     return o
 
 
+def loft(name, sections, material, axis='y', sides=10, subdiv=1):
+    """Bridge a stack of elliptical cross-sections into one smooth surface."""
+    bm = bmesh.new()
+    loops = []
+    for (cx, cy, cz), ha, hb in sections:
+        loop = []
+        for i in range(sides):
+            t = i * math.tau / sides
+            a, b = math.cos(t) * ha, math.sin(t) * hb
+            loop.append(bm.verts.new((cx + a, cy, cz + b) if axis == 'y'
+                                     else (cx + a, cy + b, cz)))
+        loops.append(loop)
+    for lower, upper in zip(loops, loops[1:]):
+        for i in range(sides):
+            j = (i + 1) % sides
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    bm.faces.new(loops[0])
+    bm.faces.new(loops[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    if subdiv:
+        bpy.context.view_layer.objects.active = o
+        mod = o.modifiers.new('LS_Subsurf', 'SUBSURF')
+        mod.levels = subdiv
+        mod.render_levels = subdiv
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+    return o
+
+
+def join_all(name):
+    bpy.ops.object.select_all(action='DESELECT')
+    meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+    if not meshes:
+        return None
+    for o in meshes:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.join()
+    joined = bpy.context.object
+    joined.name = name
+    return joined
+
+
 def export(name):
     path = os.path.join(OUT, name)
     add_orientation_marker()
@@ -205,6 +256,12 @@ AMBER_GLOW = mat('AmberGlowV3',(.05,.015,.002),0,.18,(1.0,.32,.02),4.0)
 RED_GLOW = mat('RedGlowV3',(.05,.002,.001),0,.18,(1.0,.03,.01),5.0)
 BLUE = mat('MedicalBlueV3',(.035,.12,.22),.10,.55)
 WOOD = mat('WorkbenchWoodV3',(.20,.08,.025),0,.72)
+# The surface: everything up there has been bleached and dust-blown for years.
+TARP = mat('TarpV3',(.30,.28,.24),0,.88)
+CANVAS = mat('CanvasV3',(.24,.21,.17),0,.92)
+COATCLOTH = mat('SurfaceCoatV3',(.14,.13,.11),0,.90)
+BOOTLEATHER = mat('SurfaceBootV3',(.055,.048,.042),0,.86)
+DUSTSTONE = mat('DustStoneV3',(.31,.28,.23),0,.94)
 
 
 def bolt_grid(prefix, xs, ys, z, material=DARK, radius=.025):
@@ -531,11 +588,115 @@ def build_rubble():
     export('rubble_cluster_v3.glb')
 
 
+def build_remains_covered():
+    """Someone the survivors covered over and weighted down.
+
+    Deliberately not graphic: a shape under a tarpaulin, stones on the hem to
+    stop it blowing away, and one boot at the foot end. You know exactly what it
+    is and you never see any of it.
+    """
+    clear_scene()
+    # The form under the sheet, and the sheet over it a little larger.
+    form = [
+        ((0, .02, -.88), .16, .10),
+        ((0, .05, -.70), .21, .17),
+        ((0, .04, -.42), .17, .14),
+        ((0, .05, -.10), .20, .16),
+        ((0, .06, .26), .26, .20),
+        ((0, .05, .56), .23, .18),
+        ((0, .03, .80), .15, .12),
+    ]
+    loft('Remains_Form', form, CANVAS, axis='y', sides=10)
+    loft('Remains_Tarp', [(c, a + .045, b + .05) for c, a, b in form], TARP,
+         axis='y', sides=12)
+    # Folds where the sheet is pulled over the shoulder and the hip.
+    for i, z in enumerate((-.52, .04, .44)):
+        cube(f'Remains_Fold_{i}', (0, .07, z), (.26, .022, .045), TARP,
+             rotation=(0, .06 * (i - 1), 0), edge=.02)
+    # Stones holding the hem down.
+    for i, (x, z) in enumerate(((-.30, -.66), (.31, -.30), (-.32, .18), (.30, .58), (0, .92))):
+        loft(f'Remains_Stone_{i}', [
+            ((x, .0, z), .09, .075),
+            ((x, .07, z), .10, .085),
+            ((x, .13, z), .055, .045),
+        ], DUSTSTONE, axis='y', sides=8)
+    # A boot, out from under the foot end.
+    loft('Remains_Boot', [
+        ((.06, .02, .84), .075, .10),
+        ((.06, .09, .90), .080, .12),
+        ((.06, .14, .96), .062, .075),
+    ], BOOTLEATHER, axis='y', sides=8)
+    join_all('RemainsCovered')
+    export('remains_covered_v1.glb')
+
+
+def build_remains_slumped():
+    """Someone who sat down against a wall and did not get up.
+
+    Fully clothed, hood up, head bowed — a shape in a coat. Facing +Z, back
+    against whatever it is placed in front of.
+    """
+    clear_scene()
+    # Legs out in front, knees a little bent.
+    for side in (-1, 1):
+        loft(f'Slumped_Leg_{side}', [
+            ((side * .13, .20, .06), .11, .13),
+            ((side * .14, .17, .34), .10, .12),
+            ((side * .15, .12, .62), .085, .10),
+            ((side * .15, .09, .82), .075, .085),
+        ], COATCLOTH, axis='y', sides=8)
+        loft(f'Slumped_Boot_{side}', [
+            ((side * .15, .04, .84), .078, .085),
+            ((side * .15, .11, .92), .082, .105),
+            ((side * .15, .16, .99), .060, .070),
+        ], BOOTLEATHER, axis='y', sides=8)
+    # Torso, leaning back into the wall.
+    loft('Slumped_Torso', [
+        ((0, .14, -.06), .22, .17),
+        ((0, .38, -.10), .24, .18),
+        ((0, .62, -.13), .26, .18),
+        ((0, .82, -.15), .23, .16),
+        ((0, .94, -.14), .15, .13),
+    ], COATCLOTH, axis='y', sides=10)
+    # Arms fallen into the lap.
+    for side in (-1, 1):
+        loft(f'Slumped_Arm_{side}', [
+            ((side * .25, .82, -.12), .075, .075),
+            ((side * .27, .58, -.02), .065, .065),
+            ((side * .24, .36, .14), .058, .058),
+            ((side * .18, .24, .26), .055, .060),
+        ], COATCLOTH, axis='y', sides=8)
+    loft('Slumped_Hands', [
+        ((0, .22, .26), .12, .085),
+        ((0, .29, .28), .13, .090),
+        ((0, .34, .28), .09, .065),
+    ], BOOTLEATHER, axis='y', sides=8)
+    # Head bowed, hood up: the hood is what you see.
+    loft('Slumped_Hood', [
+        ((0, .88, -.10), .14, .14),
+        ((0, .98, -.04), .17, .18),
+        ((0, 1.06, .02), .16, .17),
+        ((0, 1.12, .06), .10, .11),
+    ], COATCLOTH, axis='y', sides=10)
+    cube('Slumped_HoodBrim', (0, .96, .13), (.13, .055, .04), COATCLOTH,
+         rotation=(.5, 0, 0), edge=.03)
+    # Dust drifted against the low side.
+    for i, (x, z) in enumerate(((-.34, .28), (.36, .52), (-.30, .74))):
+        loft(f'Slumped_Dust_{i}', [
+            ((x, .0, z), .17, .13),
+            ((x, .05, z), .13, .10),
+            ((x, .08, z), .05, .04),
+        ], DUSTSTONE, axis='y', sides=8)
+    join_all('RemainsSlumped')
+    export('remains_slumped_v1.glb')
+
+
 for fn in (
     build_environment, build_ventilation, build_electrical, build_lockers,
     build_bench, build_clutter, build_status, build_access, build_camera,
     build_exterior_ground, build_entrance, build_fence, build_gate,
-    build_floodlight, build_tree, build_barrier, build_rubble
+    build_floodlight, build_tree, build_barrier, build_rubble,
+    build_remains_covered, build_remains_slumped
 ):
     fn()
 

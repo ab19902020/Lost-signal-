@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import math
 import os
 from mathutils import Matrix, Vector
@@ -76,6 +77,62 @@ def cyl(name, loc, radius, depth, material, rotation=(0, 0, 0), verts=14):
     return smooth(o, .008)
 
 
+def _loft(name, sections, material, axis, sides, subdiv):
+    """Bridge a stack of elliptical cross-sections into one smooth surface.
+
+    A section is ((x, y, z), half_a, half_b) — the two half-axes of the ellipse
+    in the plane perpendicular to `axis`. Animals are not stacks of spheres and
+    boxes: a body that tapers from chest to rump, a neck that swells where it
+    meets the shoulder, a haunch that carries into the thigh, all need a
+    surface that runs through them.
+    """
+    bm = bmesh.new()
+    loops = []
+    for (cx, cy, cz), ha, hb in sections:
+        loop = []
+        for i in range(sides):
+            t = i * math.tau / sides
+            a, b = math.cos(t) * ha, math.sin(t) * hb
+            if axis == 'y':
+                loop.append(bm.verts.new((cx + a, cy, cz + b)))
+            else:                         # stacked along Z: a is X, b is Y
+                loop.append(bm.verts.new((cx + a, cy + b, cz)))
+        loops.append(loop)
+    for lower, upper in zip(loops, loops[1:]):
+        for i in range(sides):
+            j = (i + 1) % sides
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    bm.faces.new(loops[0])
+    bm.faces.new(loops[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    if subdiv:
+        bpy.context.view_layer.objects.active = o
+        mod = o.modifiers.new('LS_Subsurf', 'SUBSURF')
+        mod.levels = subdiv
+        mod.render_levels = subdiv
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+    return o
+
+
+def loft_y(name, sections, material, sides=10, subdiv=1):
+    """A tapering form stacked upward — a leg, a neck, a skull."""
+    return _loft(name, sections, material, 'y', sides, subdiv)
+
+
+def loft_z(name, sections, material, sides=12, subdiv=1):
+    """A tapering form stacked along Z — the barrel of an animal's body."""
+    return _loft(name, sections, material, 'z', sides, subdiv)
+
+
 def set_pivot(o, pivot):
     """Move an object's origin to `pivot` without moving the geometry.
 
@@ -126,57 +183,165 @@ EYE_GLOW = mat('InfectedEye', (.5, .45, .2), 0, .3, (.9, .72, .22), 2.6)
 
 
 def build_deer():
-    """A red deer, roughly 1.35 m at the shoulder, facing +Z."""
+    """A red deer hind, about 1.3 m at the shoulder, facing +Z.
+
+    Lofted rather than assembled: a barrel that is deepest at the chest and
+    tucks up at the flank, a neck that swells where it leaves the shoulder, a
+    wedge skull, and legs that taper from a heavy thigh to a fine cannon bone.
+    """
     clear_scene()
-    body = sphere('Deer_Body', (0, .92, 0), .34, HIDE, scale=(.85, .82, 1.75))
-    sphere('Deer_Belly', (0, .74, 0), .30, HIDE_PALE, scale=(.78, .55, 1.55))
-    cube('Deer_Haunch', (0, .95, -.44), (.30, .28, .22), HIDE, edge=.09)
-    cube('Deer_Shoulder', (0, .98, .40), (.29, .26, .22), HIDE, edge=.09)
+    # Barrel, nose to tail along Z. Deep through the chest, tucked at the loin,
+    # swelling again over the haunch.
+    loft_z('Deer_Body', [
+        ((0, .96, -.66), .10, .11),
+        ((0, .99, -.50), .25, .27),
+        ((0, .97, -.28), .30, .31),
+        ((0, .94, -.05), .27, .30),
+        ((0, .93, .18), .26, .31),
+        ((0, .96, .40), .29, .32),
+        ((0, 1.00, .56), .24, .26),
+        ((0, 1.03, .66), .15, .16),
+    ], HIDE, sides=14)
+    # Pale underside.
+    loft_z('Deer_Belly', [
+        ((0, .72, -.40), .18, .05),
+        ((0, .69, -.10), .21, .06),
+        ((0, .69, .20), .21, .06),
+        ((0, .73, .46), .18, .05),
+    ], HIDE_PALE, sides=10)
 
-    neck = cube('Deer_Neck', (0, 1.18, .58), (.13, .30, .13), HIDE, rotation=(-.55, 0, 0), edge=.05)
-    set_pivot(neck, (0, .98, .48))
-    head = sphere('Deer_Head', (0, 1.46, .86), .15, HIDE, scale=(.8, .82, 1.45))
-    set_pivot(head, (0, 1.40, .74))
-    cube('Deer_Muzzle', (0, 1.40, 1.06), (.065, .06, .10), HIDE_PALE, edge=.035)
+    neck = loft_y('Deer_Neck', [
+        ((0, .96, .52), .17, .19),
+        ((0, 1.12, .58), .14, .16),
+        ((0, 1.28, .66), .11, .13),
+        ((0, 1.42, .74), .09, .10),
+    ], HIDE, sides=12)
+    set_pivot(neck, (0, .96, .52))
+
+    head = loft_z('Deer_Head', [
+        ((0, 1.46, .70), .085, .095),
+        ((0, 1.47, .80), .10, .12),
+        ((0, 1.45, .90), .085, .10),
+        ((0, 1.42, 1.00), .058, .065),
+        ((0, 1.41, 1.08), .045, .048),
+    ], HIDE, sides=12)
+    set_pivot(head, (0, 1.44, .72))
+    muzzle = loft_z('Deer_Muzzle', [
+        ((0, 1.41, 1.04), .046, .050),
+        ((0, 1.40, 1.12), .040, .042),
+    ], HIDE_PALE, sides=10)
+    parts = [muzzle]
     for side in (-1, 1):
-        cube(f'Deer_Ear_{side}', (side * .13, 1.55, .80), (.035, .09, .05), HIDE,
-             rotation=(0, 0, side * .5), edge=.02)
-        sphere(f'Deer_Eye_{side}', (side * .105, 1.47, .94), .028, EYE)
-        # Antlers: a main beam rooted on the skull, with three tines off it.
-        cyl(f'Deer_Antler_{side}', (side * .10, 1.65, .74), .022, .40, ANTLER,
-            rotation=(.30, 0, side * .34))
-        for i, (h, angle) in enumerate(((.04, .95), (.15, .78), (.26, .58))):
-            cyl(f'Deer_Tine_{side}_{i}', (side * (.12 + i * .025), 1.62 + h, .73 - i * .05),
-                .013, .15, ANTLER, rotation=(angle, 0, side * .95))
+        ear = loft_y(f'Deer_Ear_{side}', [
+            ((side * .10, 1.50, .76), .028, .020),
+            ((side * .13, 1.60, .74), .048, .026),
+            ((side * .15, 1.70, .73), .036, .020),
+            ((side * .16, 1.75, .73), .012, .008),
+        ], HIDE, sides=8)
+        eye = sphere(f'Deer_Eye_{side}', (side * .085, 1.47, .88), .026, EYE)
+        parts += [ear, eye]
+    for part in parts:
+        part.parent = head
+        part.matrix_parent_inverse = head.matrix_world.inverted()
 
-    for name, x, z in (('FL', -.20, .42), ('FR', .20, .42), ('BL', -.20, -.44), ('BR', .20, -.44)):
-        limb(f'Deer_Leg{name}', (x, .86, z), (.055, .43, .07), HIDE, edge=.025)
-        limb(f'Deer_Hoof{name}', (x, .04, z), (.055, .04, .075), EYE, edge=.012)
+    # Legs: heavy thigh, fine cannon, a hoof. Front legs stand under the chest,
+    # hind legs behind the haunch with a real hock angle.
+    for name, x, z, top in (('FL', -.17, .40, .90), ('FR', .17, .40, .90),
+                            ('BL', -.18, -.44, .93), ('BR', .18, -.44, .93)):
+        back = name.startswith('B')
+        leg = loft_y(f'Deer_Leg{name}', [
+            ((x, top, z), .105, .13),
+            ((x, top - .22, z + (-.03 if back else .01)), .075, .085),
+            ((x, top - .42, z + (.05 if back else .0)), .045, .050),
+            ((x, top - .62, z + (.02 if back else -.01)), .032, .034),
+            ((x, .10, z), .030, .032),
+        ], HIDE, sides=8)
+        set_pivot(leg, (x, top, z))
+        hoof = loft_y(f'Deer_Hoof{name}', [
+            ((x, .11, z), .034, .036),
+            ((x, .05, z + .01), .040, .050),
+            ((x, .005, z + .02), .034, .046),
+        ], EYE, sides=8)
+        hoof.parent = leg
+        hoof.matrix_parent_inverse = leg.matrix_world.inverted()
 
-    tail = cube('Deer_Tail', (0, 1.02, -.62), (.055, .10, .05), HIDE_PALE, edge=.03)
-    set_pivot(tail, (0, 1.10, -.56))
+    tail = loft_y('Deer_Tail', [
+        ((0, 1.02, -.66), .045, .035),
+        ((0, .92, -.70), .050, .040),
+        ((0, .84, -.72), .028, .022),
+    ], HIDE_PALE, sides=8)
+    set_pivot(tail, (0, 1.04, -.64))
     export('deer_v3.glb')
 
 
 def build_rabbit():
-    """A hare, roughly 0.32 m tall, facing +Z."""
+    """A brown hare, about 0.34 m at the shoulder, facing +Z.
+
+    A hare is not a ball with ears: the back arches over powerful haunches, the
+    chest is narrow, the ears are long blades set back along the skull.
+    """
     clear_scene()
-    sphere('Rabbit_Body', (0, .17, 0), .11, FUR, scale=(.92, .95, 1.5))
-    sphere('Rabbit_Belly', (0, .12, 0), .09, FUR_PALE, scale=(.85, .6, 1.3))
-    head = sphere('Rabbit_Head', (0, .22, .16), .075, FUR, scale=(.95, .95, 1.05))
-    set_pivot(head, (0, .19, .12))
-    cube('Rabbit_Muzzle', (0, .20, .23), (.028, .024, .03), FUR_PALE, edge=.014)
+    loft_z('Rabbit_Body', [
+        ((0, .17, -.20), .045, .045),
+        ((0, .19, -.13), .095, .105),
+        ((0, .19, -.04), .105, .115),
+        ((0, .175, .05), .092, .098),
+        ((0, .165, .13), .075, .080),
+        ((0, .17, .19), .052, .056),
+    ], FUR, sides=12)
+    loft_z('Rabbit_Belly', [
+        ((0, .095, -.10), .062, .022),
+        ((0, .088, .02), .068, .024),
+        ((0, .095, .13), .050, .020),
+    ], FUR_PALE, sides=10)
+
+    head = loft_z('Rabbit_Head', [
+        ((0, .205, .17), .052, .056),
+        ((0, .208, .22), .062, .066),
+        ((0, .200, .27), .050, .052),
+        ((0, .193, .31), .032, .032),
+    ], FUR, sides=12)
+    set_pivot(head, (0, .20, .17))
+    muzzle = loft_z('Rabbit_Muzzle', [
+        ((0, .192, .30), .026, .026),
+        ((0, .188, .335), .020, .019),
+    ], FUR_PALE, sides=8)
+    parts = [muzzle]
     for side in (-1, 1):
-        ear = cube(f'Rabbit_Ear_{side}', (side * .035, .34, .13), (.018, .075, .012), FUR,
-                   rotation=(-.12, 0, side * .18), edge=.008)
-        set_pivot(ear, (side * .035, .26, .14))
-        sphere(f'Rabbit_Eye_{side}', (side * .055, .23, .20), .015, EYE)
-    for name, x, z in (('FL', -.055, .09), ('FR', .055, .09)):
-        limb(f'Rabbit_Leg{name}', (x, .13, z), (.02, .07, .025), FUR, edge=.01)
-    for name, x, z in (('BL', -.062, -.07), ('BR', .062, -.07)):
-        cube(f'Rabbit_Haunch{name}', (x, .13, z), (.032, .055, .06), FUR, edge=.025)
-        limb(f'Rabbit_Leg{name}', (x, .10, z - .02), (.022, .06, .028), FUR, edge=.01)
-    sphere('Rabbit_Tail', (0, .18, -.17), .032, FUR_PALE)
+        # Long blades, laid back along the skull the way a running hare holds them.
+        ear = loft_y(f'Rabbit_Ear_{side}', [
+            ((side * .034, .235, .195), .020, .012),
+            ((side * .046, .295, .165), .030, .015),
+            ((side * .054, .355, .140), .026, .013),
+            ((side * .058, .395, .125), .010, .006),
+        ], FUR, sides=8)
+        set_pivot(ear, (side * .034, .235, .195))
+        eye = sphere(f'Rabbit_Eye_{side}', (side * .050, .215, .245), .014, EYE)
+        parts += [ear, eye]
+    for part in parts:
+        part.parent = head
+        part.matrix_parent_inverse = head.matrix_world.inverted()
+
+    for name, x, z in (('FL', -.048, .09), ('FR', .048, .09)):
+        leg = loft_y(f'Rabbit_Leg{name}', [
+            ((x, .155, z), .034, .040),
+            ((x, .095, z + .01), .022, .024),
+            ((x, .040, z + .02), .016, .018),
+            ((x, .008, z + .03), .016, .026),
+        ], FUR, sides=8)
+        set_pivot(leg, (x, .155, z))
+    for name, x, z in (('BL', -.060, -.07), ('BR', .060, -.07)):
+        leg = loft_y(f'Rabbit_Leg{name}', [
+            ((x, .185, z), .058, .072),      # the haunch, carried into the leg
+            ((x, .120, z - .02), .040, .050),
+            ((x, .060, z + .01), .022, .030),
+            ((x, .018, z + .05), .020, .056),
+        ], FUR, sides=8)
+        set_pivot(leg, (x, .185, z))
+    loft_z('Rabbit_Tail', [
+        ((0, .165, -.205), .030, .028),
+        ((0, .160, -.245), .022, .020),
+    ], FUR_PALE, sides=8)
     export('rabbit_v3.glb')
 
 
