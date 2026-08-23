@@ -118,7 +118,25 @@ await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
   ls.simulate(90);
-  ls.freecam(15.2, 1.72, 0, 25.2, 1.55, 0, 62);
+  const home = ls.game.siloWorld.homes
+    .filter((candidate) => Math.abs(candidate.position.y) < .1)
+    .sort((a, b) => (Math.abs(a.position.z) + Math.abs(a.position.x - 24.6)) -
+      (Math.abs(b.position.z) + Math.abs(b.position.x - 24.6)))[0];
+  if (!home) throw new Error('no level-one home available for visual QA');
+
+  // Review the authored apartment itself. The gallery/stair shot already
+  // covers the full environment; hiding unrelated rings here prevents a view
+  // through the doorway from paying to draw the other 125 homes.
+  for (const child of ls.game.silo.children) {
+    if (child.isPointLight) {
+      child.visible = child.position.y < 4.2 && child.position.x > 14 && Math.abs(child.position.z) < 9;
+      continue;
+    }
+    if (child === home || child === ls.game.camera || child.isAmbientLight ||
+        child.isHemisphereLight || child.isDirectionalLight) continue;
+    child.visible = false;
+  }
+  ls.freecam(20.35, 1.65, 0, 28.2, 1.45, 0, 58);
   ls.game.camera.far = 18;
   ls.game.camera.updateProjectionMatrix();
 });
