@@ -22,6 +22,7 @@ export function createGameWorld(assets) {
 
   const player = new THREE.Group();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.035, 180);
+  const _cullPoint = new THREE.Vector3();   // reused: light culling runs every frame
   camera.rotation.order = 'YXZ';
   camera.position.set(0, 1.67, 0);
   player.add(camera);
@@ -396,7 +397,10 @@ export function createGameWorld(assets) {
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
-    if (world === 'silo') siloWorld?.update(dt, playerPosition);
+    // Cull the silo's lights around the camera rather than the body. In play
+    // they are the same place; with the debug free camera they are not, and a
+    // room the camera is standing in went dark because the body was elsewhere.
+    if (world === 'silo') siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);

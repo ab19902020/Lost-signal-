@@ -690,7 +690,9 @@ def build_landing():
     clear_scene()
     span = (WELL_RADIUS + .3 - STAIR_RADIUS) / 2
     half = 1.8
-    cube('Landing_Deck', (0, -.09, 0), (half, .09, span), DECKPLATE, edge=.02)
+    # Ten millimetres below the walkway it laps onto. Flush, the two decks are
+    # coplanar over the overlap and the floor flickers as you cross onto it.
+    cube('Landing_Deck', (0, -.10, 0), (half, .09, span), DECKPLATE, edge=.02)
     cube('Landing_Plate', (0, -.24, 0), (half * .97, .07, span * .99), STEEL, edge=.02)
     # Bright threshold strips make the two joins readable in the dim shaft and
     # expose a gap immediately in a screenshot if the landing drifts.
@@ -968,12 +970,9 @@ def build_apartment():
     for side in (-1, 1):
         cube(f'Apt_Side_{side}', (side * half_w, height / 2, 0), (.18, height / 2, half_d),
              CREAM, edge=.04)
-    panel = (half_w - DOOR_HALF) / 2
-    for side in (-1, 1):
-        cube(f'Apt_Front_{side}', (side * (DOOR_HALF + panel), height / 2, -half_d),
-             (panel, height / 2, .18), CREAM, edge=.04)
-    cube('Apt_FrontLintel', (0, (height + 2.24) / 2, -half_d),
-         (DOOR_HALF, (height - 2.24) / 2, .18), CREAM, edge=.04)
+    # No front wall here. The level ring already builds the wall of front doors
+    # at this radius, and a second one in the same place is two coplanar
+    # surfaces fighting over every pixel of the doorway.
 
     # Coved ceiling: a stepped tray with the light washing the recess, and
     # small downlights in the flat.
