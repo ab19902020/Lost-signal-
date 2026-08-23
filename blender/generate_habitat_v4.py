@@ -300,10 +300,13 @@ STEEL = mat('HabSteel', (.21, .23, .22), .78, .36)
 BRUSHED = mat('HabBrushed', (.35, .37, .35), .72, .32)
 DARK = mat('HabDarkSteel', (.06, .065, .062), .74, .42)
 PAINT = mat('HabPaint', (.19, .24, .22), .10, .62)
+# The gallery wall is the same warm plaster the homes are finished in, not
+# a cold grey-green. It is most of what you look at walking the silo.
+FACADE = mat('HabFacade', (.46, .42, .35), 0, .84)
 DOORPAINT = mat('HabDoorPaint', (.15, .28, .30), .20, .48)
 WARM = mat('HabWarmWood', (.30, .19, .11), 0, .68)
 # Lit from inside: a wall of these is what makes the silo read as lived in.
-WARMWINDOW = mat('HabWarmWindow', (.42, .27, .12), 0, .35, (1.0, .64, .30), 3.2)
+WARMWINDOW = mat('HabWarmWindow', (.42, .27, .12), 0, .35, (1.0, .64, .30), 1.5)
 CLOTH = mat('HabCloth', (.22, .24, .21), 0, .86)
 BONE = mat('HabBone', (.68, .66, .60), 0, .88)
 INNER = mat('HabInnerWall', (.60, .58, .53), 0, .86)
@@ -444,10 +447,10 @@ def build_level():
         for k in (-1, 1):
             offset = k * (DOOR_HALF + .12 + panel_half)
             ring_piece(f'Front_{i}_{k}', a, wall_mid, offset, LEVEL_HEIGHT / 2,
-                       .15, LEVEL_HEIGHT / 2, panel_half, PAINT, edge=.03)
+                       .15, LEVEL_HEIGHT / 2, panel_half, FACADE, edge=.03)
         # Head of the wall over the opening.
         ring_piece(f'Lintel_{i}', a, wall_mid, 0, (LEVEL_HEIGHT + 2.24) / 2,
-                   .15, (LEVEL_HEIGHT - 2.24) / 2, DOOR_HALF + .12, PAINT, edge=.03)
+                   .15, (LEVEL_HEIGHT - 2.24) / 2, DOOR_HALF + .12, FACADE, edge=.03)
         # A frame around the opening rather than a block filling it: jambs
         # either side and a head, with the doorway itself left open.
         for k in (-1, 1):
@@ -460,10 +463,12 @@ def build_level():
 
         # A painted dado to waist height with a capping bead, and a skirting.
         # A four-metre run of one flat colour reads as a blank, not a wall.
-        ring_piece(f'Dado_{i}', a, face - .02, 0, .55, .02, .55, front_half,
-                   DOORPAINT, edge=.008)
-        ring_piece(f'DadoCap_{i}', a, face - .04, 0, 1.12, .04, .03, front_half,
-                   BRUSHED, edge=.008)
+        ring_piece(f'Dado_{i}', a, face - .02, 0, 1.20, .02, .17, front_half,
+                   TILEBAND, edge=.008)
+        ring_piece(f'DadoCap_{i}', a, face - .04, 0, 1.38, .04, .022, front_half,
+                   BRASS, edge=.008)
+        ring_piece(f'Plinth_{i}', a, face - .03, 0, .50, .03, .50, front_half,
+                   PAINT, edge=.008)
         ring_piece(f'Skirting_{i}', a, face - .05, 0, .09, .05, .09, front_half,
                    DARK, edge=.01)
 
@@ -777,17 +782,18 @@ def house_plant(name, x, z, scale=1.0):
         ((x, .34 * scale, z), .23 * scale, .23 * scale),
         ((x, .40 * scale, z), .25 * scale, .25 * scale),
     ], POTTERY, sides=12, subdiv=1)
-    # Blades standing up out of the pot and fanning outward, rather than flat
-    # cards lying in the air.
-    for k in range(9):
-        t = k * math.tau / 9 + .4
-        tier = k % 3
-        lean = (.16 + tier * .10) * scale
-        y = (.72 + tier * .20) * scale
+    # Many narrow blades rather than a handful of broad flat cards: nine big
+    # rectangles crossing each other reads as cardboard, however you angle it.
+    for k in range(15):
+        t = k * math.tau / 15 * 2.1 + .4
+        tier = k % 4
+        lean = (.10 + tier * .055) * scale
+        y = (.62 + tier * .13) * scale
+        tilt = (.22 + tier * .13) * (1 if k % 2 else -1)
         cube(f'{name}_Leaf_{k}',
              (x + math.cos(t) * lean, y, z + math.sin(t) * lean),
-             (.14 * scale, .34 * scale, .014 * scale), LEAF,
-             rotation=(0, -t, .52 if k % 2 else -.44), edge=.06)
+             (.045 * scale, (.40 - tier * .05) * scale, .009 * scale), LEAF,
+             rotation=(0, -t, tilt), edge=.02)
 
 
 def build_apartment():
@@ -813,24 +819,109 @@ def build_apartment():
 
     # Room plan, in metres from the middle of the home. src/silo.js builds the
     # collision from the same numbers — keep the two in step.
-    HALL_BACK = -3.0
-    KITCHEN_X = -.85
-    KITCHEN_BACK = -.70
-    BED_FRONT = 1.30
+    HALL_BACK = -3.20
+    KITCHEN_X = -.90
+    KITCHEN_BACK = -.60
+    BED_FRONT = 1.60
     DOOR_W = .48            # half-width of a bedroom portal
     WIDE_W = .85            # half-width of the living-room portal
     SPRING = 1.72           # springing line of every arch
     T = .10
 
+    walls = []          # every partition, for the layout check at the end
+
     def part_z(name, zc, x0, x1, y0=0.0, y1=height, material=CREAM):
         if x1 - x0 < .02:
             return None
+        walls.append((name, x0, x1, zc - T, zc + T, y0, y1))
         return cube(name, ((x0 + x1) / 2, (y0 + y1) / 2, zc),
                     ((x1 - x0) / 2, (y1 - y0) / 2, T), material, edge=.02)
 
     def part_x(name, xc, z0, z1, y0=0.0, y1=height, material=CREAM):
+        walls.append((name, xc - T, xc + T, z0, z1, y0, y1))
         return cube(name, (xc, (y0 + y1) / 2, (z0 + z1) / 2),
                     (T, (y1 - y0) / 2, (z1 - z0) / 2), material, edge=.02)
+
+    def check_layout():
+        """Fail the build if a piece of furniture is standing inside a wall.
+
+        The rooms are laid out by hand in metres and the furniture is placed by
+        hand in metres, so it is entirely possible — and it happened — to put
+        the sofa half inside the bedroom partition and the wardrobe through the
+        bed. Cheap to check, and impossible to see from a screenshot taken from
+        the wrong side of the room.
+        """
+        skip = ('Apt_P1', 'Apt_P2', 'Apt_P3', 'Apt_P4', 'Apt_Portal', 'Apt_Band',
+                'Apt_Mul', 'Apt_Front', 'Apt_Back', 'Apt_Side', 'Apt_Ceiling',
+                'Apt_Cove', 'Apt_Floor', 'Apt_Carpet', 'Apt_Down', 'Apt_Hatch',
+                'Apt_Art', 'Apt_Hook', 'Apt_Splashback', 'Apt_Skirting')
+        bad = []
+        for o in list(bpy.context.scene.objects):
+            if o.type != 'MESH' or any(o.name.startswith(k) for k in skip):
+                continue
+            corners = [o.matrix_world @ Vector(c) for c in o.bound_box]
+            ox0, ox1 = min(c.x for c in corners), max(c.x for c in corners)
+            oz0, oz1 = min(c.z for c in corners), max(c.z for c in corners)
+            oy0, oy1 = min(c.y for c in corners), max(c.y for c in corners)
+            for wname, wx0, wx1, wz0, wz1, wy0, wy1 in walls:
+                ox = min(ox1, wx1) - max(ox0, wx0)
+                oz = min(oz1, wz1) - max(oz0, wz0)
+                oy = min(oy1, wy1) - max(oy0, wy0)
+                if ox > .06 and oz > .06 and oy > .06:
+                    bad.append(f'{o.name} is {min(ox, oz):.2f} m inside {wname}')
+                    break
+        # ...and furniture standing inside other furniture. A wardrobe through
+        # a bed and a desk through the bunks both survived a screenshot.
+        def group(n):
+            return '_'.join(n.split('_')[:2])
+
+        # Things that belong inside other things.
+        NESTED = (('Apt_Books', 'Apt_Shelf'), ('Apt_Jar', 'Apt_Shelf'),
+                  ('Apt_Vessel', 'Apt_Console'), ('Apt_Pot_', 'Apt_Coffee'),
+                  ('Apt_Bowl', 'Apt_Table'), ('Apt_Key', 'Apt_Desk'),
+                  ('Apt_Pillow', 'Apt_Bunk'), ('Apt_Blanket', 'Apt_Bunk'),
+                  ('Apt_Mattress', 'Apt_Bunk'), ('Apt_Pillow', 'Apt_BedA'),
+                  ('Apt_Blanket', 'Apt_BedA'), ('Apt_Mattress', 'Apt_BedA'),
+                  ('Apt_Cushion', 'Apt_Sofa'), ('Apt_Ladder', 'Apt_Bunk'),
+                  ('Apt_WardrobeDoor', 'Apt_Wardrobe'),
+                  ('Apt_WardrobeKnob', 'Apt_Wardrobe'),
+                  ('Apt_Coat', 'Apt_Hook'), ('Apt_Ring', 'Apt_Hob'),
+                  ('Apt_Sink', 'Apt_Counter'), ('Apt_Hob', 'Apt_Counter'),
+                  ('Apt_Drawer', 'Apt_Counter'), ('Apt_Tap', 'Apt_Counter'),
+                  ('Apt_LarderHandle', 'Apt_Larder'),
+                  ('Apt_Leaf', 'Apt_'), ('Apt_Stem', 'Apt_'))
+
+        def _nested(n1, n2):
+            for inner, outer in NESTED:
+                if (n1.startswith(inner) and n2.startswith(outer)) or \
+                   (n2.startswith(inner) and n1.startswith(outer)):
+                    return True
+            return False
+        pieces = []
+        for o in list(bpy.context.scene.objects):
+            if o.type != 'MESH' or any(o.name.startswith(k) for k in skip):
+                continue
+            corners = [o.matrix_world @ Vector(c) for c in o.bound_box]
+            pieces.append((o.name, group(o.name),
+                           min(c.x for c in corners), max(c.x for c in corners),
+                           min(c.y for c in corners), max(c.y for c in corners),
+                           min(c.z for c in corners), max(c.z for c in corners)))
+        for i in range(len(pieces)):
+            for j in range(i + 1, len(pieces)):
+                a, b = pieces[i], pieces[j]
+                if a[1] == b[1] or _nested(a[0], b[0]):
+                    continue
+                ox = min(a[3], b[3]) - max(a[2], b[2])
+                oy = min(a[5], b[5]) - max(a[4], b[4])
+                oz = min(a[7], b[7]) - max(a[6], b[6])
+                if ox > .15 and oy > .15 and oz > .15:
+                    bad.append(f'{a[0]} and {b[0]} are {min(ox, oy, oz):.2f} m inside each other')
+        if bad:
+            print('LAYOUT FAULTS: %d' % len(bad))
+            for b in bad:
+                print('  -', b)
+            raise SystemExit('apartment layout has furniture inside walls')
+        print('LAYOUT OK: %d walls, no furniture inside one' % len(walls))
 
     def portal(name, xc, zc, half):
         """An arched opening in a cross partition: reveal, arch, wall above."""
@@ -893,7 +984,7 @@ def build_apartment():
              across=False, facing=-side)
 
     # --- Partitions ----------------------------------------------------------
-    kitchen_door, living_gap = -2.05, 1.45
+    kitchen_door, living_gap = -2.05, 1.95
     part_z('Apt_P1_a', HALL_BACK, -half_w, kitchen_door - DOOR_W)
     part_z('Apt_P1_b', HALL_BACK, kitchen_door + DOOR_W, living_gap - WIDE_W)
     part_z('Apt_P1_c', HALL_BACK, living_gap + WIDE_W, half_w)
@@ -902,11 +993,11 @@ def build_apartment():
     band('Apt_BandHall', -half_w + .3, half_w - .3, HALL_BACK, across=True, facing=-1)
 
     part_x('Apt_P2_low', KITCHEN_X, HALL_BACK, KITCHEN_BACK, 0, 1.02)
-    part_x('Apt_P2_high', KITCHEN_X, HALL_BACK, -1.90, 1.02, height)
-    part_x('Apt_P2_head', KITCHEN_X, -1.90, KITCHEN_BACK, 2.20, height)
-    cube('Apt_HatchSill', (KITCHEN_X, 1.06, -1.30), (T + .05, .04, .60), BRASS, edge=.01)
+    part_x('Apt_P2_high', KITCHEN_X, HALL_BACK, -2.10, 1.02, height)
+    part_x('Apt_P2_head', KITCHEN_X, -2.10, KITCHEN_BACK, 2.20, height)
+    cube('Apt_HatchSill', (KITCHEN_X, 1.06, -1.35), (T + .05, .04, .70), BRASS, edge=.01)
 
-    bed_a, bed_b = -1.62, 1.62
+    bed_a, bed_b = -1.70, 1.70
     part_z('Apt_P3_a', BED_FRONT, -half_w, bed_a - DOOR_W)
     part_z('Apt_P3_b', BED_FRONT, bed_a + DOOR_W, bed_b - DOOR_W)
     part_z('Apt_P3_c', BED_FRONT, bed_b + DOOR_W, half_w)
@@ -961,14 +1052,14 @@ def build_apartment():
         for j in range(4):
             cyl(f'Apt_Jar_{shelf}_{j}', (kx - .10, 2.16 + shelf * .40, kz - .78 + j * .52),
                 .062, .22, GLASS if j % 2 else BRASS, rotation=UP, verts=10)
-    cube('Apt_Larder', (kx, 1.05, KITCHEN_BACK - .50), (.40, 1.05, .40), WARM, edge=.03)
-    cube('Apt_LarderHandle', (kx + .42, 1.20, KITCHEN_BACK - .50), (.02, .12, .03), BRASS, edge=.006)
+    cube('Apt_Larder', (-1.48, 1.05, -2.60), (.38, 1.05, .38), WARM, edge=.03)
+    cube('Apt_LarderHandle', (-1.48, 1.20, -3.00), (.10, .12, .02), BRASS, edge=.006)
     cube('Apt_KitchenLight', (kx + .10, 1.94, kz), (.26, .035, .90), WARMLAMP, edge=.012)
 
     # --- Living room ---------------------------------------------------------
-    lx, lz = 1.35, -1.75
+    lx, lz = .55, -1.80
     pendant('Apt_LivPend', lx, lz, height, .80, .24)
-    pendant('Apt_LivPend2', 2.30, .55, height, 1.05, .19)
+    pendant('Apt_LivPend2', 2.10, .35, height, 1.05, .19)
     cube('Apt_Table', (lx, .74, lz), (.96, .05, .58), WARM, edge=.03)
     for tx in (-.78, .78):
         for tz in (-.42, .42):
@@ -982,59 +1073,59 @@ def build_apartment():
             rotation=UP, verts=14)
 
     # The sitting end: a low sofa, a round table, poufs and a tub chair.
-    cube('Apt_Sofa_Base', (1.55, .30, 1.02), (.86, .30, .44), ORANGE, edge=.10)
-    cube('Apt_Sofa_Back', (1.55, .66, 1.38), (1.05, .34, .15), ORANGE, edge=.12)
+    cube('Apt_Sofa_Base', (1.80, .30, .92), (.86, .30, .42), ORANGE, edge=.10)
+    cube('Apt_Sofa_Back', (1.80, .66, 1.28), (1.02, .34, .14), ORANGE, edge=.12)
     for k in (-1, 1):
         loft(f'Apt_Sofa_End_{k}', [
-            ((1.55 + k * .92, .02, 1.02), .20, .44),
-            ((1.55 + k * .92, .34, 1.02), .23, .47),
-            ((1.55 + k * .92, .58, 1.02), .19, .40),
+            ((1.80 + k * .90, .02, .92), .19, .42),
+            ((1.80 + k * .90, .34, .92), .22, .45),
+            ((1.80 + k * .90, .58, .92), .18, .38),
         ], ORANGE, sides=12, subdiv=1)
     for cx in (-.52, .52):
-        cube(f'Apt_Cushion_{cx}', (1.55 + cx, .64, .96), (.44, .09, .36), CLOTH, edge=.06)
+        cube(f'Apt_Cushion_{cx}', (1.80 + cx, .64, .86), (.40, .09, .34), CLOTH, edge=.06)
     loft('Apt_CoffeeTop', [
-        ((1.30, .34, .05), .46, .46),
-        ((1.30, .40, .05), .48, .48),
-        ((1.30, .44, .05), .44, .44),
+        ((1.85, .34, .05), .44, .44),
+        ((1.85, .40, .05), .46, .46),
+        ((1.85, .44, .05), .42, .42),
     ], BRASS, sides=16, subdiv=1)
-    cyl('Apt_CoffeeStem', (1.30, .17, .05), .07, .34, STEEL, rotation=UP, verts=12)
+    cyl('Apt_CoffeeStem', (1.85, .17, .05), .07, .34, STEEL, rotation=UP, verts=12)
     for i, (ox, oz) in enumerate(((-.16, -.10), (.10, .12), (.20, -.14))):
         loft(f'Apt_Pot_{i}', [
-            ((1.30 + ox, .45, .05 + oz), .045, .045),
-            ((1.30 + ox, .53, .05 + oz), .075, .075),
-            ((1.30 + ox, .60, .05 + oz), .05, .05),
+            ((1.85 + ox, .45, .05 + oz), .045, .045),
+            ((1.85 + ox, .53, .05 + oz), .075, .075),
+            ((1.85 + ox, .60, .05 + oz), .05, .05),
         ], BRASS if i % 2 else POTTERY, sides=10, subdiv=1)
-    pouf('Apt_Pouf_1', .20, .30, .40, .38, POTTERY)
-    pouf('Apt_Pouf_2', 2.55, -.35, .36, .34, TILEBAND)
-    tub_chair('Apt_Tub', -.10, -.55, 0.7)
-    cube('Apt_Rug', (1.35, .01, .35), (1.55, .01, 1.05), TILEBAND, edge=.01)
-    cube('Apt_Shelf_Tall', (half_w - .42, 1.30, -2.30), (.24, 1.30, .66), WARM, edge=.03)
+    pouf('Apt_Pouf_1', .35, -.05, .40, .38, POTTERY)
+    pouf('Apt_Pouf_2', 2.85, .10, .36, .34, TILEBAND)
+    tub_chair('Apt_Tub', 2.55, -.90, 2.2)
+    cube('Apt_Rug', (1.75, .01, .20), (1.25, .01, 1.05), TILEBAND, edge=.01)
+    cube('Apt_Shelf_Tall', (half_w - .55, 1.30, -2.20), (.22, 1.30, .62), WARM, edge=.03)
     for b in range(4):
-        cube(f'Apt_Books_{b}', (half_w - .42, .38 + b * .62, -2.30 + (b % 2) * .2),
-             (.18, .16, .44), ORANGE if b % 2 else AMBER, edge=.01)
-    house_plant('Apt_LivPlant', -.45, .95, 1.15)
+        cube(f'Apt_Books_{b}', (half_w - .55, .38 + b * .62, -2.20 + (b % 2) * .18),
+             (.16, .16, .40), ORANGE if b % 2 else AMBER, edge=.01)
+    house_plant('Apt_LivPlant', -.40, .60, 1.05)
 
     # --- Bedroom A: the parents' room ----------------------------------------
-    ax, az = -1.65, BED_FRONT + 1.9
+    ax, az = -1.78, BED_FRONT + 1.50
     cube('Apt_BedA_Frame', (ax, .30, az), (.98, .18, 1.05), WARM, edge=.04)
     cube('Apt_BedA_Mattress', (ax, .54, az), (.94, .12, 1.00), CLOTH, edge=.07)
     cube('Apt_BedA_Blanket', (ax, .58, az + .25), (.95, .09, .74), ORANGE, edge=.07)
     for k in (-1, 1):
         cube(f'Apt_BedA_Pillow_{k}', (ax + k * .44, .68, az - .78), (.40, .09, .24), BONE, edge=.05)
     cube('Apt_BedA_Head', (ax, .86, az - 1.08), (.98, .56, .06), TILEBAND, edge=.03)
-    cube('Apt_BedA_Table', (ax + 1.25, .32, az - .85), (.26, .32, .26), WARM, edge=.03)
-    pendant('Apt_BedA_Pend', ax + 1.25, az - .85, height, 1.60, .13)
-    cube('Apt_Wardrobe', (-half_w + .55, 1.10, half_d - .70), (.42, 1.10, .62), WARM, edge=.04)
+    cube('Apt_BedA_Table', (-.48, .32, az - .88), (.24, .32, .24), WARM, edge=.03)
+    pendant('Apt_BedA_Pend', -.48, az - .88, height, 1.60, .13)
+    cube('Apt_Wardrobe', (-.62, 1.10, half_d - .48), (.46, 1.10, .34), WARM, edge=.04)
     for k in (-1, 1):
-        cube(f'Apt_WardrobeDoor_{k}', (-half_w + .96, 1.10, half_d - .70 + k * .31),
-             (.02, 1.02, .28), TILEBAND, edge=.012)
-        cube(f'Apt_WardrobeKnob_{k}', (-half_w + .99, 1.10, half_d - .70 + k * .10),
-             (.02, .03, .03), BRASS, edge=.006)
+        cube(f'Apt_WardrobeDoor_{k}', (-.62 + k * .23, 1.10, half_d - .83),
+             (.21, 1.02, .02), TILEBAND, edge=.012)
+        cube(f'Apt_WardrobeKnob_{k}', (-.62 + k * .05, 1.06, half_d - .86),
+             (.03, .03, .02), BRASS, edge=.006)
     cube('Apt_BedA_Light', (ax, height - .16, az), (.22, .04, .22), WARMLAMP, edge=.015)
-    pouf('Apt_BedA_Pouf', ax - .10, BED_FRONT + .55, .32, .30, ORANGE)
+    pouf('Apt_BedA_Pouf', -2.72, BED_FRONT + .62, .32, .30, ORANGE)
 
     # --- Bedroom B: the children's room --------------------------------------
-    bx2, bz = 1.75, BED_FRONT + 2.0
+    bx2, bz = 1.28, BED_FRONT + 1.62
     for bunk in range(2):
         y = .48 + bunk * 1.12
         cube(f'Apt_BunkFrame_{bunk}', (bx2, y, bz), (.95, .07, 1.02), WARM, edge=.03)
@@ -1048,14 +1139,15 @@ def build_apartment():
     for r in range(3):
         cube(f'Apt_Ladder_Rung_{r}', (bx2 - .50, .50 + r * .40, bz - 1.1), (.34, .03, .03),
              BRASS, edge=.008)
-    cube('Apt_Desk', (half_w - .55, .72, half_d - .70), (.42, .04, .58), WARM, edge=.02)
-    for dz in (-.48, .48):
-        cube(f'Apt_DeskLeg_{dz}', (half_w - .55, .36, half_d - .70 + dz), (.38, .36, .04),
+    cube('Apt_Desk', (2.72, .72, half_d - 1.30), (.34, .04, .55), WARM, edge=.02)
+    for dz in (-.46, .46):
+        cube(f'Apt_DeskLeg_{dz}', (2.72, .36, half_d - 1.30 + dz), (.30, .36, .04),
              BRASS, edge=.01)
-    cube('Apt_DeskLamp', (half_w - .55, .92, half_d - 1.10), (.09, .15, .09), WARMLAMP, edge=.02)
-    cube('Apt_ToyCrate', (.55, .22, half_d - .55), (.34, .22, .28), ORANGE, edge=.04)
+    cube('Apt_DeskLamp', (2.72, .92, half_d - 1.70), (.09, .15, .09), WARMLAMP, edge=.02)
+    cube('Apt_ToyCrate', (.55, .22, half_d - .45), (.32, .22, .26), ORANGE, edge=.04)
     cube('Apt_BedB_Light', (bx2, height - .16, bz), (.22, .04, .22), WARMLAMP, edge=.015)
 
+    check_layout()
     join_all('HabApartment')
     export('hab_apartment_v4.glb')
 

@@ -57,6 +57,15 @@ jobs:
       - name: Generate Blender habitation silo kit
         run: blender -b --python-exit-code 1 --python blender/generate_habitat_v4.py
 
+      - name: Check the apartment layout
+        run: |
+          # The habitat generator prints LAYOUT OK when no furniture is
+          # standing inside a wall or inside another piece of furniture. It
+          # raises on a fault, so the generate step above already failed —
+          # this makes the reason obvious in the log.
+          blender -b --python-exit-code 1 --python blender/generate_habitat_v4.py 2>&1 \
+            | grep -E 'LAYOUT (OK|FAULTS)' || { echo 'no layout report'; exit 1; }
+
       - name: Detach placeholder images so the shared textures load
         run: node tools/externalize-glb-images.mjs
 

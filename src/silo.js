@@ -73,8 +73,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const deckMid = (deckOuter + wellRadius) / 2;
   const deckHalf = (deckOuter - wellRadius) / 2;
 
-  scene.background = new THREE.Color(0x070b10);
-  scene.fog = new THREE.FogExp2(0x0d1620, 0.0115);
+  scene.background = new THREE.Color(0x0b0906);
+  scene.fog = new THREE.FogExp2(0x171208, 0.0115);
 
   place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
 
@@ -233,8 +233,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         const along = (x, z0, z1) => colliders.addBox(
           ringBox(angle + x / centre, centre + (z0 + z1) / 2, T, (z1 - z0) / 2, y, top), {});
 
-        const HALL_BACK = -3.0, KITCHEN_X = -0.85, KITCHEN_BACK = -0.70, BED_FRONT = 1.30;
-        const kitchenDoor = -2.05, livingGap = 1.45, bedA = -1.62, bedB = 1.62;
+        const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
+        const kitchenDoor = -2.05, livingGap = 1.95, bedA = -1.70, bedB = 1.70;
         across(HALL_BACK, -halfW, kitchenDoor - DW);
         across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
         across(HALL_BACK, livingGap + WIDE, halfW);
@@ -416,8 +416,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A silo is lit level by level. Strip lights over the doors give each gallery
   // its own band of light, and the well between them stays dim, which is what
   // sells the drop.
-  scene.add(new THREE.HemisphereLight(0x7c9cb6, 0x181d22, 1.3));
-  scene.add(new THREE.AmbientLight(0x50647a, 0.62));
+  // Warm. The silo used to be lit with a blue sky light and a blue ambient,
+  // which turned every wall in it cold grey-blue — the opposite of how the
+  // living spaces are meant to read.
+  scene.add(new THREE.HemisphereLight(0x9a8f7c, 0x1c1814, 1.25));
+  scene.add(new THREE.AmbientLight(0x5f5648, 0.60));
 
   // A hemisphere light barely touches a vertical wall — its contribution is
   // driven by how much of the surface faces up — so the shaft's tall surfaces,
@@ -425,7 +428,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // opposed directionals light every vertical face regardless of distance, at
   // the cost of two lights rather than one per level.
   for (const [dx, dz] of [[1, 0.35], [-1, -0.35]]) {
-    const wash = new THREE.DirectionalLight(0x9fb8cf, 0.42);
+    const wash = new THREE.DirectionalLight(0xc6b49c, 0.42);
     wash.position.set(dx * 40, shaftHeight * 0.6, dz * 40);
     wash.target.position.set(0, shaftHeight * 0.35, 0);
     scene.add(wash, wash.target);
@@ -478,7 +481,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
-    const fill = new THREE.PointLight(0x8fb0cc, 210, 46, 1.5);
+    const fill = new THREE.PointLight(0xc7b49a, 210, 46, 1.5);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
       Math.sin(angle) * fillRadius);
@@ -488,7 +491,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xd6e6f2, 2400, shaftHeight + 12, 0.5, 0.7, 2);
+  const crown = new THREE.SpotLight(0xe8dcc6, 2400, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);
