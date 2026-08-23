@@ -61,8 +61,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const stairMid = stairColumn + treadDepth;
   const goingHalf = (stairTurn / stairSteps) * stairRadius / 2 * 1.06;
   const landingHalf = 1.8;
-  // Matches the Blender ring: the treads at the foot of a flight whose outer
-  // balustrade is open, so the stair discharges onto the landing.
+  // Matches the Blender stair: treads beside a landing at either end of a
+  // flight have no outer balustrade, so both arrival and departure stay open.
   const landingSteps = Math.max(2,
     Math.round((landingHalf / stairRadius) / (stairTurn / stairSteps)) + 1);
 

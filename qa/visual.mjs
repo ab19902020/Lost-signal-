@@ -52,14 +52,17 @@ const browser = await chromium.launch({
 });
 
 const errors = [];
-const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+// Balanced keeps the same authored materials, lighting, bloom and grading as
+// the game while avoiding the extra ambient-occlusion pass that makes a suite
+// of software-rendered CI screenshots needlessly slow.
+const desktop = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 desktop.on('console', (message) => {
   if (message.type() === 'error') errors.push(message.text().slice(0, 240));
 });
 desktop.on('pageerror', (error) => errors.push(String(error).slice(0, 240)));
 const stopDesktopPump = await pumpFrames(desktop);
 
-await boot(desktop, 'high');
+await boot(desktop, 'balanced');
 await save(desktop, '01-bunker-player-view');
 
 await desktop.evaluate(() => {
@@ -70,13 +73,16 @@ await desktop.evaluate(() => {
 });
 await save(desktop, '02-bunker-overview');
 
-await desktop.evaluate(() => {
+const hatchRotation = await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('bunker');
   ls.game.setHatchOpen(true);
   ls.simulate(120);
+  const rotation = ls.game.bunker.getObjectByName('Hatch_Hinge')?.rotation.x || 0;
   ls.freecam(-3.9, 1.85, 4.9, -1.75, .65, 3.35, 56);
+  return rotation;
 });
+if (hatchRotation < 1.2) throw new Error(`hatch lid did not open (${hatchRotation.toFixed(2)} rad)`);
 await save(desktop, '03-open-silo-hatch');
 
 await desktop.evaluate(() => {
@@ -125,6 +131,13 @@ mobile.on('console', (message) => {
 mobile.on('pageerror', (error) => errors.push(String(error).slice(0, 240)));
 const stopMobilePump = await pumpFrames(mobile);
 await boot(mobile, 'mobile');
+const mobileOverlap = await mobile.evaluate(() => {
+  const help = document.getElementById('helpBtn').getBoundingClientRect();
+  const stats = document.getElementById('stats').getBoundingClientRect();
+  return Math.max(0, Math.min(help.right, stats.right) - Math.max(help.left, stats.left)) *
+    Math.max(0, Math.min(help.bottom, stats.bottom) - Math.max(help.top, stats.top));
+});
+if (mobileOverlap > 0) throw new Error(`mobile help button overlaps survival stats by ${mobileOverlap}px²`);
 await save(mobile, '08-mobile-landscape');
 await stopMobilePump();
 await mobile.close();
