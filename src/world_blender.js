@@ -175,6 +175,14 @@ export function createGameWorld(assets) {
   if (siloWorld) {
     const hatch = place(assets.accessHatch, bunker, [-1.75,0,3.35], [0,0,0], 1, { climbable: true });
     const hatchWheel = findNamed(hatch,'Hatch_Wheel') || hatch;
+    const hatchVoid = findNamed(hatch, 'Hatch_Void');
+    if (hatchVoid?.isMesh) {
+      // This represents empty depth, not painted metal: keep it black under
+      // the shelter's bright practical lights even if the GLB is rebuilt by an
+      // older Blender version with slightly different material conversion.
+      hatchVoid.position.y = Math.max(hatchVoid.position.y, .135);
+      hatchVoid.material = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
+    }
 
     // The exported pieces stay separate so the lid, bolts and wheel can move as
     // one assembly. Reparent them around the rear rim while preserving their

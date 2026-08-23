@@ -1428,7 +1428,10 @@ def build_access_hatch():
     cyl('Hatch_Ring', (0, .10, 0), .92, .10, BRUSHED, rotation=UP, verts=32, edge=.015)
     # A dark throat beneath the moving lid keeps an opened hatch from revealing
     # the shelter floor mesh underneath it.
-    cyl('Hatch_Void', (0, .105, 0), .77, .035, VOID, rotation=UP, verts=32, edge=.01)
+    # Keep the cap clearly above the frame's top face. A 2.5 mm separation was
+    # lost to raster precision and the reflective frame showed through as a
+    # grey plate when the lid opened.
+    cyl('Hatch_Void', (0, .135, 0), .77, .025, VOID, rotation=UP, verts=32, edge=.01)
     cyl('Hatch_Lid', (0, .17, 0), .84, .10, STEEL, rotation=UP, verts=32, edge=.02)
     for i in range(8):
         a = i * math.tau / 8
