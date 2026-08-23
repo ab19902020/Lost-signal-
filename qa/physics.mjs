@@ -238,7 +238,10 @@ results.silo = await page.evaluate(async () => {
       const before = previousLightState.slots[slot];
       const after = nextLightState.slots[slot];
       maxSlotStep = Math.max(maxSlotStep, Math.abs(after.intensity - before.intensity));
-      if (before.source !== after.source && Math.max(before.intensity, after.intensity) > 0.05) {
+      // Reusing a dark slot is expected. What caused the recording's flash was
+      // moving the *old* source while it was still bright; the separately
+      // measured maxSlotStep limits how quickly the replacement may fade in.
+      if (before.source !== after.source && before.source !== -1 && before.intensity > 0.05) {
         hotSwaps++;
       }
     }
