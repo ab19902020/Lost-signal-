@@ -194,7 +194,12 @@ await desktop.evaluate(() => {
     const isShell = child.getObjectByName?.('HabShell');
     if (!isShell && Math.abs(child.position.y - reviewY) > 5.2) child.visible = false;
   }
-  ls.game.siloWorld.update(1, { x: 15.4, y: reviewY + 1.65, z: 0 });
+  // A free camera does not move the player, so prime the finite light pool at
+  // the exact review position. One large update only fades the old floor's
+  // assignments; fixed frames let those slots go dark, move, and fade back in
+  // exactly as they do during play.
+  const reviewPosition = { x: 15.4, y: reviewY + 1.65, z: 0 };
+  for (let i = 0; i < 180; i++) ls.game.siloWorld.update(1 / 60, reviewPosition);
   ls.freecam(15.4, reviewY + 1.65, 0, 18.7, reviewY + 1.55, 5.1, 64);
   ls.game.camera.near = .08;
   ls.game.camera.far = 25;
@@ -239,6 +244,12 @@ await desktop.evaluate(() => {
   if (!home) throw new Error('no level-one home available for visual QA');
   home.visible = true;
 
+  // `world('silo')` puts the real player on the top landing. Settle the pooled
+  // lights beside this ground-floor doorway before deciding which nearby
+  // fixtures belong in the apartment proof image.
+  const homeReviewPosition = { x: 20.35, y: 1.65, z: -1.95 };
+  for (let i = 0; i < 180; i++) ls.game.siloWorld.update(1 / 60, homeReviewPosition);
+
   // Review the authored apartment itself. The gallery/stair shot already
   // covers the full environment; hiding unrelated rings here prevents a view
   // through the doorway from paying to draw the other 125 homes.
@@ -258,7 +269,9 @@ await desktop.evaluate(() => {
   ls.game.camera.far = 18;
   ls.game.camera.updateProjectionMatrix();
 });
-await saveChecked(desktop, '06-silo-home', { maxMean: 0.5, maxBright: 0.055 });
+await saveChecked(desktop, '06-silo-home', {
+  minMean: 0.06, maxMean: 0.5, maxDark: 0.82, maxBright: 0.055,
+});
 
 await stopDesktopPump();
 await desktop.close();
