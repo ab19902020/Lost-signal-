@@ -73,8 +73,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const deckMid = (deckOuter + wellRadius) / 2;
   const deckHalf = (deckOuter - wellRadius) / 2;
 
-  scene.background = new THREE.Color(0x0b0906);
-  scene.fog = new THREE.FogExp2(0x171208, 0.0115);
+  scene.background = new THREE.Color(0x120e0b);
+  scene.fog = new THREE.FogExp2(0x211810, 0.0095);
 
   place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
 
@@ -271,8 +271,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         // A home is six and a half metres by ten with partitions in it. These
         // were tuned when it was one open room and left every flat a murky
         // brown box once it had rooms and a ceiling.
-        for (const [depth, base] of [[2.2, 26], [5.0, 30], [8.4, 24]]) {
-          const lamp = new THREE.PointLight(0xffc078, base, 12, 2);
+        for (const [depth, base] of [[2.2, 9], [5.0, 12], [8.4, 8]]) {
+          const lamp = new THREE.PointLight(0xffc78f, base, 9.5, 2);
           lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 3.15,
             Math.sin(angle) * (deckOuter + depth));
           lamp.visible = false;
@@ -342,7 +342,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     colliders.addRing({ innerRadius: 0, outerRadius: wellRadius + 1.7,
       minY: crownY - 0.6, maxY: crownY + 1.2 });
     // The oculus reads as the light source, so there is one behind it.
-    const oculus = new THREE.PointLight(0xf2e6cc, 210, 30, 1.7);
+    const oculus = new THREE.PointLight(0xf2e6cc, 140, 30, 1.7);
     oculus.position.set(0, crownY - 0.9, 0);
     scene.add(oculus);
   }
@@ -593,7 +593,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xe8dcc6, 1500, shaftHeight + 12, 0.5, 0.7, 2);
+  const crown = new THREE.SpotLight(0xe8dcc6, 900, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);

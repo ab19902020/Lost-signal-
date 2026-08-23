@@ -8,11 +8,14 @@ export const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
     time: { value: 0 },
-    vignette: { value: 0.52 },
-    grain: { value: 0.03 },
-    aberration: { value: 0.0016 },
-    contrast: { value: 1.06 },
-    saturation: { value: 0.94 },
+    // Keep the lens treatment visible without letting it obscure authored
+    // detail on a small phone screen. The previous combination crushed the
+    // corners and laid a coarse noise field over every concrete surface.
+    vignette: { value: 0.44 },
+    grain: { value: 0.022 },
+    aberration: { value: 0.0012 },
+    contrast: { value: 1.04 },
+    saturation: { value: 0.96 },
     lift: { value: new THREE.Color(0x0b1113) },
     damage: { value: 0 },
   },
