@@ -136,7 +136,10 @@ await desktop.evaluate(() => {
         child.isHemisphereLight || child.isDirectionalLight) continue;
     child.visible = false;
   }
-  ls.freecam(20.35, 1.65, 0, 28.2, 1.45, 0, 58);
+  // Bay zero rotates the apartment's local +X axis toward world -Z. Offset
+  // onto the living-room portal instead of staring into the partition between
+  // the kitchen and living openings.
+  ls.freecam(20.35, 1.65, -1.95, 28.2, 1.45, -1.95, 58);
   ls.game.camera.far = 18;
   ls.game.camera.updateProjectionMatrix();
 });
