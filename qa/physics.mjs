@@ -213,6 +213,45 @@ results.silo = await page.evaluate(async () => {
     active: head.lightState().active,
   };
 
+  // The supplied mobile recording flickered while the player moved, because
+  // a finite light pool reassigned still-bright lights to new fixtures. Walk a
+  // clear residential gallery with the real controller and inspect every slot
+  // on every fixed frame. A slot may move only after it has faded effectively
+  // to black; otherwise a whole wall visibly pops from lit to unlit.
+  const motionStartAngle = 0.42;
+  ls.body.teleport(Math.cos(motionStartAngle) * 16.4, 12.5,
+    Math.sin(motionStartAngle) * 16.4);
+  settle(180);
+  const motionStart = ls.body.position.clone();
+  let previousLightState = head.lightState();
+  let hotSwaps = 0;
+  let maxSlotStep = 0;
+  let maxEnergyStep = 0;
+  for (let i = 0; i < 360; i++) {
+    const angle = Math.atan2(ls.body.position.z, ls.body.position.x);
+    ls.look(-angle, 0); // clockwise tangent for forward = (-sin(yaw), -cos(yaw))
+    ls.walkFrames(1);
+    const nextLightState = head.lightState();
+    maxEnergyStep = Math.max(maxEnergyStep,
+      Math.abs(nextLightState.energy - previousLightState.energy));
+    for (let slot = 0; slot < nextLightState.slots.length; slot++) {
+      const before = previousLightState.slots[slot];
+      const after = nextLightState.slots[slot];
+      maxSlotStep = Math.max(maxSlotStep, Math.abs(after.intensity - before.intensity));
+      if (before.source !== after.source && Math.max(before.intensity, after.intensity) > 0.05) {
+        hotSwaps++;
+      }
+    }
+    previousLightState = nextLightState;
+  }
+  const lightMotion = {
+    distance: +motionStart.distanceTo(ls.body.position).toFixed(2),
+    hotSwaps,
+    maxSlotStep: +maxSlotStep.toFixed(4),
+    maxEnergyStep: +maxEnergyStep.toFixed(4),
+    active: previousLightState.active,
+  };
+
   // Step into the light well: the player should fall the full height of the
   // shaft and land at the bottom. The drop point is the open ring between the
   // great stair and the galleries, a quarter turn off the landings, which all
@@ -233,6 +272,7 @@ results.silo = await page.evaluate(async () => {
     homeEntry,
     tunnelEntry,
     lightStability,
+    lightMotion,
     overCentre,
     colliders: ls.game.colliders.silo.boxes.length,
     doorArcs: ls.game.colliders.silo.arcs.length,

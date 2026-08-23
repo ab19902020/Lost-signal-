@@ -286,7 +286,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // disabled only after the same state change that swings the visible mesh.
   const lightSources = [];
   const addLightSource = (color, base, distance, position, active = true) => {
-    const source = { color: new THREE.Color(color), base, distance,
+    const source = { id: lightSources.length, color: new THREE.Color(color), base, distance,
       position: position.clone(), active };
     lightSources.push(source);
     return source;
@@ -838,6 +838,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     active: lightPool.filter((slot) => slot.light.intensity > 0.05).length,
     maximum: Math.max(0, ...lightPool.map((slot) => slot.light.intensity)),
     assignments: lightPool.filter((slot) => slot.source).length,
+    // QA observes slot identity as the player moves. Reassigning a slot while
+    // it is still bright is the wall-sized flash seen in the supplied mobile
+    // recording, even when total light energy happens to remain similar.
+    slots: lightPool.map((slot) => ({
+      source: slot.source?.id ?? -1,
+      intensity: slot.light.intensity,
+    })),
   });
 
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,

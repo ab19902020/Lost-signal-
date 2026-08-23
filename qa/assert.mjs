@@ -87,6 +87,12 @@ if (physics.silo.present) {
   check(physics.silo.lightStability.active >= 5, 'the silo light pool never illuminated the current floor');
   check(physics.silo.lightStability.spread < 0.08,
     `stationary silo lighting flickered by ${physics.silo.lightStability.spread.toFixed(3)} intensity units`);
+  check(physics.silo.lightMotion.distance > 6,
+    `moving light test travelled only ${physics.silo.lightMotion.distance.toFixed(1)} m`);
+  check(physics.silo.lightMotion.hotSwaps === 0,
+    `${physics.silo.lightMotion.hotSwaps} silo light slot(s) moved while still illuminated`);
+  check(physics.silo.lightMotion.maxSlotStep < 2.6,
+    `moving silo light changed by ${physics.silo.lightMotion.maxSlotStep.toFixed(2)} intensity units in one frame`);
   check(physics.silo.doorArcs >= 126,
     `the silo has only ${physics.silo.doorArcs} stateful door colliders`);
   check(physics.silo.interactions >= 126,
