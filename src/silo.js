@@ -29,6 +29,7 @@ export const SILO = {
   stairColumn: 1.2,     // a slim service core, not a drum filling the well
   stairSteps: 36,
   stairTurn: Math.PI * 2,   // a full turn per level, so the landings stack
+  landingHalf: 1.8,
   apartmentBack: 29.6,  // rear wall of every home: ten metres deep
   // A 1.24 m opening left less than sixty centimetres of usable centre line
   // once the player's capsule margin was applied. These are residential front
@@ -102,7 +103,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
   const {
     shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
-    stairRadius, stairColumn, stairSteps, stairTurn, apartmentBack, doorHalf,
+    stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, apartmentBack, doorHalf,
   } = SILO;
   // A tread is deep in the radial direction and narrow along the helix. The
   // collision used to pass those the other way round, which made every tread a
@@ -111,11 +112,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const treadDepth = (stairRadius - stairColumn) / 2;      // radial half-extent
   const stairMid = stairColumn + treadDepth;
   const goingHalf = (stairTurn / stairSteps) * stairRadius / 2 * 1.06;
-  const landingHalf = 1.8;
-  // Matches the Blender stair: treads beside a landing at either end of a
-  // flight have no outer balustrade, so both arrival and departure stay open.
-  const landingSteps = Math.max(2,
-    Math.round((landingHalf / stairRadius) / (stairTurn / stairSteps)) + 1);
+  // The landing has straight sides and the stair guard follows a circle. Clip
+  // each guard panel to their exact intersection instead of deleting three
+  // whole panels at either end and leaving a ragged six-metre opening.
+  const stairGuardRadius = stairRadius + 0.16;
+  const landingOpeningAngle = Math.asin(landingHalf / stairGuardRadius);
 
   const shaftHeight = levels * levelHeight;
   // Each ring piece is a flat slab at its own radius, so each needs its own
@@ -265,13 +266,18 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const top = base + i * rise + 0.09;
       colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
         { climbable: true });
-      // The balustrade: without it you walk off the outer edge of the stair.
-      // Open beside both landings. The first treads discharge onto the lower
-      // floor; the last treads are where somebody on the upper floor enters
-      // the descending flight. Opening only the foot made every level look
-      // connected while a solid balustrade blocked the way down.
-      if (i >= landingSteps && i < stairSteps - landingSteps) {
-        colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
+      // Clip the collision exactly as the Blender balustrade is clipped. The
+      // central route stays comfortably open while both edges become solid
+      // immediately outside the 3.6 m landing.
+      const localAngle = (i * stairTurn) / stairSteps;
+      const panelStart = localAngle - stairTurn / stairSteps / 2;
+      const panelEnd = localAngle + stairTurn / stairSteps / 2;
+      const guardStart = Math.max(panelStart, landingOpeningAngle);
+      const guardEnd = Math.min(panelEnd, stairTurn - landingOpeningAngle);
+      if (guardEnd > guardStart) {
+        const guardAngle = spin + (guardStart + guardEnd) / 2;
+        const guardHalf = (guardEnd - guardStart) * stairGuardRadius / 2 * 1.015;
+        colliders.addBox(ringBox(guardAngle, stairGuardRadius, guardHalf, 0.18,
           top, top + 1.05), {});
       }
     }
@@ -522,6 +528,25 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     }
     colliders.addBox(ringBox(angle, landingMid, landingHalf, landingSpan, y - 0.3, y + 0.02),
       { climbable: true });
+    // The authored landing parapets used to be visual only, so the player
+    // could walk through either one and fall into the shaft. These oriented
+    // boxes follow both radial edges and overlap the gallery returns.
+    const guardInner = stairRadius - 0.30;
+    const guardOuter = wellRadius + 0.12;
+    const guardMid = (guardInner + guardOuter) / 2;
+    const guardHalf = (guardOuter - guardInner) / 2;
+    for (const side of [-1, 1]) {
+      const offset = side * landingHalf;
+      colliders.addOrientedBox({
+        cx: Math.cos(angle) * guardMid + Math.sin(angle) * offset,
+        cz: Math.sin(angle) * guardMid - Math.cos(angle) * offset,
+        halfX: guardHalf,
+        halfZ: 0.19,
+        rotationY: -angle,
+        minY: y + 0.02,
+        maxY: y + 1.18,
+      });
+    }
   }
 
   // --- Fittings -------------------------------------------------------------
@@ -851,6 +876,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
            openBays, homeBays, homeDoors, tunnelDoors, setHomeDoor, setTunnelDoor, lightState,
            tunnelBay: TUNNEL_BAY, tunnelDoorRadius: deckOuter - 0.30 + TUNNEL_DOOR_DEPTH,
            apartmentMid,
-           stairRadius, stairColumn, stairSteps, stairTurn, wellRadius, deckOuter,
+           stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, wellRadius, deckOuter,
            levelHeight, levels };
 }
