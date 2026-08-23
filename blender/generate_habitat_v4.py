@@ -13,9 +13,9 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
-# Visual rebuild revision 8: a watertight gallery deck, exact stair openings
-# and continuous guarded landings, in addition to the stateful quarters and
-# smooth service vaults from revision 7.
+# Visual rebuild revision 9: a watertight gallery deck, exact stair openings,
+# full-depth guarded landings, genuinely open apartments and higher-detail
+# residents, in addition to the stateful quarters and smooth service vaults.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
@@ -42,6 +42,7 @@ TUNNEL_BAY = 9           # the bay whose facade is left out of the level ring,
                          # landing, so the tunnel faces it across the well.
 LANDING_HALF = 1.8       # half-width of the stair landing, and of the gap it
                          # needs in the gallery railing to reach the floor
+LANDING_INNER = STAIR_COLUMN + .18
 # The stair guard follows a circle, while the landing opening has straight
 # sides. Their exact meeting angle is therefore asin(width / radius). Clipping
 # the first and last guard panels to this bearing avoids both an unsafe metre-
@@ -349,6 +350,9 @@ JACKET = mat('HabJacket', (.25, .28, .30), 0, .82)
 TROUSER = mat('HabTrouser', (.17, .18, .21), 0, .86)
 SKIN = mat('HabSkin', (.52, .38, .30), 0, .62)
 HAIR = mat('HabHair', (.09, .07, .06), 0, .70)
+EYEWHITE = mat('HabEyeWhite', (.72, .70, .65), 0, .48)
+IRIS = mat('HabIris', (.055, .075, .070), 0, .38)
+LIP = mat('HabLip', (.27, .105, .085), 0, .68)
 GLASS = mat('HabGlass', (.05, .07, .08), .10, .10)
 LEAF = mat('HabLeaf', (.10, .32, .12), 0, .64)
 AMBER = mat('HabAmber', (.5, .33, .07), 0, .3, (1.0, .66, .16), 4.0)
@@ -861,33 +865,44 @@ def build_landing():
     tread puts you on a proper landing that carries you out to the walkway.
     """
     clear_scene()
+    # Runtime places the asset using the original stair-edge-to-gallery centre.
+    # Extend the deck asymmetrically back toward the core so the final tread
+    # always discharges onto floor, including at the secure top level where no
+    # next flight exists to mask the missing four metres.
     span = (WELL_RADIUS + .3 - STAIR_RADIUS) / 2
+    asset_origin = STAIR_RADIUS + span
+    inner = LANDING_INNER - asset_origin
+    outer = WELL_RADIUS + .3 - asset_origin
+    deck_mid = (inner + outer) / 2
+    deck_span = (outer - inner) / 2
     half = 1.8
     # Ten millimetres below the walkway it laps onto. Flush, the two decks are
     # coplanar over the overlap and the floor flickers as you cross onto it.
-    cube('Landing_Deck', (0, -.10, 0), (half, .09, span), DECKPLATE, edge=.02)
-    cube('Landing_Plate', (0, -.24, 0), (half * .97, .07, span * .99), STEEL, edge=.02)
-    # Bright threshold strips make the two joins readable in the dim shaft and
-    # expose a gap immediately in a screenshot if the landing drifts.
-    for side in (-1, 1):
-        cube(f'Landing_Threshold_{side}', (0, .015, side * (span - .14)),
-             (half - .14, .018, .11), AMBER, edge=.008)
+    cube('Landing_Deck', (0, -.10, deck_mid), (half, .09, deck_span), DECKPLATE, edge=.02)
+    cube('Landing_Plate', (0, -.24, deck_mid), (half * .97, .07, deck_span * .99), STEEL, edge=.02)
+    # Muted tactile joints identify both joins without the blown emissive strip
+    # that looked like another barrier across the player's path on mobile.
+    for suffix, z in (('inner', inner + .14), ('outer', outer - .14)):
+        cube(f'Landing_Joint_{suffix}', (0, .004, z),
+             (half - .14, .008, .065), DARK, edge=.006)
     # Two deep girders down the long sides carry the span from the stair's
     # stringer to the walkway's ring beam; cross ribs between them stop the
     # deck reading as a plank laid over nothing.
     for side in (-1, 1):
-        cube(f'Landing_Girder_{side}', (side * (half - .16), -.52, 0), (.15, .38, span),
+        cube(f'Landing_Girder_{side}', (side * (half - .16), -.52, deck_mid),
+             (.15, .38, deck_span),
              DARK, edge=.03)
         for k in range(5):
-            cube(f'Landing_Web_{side}_{k}', (side * (half - .16), -.52, (k / 4 - .5) * 1.7 * span),
+            cube(f'Landing_Web_{side}_{k}', (side * (half - .16), -.52,
+                 deck_mid + (k / 4 - .5) * 1.7 * deck_span),
                  (.19, .30, .05), BRUSHED, edge=.01)
     for r in range(6):
-        cube(f'Landing_Rib_{r}', (0, -.42, (r / 5 - .5) * 1.82 * span), (half * .92, .11, .07),
+        cube(f'Landing_Rib_{r}', (0, -.42,
+             deck_mid + (r / 5 - .5) * 1.82 * deck_span), (half * .92, .11, .07),
              DARK, edge=.02)
-    guard_overlap = .30
     gallery_inset = .18
-    guard_inner = -span - guard_overlap
-    guard_outer = span - gallery_inset
+    guard_inner = inner + .04
+    guard_outer = outer - gallery_inset
     guard_span = (guard_outer - guard_inner) / 2
     guard_mid = (guard_outer + guard_inner) / 2
     for side in (-1, 1):
@@ -903,12 +918,13 @@ def build_landing():
              (.21, .06, guard_span), BRUSHED, edge=.02)
         cube(f'Landing_Reveal_{side}', (side * (half - .16), .86, guard_mid),
              (.04, .05, guard_span), DARK, edge=.006)
-        cube(f'Landing_InnerNewel_{side}', (side * half, .62, -span - .18),
+        cube(f'Landing_InnerNewel_{side}', (side * half, .62, guard_inner + .06),
              (.20, .62, .20), CONCRETE, edge=.03)
         cube(f'Landing_OuterNewel_{side}', (side * half, .62, guard_outer - .06),
              (.18, .62, .18), CONCRETE, edge=.03)
         for k in range(4):
-            cube(f'Landing_Tie_{side}_{k}', (side * (half - .16), .58, (k / 3 - .5) * 1.7 * span),
+            cube(f'Landing_Tie_{side}_{k}', (side * (half - .16), .58,
+                 guard_mid + (k / 3 - .5) * 1.7 * guard_span),
                  (.03, .03, .03), DARK, edge=.006)
     join_all('HabLanding')
     export('hab_landing_v4.glb')
@@ -1077,7 +1093,11 @@ def build_apartment():
     KITCHEN_BACK = -.60
     BED_FRONT = 1.60
     DOOR_W = .48            # half-width of a bedroom portal
-    WIDE_W = .85            # half-width of the living-room portal
+    # The front door used to face a solid partition only 1.8 m inside the
+    # apartment. Its two off-centre arches made the open home look barricaded
+    # from the gallery and forced the player to turn sharply in a tiny hall.
+    # A broad central arch now opens the entrance directly into the living room.
+    WIDE_W = 1.55           # half-width of the living-room portal
     SPRING = 1.72           # springing line of every arch
     T = .10
 
@@ -1234,13 +1254,21 @@ def build_apartment():
              across=False, facing=-side)
 
     # --- Partitions ----------------------------------------------------------
-    kitchen_door, living_gap = -2.05, 1.95
-    part_z('Apt_P1_a', HALL_BACK, -half_w, kitchen_door - DOOR_W)
-    part_z('Apt_P1_b', HALL_BACK, kitchen_door + DOOR_W, living_gap - WIDE_W)
-    part_z('Apt_P1_c', HALL_BACK, living_gap + WIDE_W, half_w)
+    kitchen_door, living_gap = -2.05, 0.0
+    hall_spans = (
+        (-half_w, kitchen_door - DOOR_W),
+        (kitchen_door + DOOR_W, living_gap - WIDE_W),
+        (living_gap + WIDE_W, half_w),
+    )
+    for index, (x0, x1) in enumerate(hall_spans):
+        part_z(f'Apt_P1_{index}', HALL_BACK, x0, x1)
+        # Finish only the solid wall. The old full-width tile band crossed both
+        # arched openings at waist height and looked exactly like a wooden
+        # barrier across every open apartment.
+        if x1 - x0 > .08:
+            band(f'Apt_BandHall_{index}', x0, x1, HALL_BACK, across=True, facing=-1)
     portal('Apt_Portal_K', kitchen_door, HALL_BACK, DOOR_W)
     portal('Apt_Portal_L', living_gap, HALL_BACK, WIDE_W)
-    band('Apt_BandHall', -half_w + .3, half_w - .3, HALL_BACK, across=True, facing=-1)
 
     part_x('Apt_P2_low', KITCHEN_X, HALL_BACK, KITCHEN_BACK, 0, 1.02)
     part_x('Apt_P2_high', KITCHEN_X, HALL_BACK, -2.10, 1.02, height)
@@ -1248,13 +1276,18 @@ def build_apartment():
     cube('Apt_HatchSill', (KITCHEN_X, 1.06, -1.35), (T + .05, .04, .70), BRASS, edge=.01)
 
     bed_a, bed_b = -1.70, 1.70
-    part_z('Apt_P3_a', BED_FRONT, -half_w, bed_a - DOOR_W)
-    part_z('Apt_P3_b', BED_FRONT, bed_a + DOOR_W, bed_b - DOOR_W)
-    part_z('Apt_P3_c', BED_FRONT, bed_b + DOOR_W, half_w)
+    bed_spans = (
+        (-half_w, bed_a - DOOR_W),
+        (bed_a + DOOR_W, bed_b - DOOR_W),
+        (bed_b + DOOR_W, half_w),
+    )
+    for index, (x0, x1) in enumerate(bed_spans):
+        part_z(f'Apt_P3_{index}', BED_FRONT, x0, x1)
+        if x1 - x0 > .08:
+            band(f'Apt_BandBed_{index}', x0, x1, BED_FRONT, across=True, facing=1)
     for xc in (bed_a, bed_b):
         portal(f'Apt_Portal_B{xc:.1f}', xc, BED_FRONT, DOOR_W)
     part_x('Apt_P4', 0, BED_FRONT, half_d)
-    band('Apt_BandBed', -half_w + .3, half_w - .3, BED_FRONT, across=True, facing=1)
 
     # --- Hall ----------------------------------------------------------------
     hall_z = (-half_d + HALL_BACK) / 2
@@ -1854,7 +1887,7 @@ def _leg(prefix, side, jointed, spec):
         ((hip_x, .68, .004), .096, .106),
         ((hip_x, .56, .006), .080, .089),
         ((hip_x, .47, .006), .075, .084),
-    ], spec), trouser, sides=10)
+    ], spec), trouser, sides=12)
     shin = loft(f'{prefix}_Shin_{side}', _fit([
         ((hip_x, .63, .004), .074, .083),
         ((hip_x, .52, .002), .079, .088),
@@ -1862,17 +1895,27 @@ def _leg(prefix, side, jointed, spec):
         ((hip_x, .30, .002), .060, .070),
         ((hip_x, .18, .010), .049, .057),
         ((hip_x, .11, .012), .046, .054),
-    ], spec), trouser, sides=10)
+    ], spec), trouser, sides=12)
     boot = loft(f'{prefix}_Boot_{side}', _fit([
         ((hip_x, .26, .008), .054, .060),
         ((hip_x, .16, .012), .062, .072),
         ((hip_x, .085, .028), .072, .112),
         ((hip_x, .035, .048), .074, .150),
         ((hip_x, .006, .052), .066, .148),
-    ], spec), DARK, sides=10)
+    ], spec), DARK, sides=12)
+    sole = cube(f'{prefix}_BootSole_{side}',
+                (hip_x * spec['build'], .018 * spec['height'], .060 * spec['build']),
+                (.078 * spec['build'], .018 * spec['height'], .154 * spec['build']),
+                DARK, edge=.008)
+    lace = cube(f'{prefix}_BootLace_{side}',
+                (hip_x * spec['build'], .092 * spec['height'], .092 * spec['build']),
+                (.055 * spec['build'], .010 * spec['height'], .045 * spec['build']),
+                BRUSHED, edge=.004)
     if jointed:
         set_pivot(thigh, (hip_x * spec['build'], .94 * spec['height'], 0))
         set_pivot(shin, (hip_x * spec['build'], .54 * spec['height'], 0))
+        parent_to(sole, shin)
+        parent_to(lace, shin)
         parent_to(boot, shin)
         parent_to(shin, thigh)
     return thigh
@@ -1888,19 +1931,24 @@ def _arm(prefix, side, jointed, spec):
         ((sx * 1.06, 1.20, .004), .056, .058),
         ((sx * 1.08, 1.10, .006), .051, .053),
         ((sx * 1.09, 1.03, .006), .049, .051),
-    ], spec), sleeve, sides=8)
+    ], spec), sleeve, sides=12)
     fore = loft(f'{prefix}_Forearm_{side}', _fit([
         ((sx * 1.07, 1.17, .006), .049, .051),
         ((sx * 1.08, 1.09, .006), .053, .055),
         ((sx * 1.09, 1.00, .002), .048, .050),
         ((sx * 1.10, .90, .004), .039, .041),
         ((sx * 1.10, .82, .006), .034, .036),
-    ], spec), SKIN, sides=8)
+    ], spec), SKIN, sides=12)
     hand = loft(f'{prefix}_Hand_{side}', _fit([
         ((sx * 1.10, .88, .006), .034, .036),
         ((sx * 1.10, .79, .012), .039, .053),
         ((sx * 1.10, .71, .014), .036, .051),
         ((sx * 1.10, .655, .008), .020, .032),
+    ], spec), SKIN, sides=12)
+    thumb = loft(f'{prefix}_Thumb_{side}', _fit([
+        ((sx * 1.10 - side * .012, .80, .028), .020, .026),
+        ((sx * 1.10 - side * .032, .75, .044), .018, .024),
+        ((sx * 1.10 - side * .040, .71, .048), .013, .018),
     ], spec), SKIN, sides=8)
     extra = []
     if spec['dress'] != 'vest':
@@ -1911,6 +1959,7 @@ def _arm(prefix, side, jointed, spec):
     if jointed:
         set_pivot(upper, (sx * spec['build'], 1.44 * spec['height'], 0))
         set_pivot(fore, (sx * 1.08 * spec['build'], 1.10 * spec['height'], 0))
+        parent_to(thumb, hand)
         parent_to(hand, fore)
         for e in extra:
             parent_to(e, fore)
@@ -1929,7 +1978,7 @@ def _head(prefix, jointed, spec):
         ((0, 1.698, 0), .099, .108),
         ((0, 1.740, -.005), .082, .092),
         ((0, 1.768, -.008), .046, .053),
-    ], spec, girth=.96), SKIN, sides=12)
+    ], spec, girth=.96), SKIN, sides=18)
     parts = []
     style = spec['hair']
     if style == 'cap':
@@ -1937,7 +1986,7 @@ def _head(prefix, jointed, spec):
             ((0, 1.690, -.010), .104, .114),
             ((0, 1.735, -.010), .102, .112),
             ((0, 1.772, -.012), .070, .078),
-        ], spec, girth=.96), DARK, sides=12))
+        ], spec, girth=.96), DARK, sides=18))
         parts.append(cube(f'{prefix}_Peak', (0, 1.690 * h, .118 * b),
                           (.086 * b, .012 * h, .062 * b), DARK, edge=.01))
     elif style != 'bald':
@@ -1948,7 +1997,7 @@ def _head(prefix, jointed, spec):
             ((0, 1.744, -.014), .088, .098),
             ((0, 1.776, -.016), .050, .058),
         ]
-        parts.append(loft(f'{prefix}_Hair', _fit(crown, spec, girth=.96), HAIR, sides=12))
+        parts.append(loft(f'{prefix}_Hair', _fit(crown, spec, girth=.96), HAIR, sides=18))
         if style == 'long':
             parts.append(loft(f'{prefix}_HairFall', _fit([
                 ((0, 1.640, -.070), .095, .050),
@@ -1962,22 +2011,41 @@ def _head(prefix, jointed, spec):
                 ((0, 1.615, -.130), .062, .056),
                 ((0, 1.570, -.128), .040, .036),
             ], spec, girth=.96), HAIR, sides=10))
-    if style != 'bald':
-        parts.append(cube(f'{prefix}_Brow', (0, 1.665 * h, .090 * b),
-                          (.066 * b, .011 * h, .024 * b), HAIR, edge=.006))
+    # Separate brows, ears, sclera and irises make the face read as a face at
+    # conversation distance. The previous single dark eye bead and full-width
+    # brow read like a mask under the silo's warm practical lights.
+    for side in (-1, 1):
+        parts.append(sphere(f'{prefix}_Ear_{side}',
+                            (side * .103 * b, 1.650 * h, -.004 * b),
+                            .028 * b, SKIN, scale=(.42, 1.0, .62), segments=10))
+        parts.append(cube(f'{prefix}_Brow_{side}',
+                          (side * .039 * b, 1.675 * h, .096 * b),
+                          (.031 * b, .0065 * h, .007 * b), HAIR,
+                          rotation=(0, 0, -side * .08), edge=.004))
     if spec.get('beard'):
         parts.append(loft(f'{prefix}_Beard', _fit([
             ((0, 1.612, .052), .078, .085),
             ((0, 1.575, .046), .070, .080),
             ((0, 1.545, .036), .046, .052),
         ], spec, girth=.96), HAIR, sides=10))
-    parts += [sphere(f'{prefix}_Eye_{k}', (k * .036 * b, 1.641 * h, .088 * b),
-                     .0145 * b, DARK, segments=8) for k in (-1, 1)]
+    for side in (-1, 1):
+        parts.append(sphere(f'{prefix}_EyeWhite_{side}',
+                            (side * .037 * b, 1.642 * h, .096 * b),
+                            .018 * b, EYEWHITE, scale=(1.25, .70, .55), segments=12))
+        parts.append(sphere(f'{prefix}_Iris_{side}',
+                            (side * .037 * b, 1.642 * h, .108 * b),
+                            .0085 * b, IRIS, scale=(1, 1, .48), segments=10))
     parts.append(loft(f'{prefix}_Nose', _fit([
         ((0, 1.646, .086), .017, .022),
         ((0, 1.619, .099), .021, .029),
         ((0, 1.601, .090), .016, .020),
-    ], spec, girth=.96), SKIN, sides=8))
+    ], spec, girth=.96), SKIN, sides=10))
+    parts.append(cube(f'{prefix}_Mouth', (0, 1.565 * h, .099 * b),
+                      (.034 * b, .0045 * h, .006 * b), LIP, edge=.003))
+    parts.append(loft(f'{prefix}_LowerLip', _fit([
+        ((0, 1.554, .092), .034, .012),
+        ((0, 1.545, .087), .025, .010),
+    ], spec, girth=.96), LIP, sides=10, subdiv=0))
     if 'glasses' in spec['extras']:
         for k in (-1, 1):
             parts.append(cube(f'{prefix}_Lens_{k}', (k * .036 * b, 1.641 * h, .098 * b),
@@ -2007,7 +2075,7 @@ def humanoid(prefix, jointed, spec):
         ((0, 1.545, 0), .066, .068),
     ]
     torso = loft(f'{prefix}_Torso', _fit(body, spec),
-                 TROUSER if spec['dress'] == 'overalls' else JACKET, sides=12)
+                 TROUSER if spec['dress'] == 'overalls' else JACKET, sides=16)
     parts = []
 
     if spec['dress'] == 'coat':
@@ -2074,18 +2142,19 @@ def humanoid(prefix, jointed, spec):
 
 
 def build_residents():
-    """Six builds of person, jointed for the ones who walk and joined for the
-    ones who stand about. Twenty residents drawn from six bodies and a palette
-    of cloth, hair and skin read as twenty people; one body recoloured twenty
-    times reads as one person cloned."""
+    """Six higher-detail builds, jointed for walkers and joined for the crowd.
+
+    Revision six adds readable eyes, brows, ears, mouth forms, thumbs, footwear
+    and denser curved silhouettes while keeping the same light runtime rig.
+    """
     for spec in RESIDENT_SPECS:
         clear_scene()
         humanoid('Resident', True, spec)
-        export(f"resident_{spec['key']}_v5.glb")
+        export(f"resident_{spec['key']}_v6.glb")
         clear_scene()
         humanoid('Still', False, spec)
         join_all('HabResidentStill')
-        export(f"resident_still_{spec['key']}_v5.glb")
+        export(f"resident_still_{spec['key']}_v6.glb")
 
 
 def build_access_hatch():
