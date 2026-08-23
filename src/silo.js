@@ -301,6 +301,34 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     }
   }
 
+  // --- The two ends of the shaft --------------------------------------------
+  // Looking up and looking down both used to finish on a blank disc, which is
+  // the most obviously unfinished thing in the silo. The head is a coffered
+  // slab with a lit oculus in the middle of it; the floor is a stepped drain
+  // around a bolted sump. Both give the shaft somewhere to end.
+  const crownY = levelY(levels) + levelHeight;
+  if (assets.habCrown) {
+    place(assets.habCrown, scene, [0, crownY, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+    colliders.addRing({ innerRadius: 0, outerRadius: wellRadius + 1.7,
+      minY: crownY - 0.6, maxY: crownY + 1.2 });
+    // The oculus reads as the light source, so there is one behind it.
+    const oculus = new THREE.PointLight(0xf2e6cc, 210, 30, 1.7);
+    oculus.position.set(0, crownY - 0.9, 0);
+    scene.add(oculus);
+  }
+  if (assets.habSump) {
+    place(assets.habSump, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+    colliders.addRing({ innerRadius: 0, outerRadius: wellRadius + 0.4,
+      minY: -0.4, maxY: 0.02, climbable: true });
+    // Two work lamps stand down there; they are what you see from six levels up.
+    for (const angle of [1.9, 5.1]) {
+      const lamp = new THREE.PointLight(0xdff0ff, 90, 22, 1.7);
+      lamp.position.set(Math.cos(angle) * (wellRadius - 3.4), 1.72,
+        Math.sin(angle) * (wellRadius - 3.4));
+      scene.add(lamp);
+    }
+  }
+
   // A bridge from the stair to the gallery on every level: without one the
   // helix ends in mid-air and the galleries are unreachable.
   const landingSpan = (wellRadius + 0.3 - stairRadius) / 2;

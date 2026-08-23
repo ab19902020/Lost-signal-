@@ -396,6 +396,18 @@ def ring_piece(name, angle, radius, offset, y, radial, half_y, tangential, mater
                 rotation=(0, -angle, 0), edge=edge)
 
 
+def ring_band(name, radius, half_radial, y, half_y, material, segs=48, edge=.02):
+    """A ring of material at a radius: an annulus, laid out as short boxes.
+
+    There are no booleans here, so a "void" cylinder inside a solid one does not
+    cut a hole — it fills the middle in. A band has to be built as a band.
+    """
+    for i in range(segs):
+        a = i * math.tau / segs
+        ring_piece(f'{name}_{i}', a, radius, 0, y, half_radial, half_y,
+                   math.pi * radius / segs * 1.08, material, edge=edge)
+
+
 def build_level():
     """One residential level: a walkway ring carried on the wall it hangs off.
 
@@ -559,18 +571,27 @@ def build_level():
                 ring_piece(f'RailTurn_{i}_{k}', a, WELL_RADIUS - .34, k * LANDING_HALF, 1.06,
                            .38, .045, .045, BRUSHED, edge=.012)
         else:
-            ring_piece(f'Kerb_{i}', a, WELL_RADIUS + .06, 0, .10, .10, .10, rail_half,
-                       CONCRETE, edge=.02)
-            for h in (.58, 1.06):
-                ring_piece(f'Rail_{i}_{h}', a, WELL_RADIUS + .04, 0, h, .045, .045, rail_half,
-                           BRUSHED, edge=.012)
-            for k in range(4):
-                offset = (k / 3 - .5) * 1.92 * rail_half
-                px = math.cos(a) * (WELL_RADIUS + .04) + math.sin(a) * offset
-                pz = math.sin(a) * (WELL_RADIUS + .04) - math.cos(a) * offset
-                cube(f'Baluster_{i}_{k}', (px, .58, pz), (.032, .58, .032), BRUSHED, edge=.008)
-            ring_piece(f'Toeboard_{i}', a, WELL_RADIUS + .01, 0, .28, .03, .12, rail_half,
-                       DARK, edge=.008)
+            # A solid cast parapet with a steel capping rail, not a handrail on
+            # posts. It is what the silo is built of, it is what you see across
+            # the well from every other gallery, and it is what stops the shaft
+            # reading as scaffolding.
+            ring_piece(f'Parapet_{i}', a, WELL_RADIUS + .10, 0, .52, .17, .52, rail_half,
+                       CONCRETE, edge=.03)
+            ring_piece(f'ParapetFoot_{i}', a, WELL_RADIUS + .10, 0, .10, .21, .10, rail_half,
+                       CONCRETE, edge=.03)
+            # A shadow gap under the capping, so the parapet is not one slab.
+            ring_piece(f'ParapetReveal_{i}', a, WELL_RADIUS - .05, 0, .86, .04, .05, rail_half,
+                       DARK, edge=.006)
+            ring_piece(f'ParapetCap_{i}', a, WELL_RADIUS + .10, 0, 1.06, .23, .06, rail_half,
+                       BRUSHED, edge=.02)
+            ring_piece(f'ParapetGrip_{i}', a, WELL_RADIUS - .10, 0, 1.15, .05, .045, rail_half,
+                       BRUSHED, edge=.012)
+            # Form-tie marks down the face, the way board-formed concrete has.
+            for k in range(3):
+                offset = (k / 2 - .5) * 1.5 * rail_half
+                px = math.cos(a) * (WELL_RADIUS - .08) + math.sin(a) * offset
+                pz = math.sin(a) * (WELL_RADIUS - .08) - math.cos(a) * offset
+                cube(f'ParapetTie_{i}_{k}', (px, .58, pz), (.035, .035, .035), DARK, edge=.008)
 
         # --- Lighting ---------------------------------------------------------
         # Three arcs across the width of the walkway, hung off the slab above.
@@ -712,12 +733,14 @@ def build_landing():
         cube(f'Landing_Rib_{r}', (0, -.42, (r / 5 - .5) * 1.82 * span), (half * .92, .11, .07),
              DARK, edge=.02)
     for side in (-1, 1):
-        cube(f'Landing_Kerb_{side}', (side * half, .10, 0), (.07, .10, span), DARK, edge=.015)
-        for h in (.58, 1.06):
-            cube(f'Landing_Rail_{side}_{h}', (side * half, h, 0), (.05, .05, span), BRUSHED, edge=.012)
-        for k in range(6):
-            cube(f'Landing_Post_{side}_{k}', (side * half, .58, (k / 5 - .5) * 2 * span * .92),
-                 (.04, .58, .04), BRUSHED, edge=.01)
+        # Cast parapets, matching the galleries the landing runs out to.
+        cube(f'Landing_Parapet_{side}', (side * half, .52, 0), (.15, .52, span), CONCRETE, edge=.03)
+        cube(f'Landing_Foot_{side}', (side * half, .10, 0), (.19, .10, span), CONCRETE, edge=.03)
+        cube(f'Landing_Cap_{side}', (side * half, 1.06, 0), (.21, .06, span), BRUSHED, edge=.02)
+        cube(f'Landing_Reveal_{side}', (side * (half - .16), .86, 0), (.04, .05, span), DARK, edge=.006)
+        for k in range(4):
+            cube(f'Landing_Tie_{side}_{k}', (side * (half - .16), .58, (k / 3 - .5) * 1.7 * span),
+                 (.03, .03, .03), DARK, edge=.006)
     join_all('HabLanding')
     export('hab_landing_v4.glb')
 
@@ -1180,6 +1203,150 @@ def build_door():
     export('hab_door_v4.glb')
 
 
+def build_crown():
+    """The head of the shaft.
+
+    Looking up used to end on a blank disc, which is the single most obviously
+    unfinished thing in the silo. This is what a poured concrete silo actually
+    does at the top: a coffered slab on radial ribs and ring beams, a great
+    petalled oculus in the middle of it with the light behind, extract grilles
+    between the ribs, and a ring of downlights over the top gallery.
+
+    Authored at y = 0 on the ceiling plane, with everything hanging below it.
+    """
+    clear_scene()
+    R = WELL_RADIUS + 1.4
+    RIBS = 16
+
+    cyl('Crown_Slab', (0, .55, 0), R + .3, 1.1, CONCRETE, rotation=UP, verts=48, edge=.08)
+    # Ring beams: three concentric downstands, deepest at the outside.
+    for i, (rr, drop, thick) in enumerate(((R - .2, .46, .30), (R * .70, .38, .26),
+                                           (R * .44, .30, .22))):
+        ring_band(f'Crown_Ring_{i}', rr, thick / 2, -drop / 2, drop / 2, CONCRETE,
+                  segs=40, edge=.03)
+    # Radial ribs between them, so the slab reads as coffered rather than flat.
+    for i in range(RIBS):
+        a = i * math.tau / RIBS
+        cube(f'Crown_Rib_{i}', (math.cos(a) * R * .58, -.20, math.sin(a) * R * .58),
+             (R * .46, .20, .16), CONCRETE, rotation=(0, -a, 0), edge=.03)
+        # An extract grille in every other coffer.
+        if i % 2 == 0:
+            gx, gz = math.cos(a + .10) * R * .80, math.sin(a + .10) * R * .80
+            cube(f'Crown_Vent_{i}', (gx, -.13, gz), (.44, .06, .30), DARK,
+                 rotation=(0, -a, 0), edge=.02)
+            for b in range(4):
+                cube(f'Crown_VentBar_{i}_{b}', (gx, -.18, gz), (.40, .014, .05), BRUSHED,
+                     rotation=(0, -a, 0), edge=.004)
+        else:
+            # ...and a downlight in the others, over the top gallery.
+            lx, lz = math.cos(a + .10) * R * .86, math.sin(a + .10) * R * .86
+            cyl(f'Crown_Down_{i}', (lx, -.16, lz), .17, .07, DARK, rotation=UP, verts=16, edge=.02)
+            cyl(f'Crown_DownGlow_{i}', (lx, -.21, lz), .135, .03, WHITELIGHT,
+                rotation=UP, verts=16, edge=.006)
+
+    # The oculus: a lit disc with petal ribs across it. Kept small — a ten-metre
+    # emissive disc is not a skylight, it is a white sky.
+    OC = R * .20
+    cyl('Crown_OculusGlass', (0, -.10, 0), OC, .08, WARMLAMP, rotation=UP, verts=36, edge=.01)
+    ring_band('Crown_OculusRim', OC + .14, .16, -.16, .18, BRUSHED, segs=32, edge=.02)
+    for i in range(12):
+        a = i * math.tau / 12
+        cube(f'Crown_Petal_{i}', (math.cos(a) * OC * .55, -.15, math.sin(a) * OC * .55),
+             (OC * .58, .04, .055), CONCRETE, rotation=(0, -a, 0), edge=.015)
+    cyl('Crown_OculusBoss', (0, -.18, 0), OC * .20, .14, CONCRETE, rotation=UP, verts=20, edge=.03)
+
+    # Cable trays and a conduit run crossing the coffers, because a ceiling in a
+    # working building is never clean.
+    for i in range(3):
+        a = i * math.tau / 3 + .4
+        cube(f'Crown_Tray_{i}', (0, -.34, 0), (R * .92, .04, .13), DARK,
+             rotation=(0, -a, 0), edge=.015)
+        for k in range(5):
+            t = -R * .8 + k * R * .4
+            cube(f'Crown_TrayHang_{i}_{k}', (math.cos(a) * t, -.24, math.sin(a) * t),
+                 (.03, .12, .03), BRUSHED, edge=.008)
+    join_all('HabCrown')
+    export('hab_crown_v5.glb')
+
+
+def build_sump():
+    """The bottom of the shaft.
+
+    Looking down used to end on a blank disc too. The floor of a silo is where
+    the water goes: a stepped drain in concentric gratings around a bolted sump
+    cover, hazard bands, the risers coming down out of the wall into it, and the
+    stores that end up at the bottom of anywhere.
+
+    Authored at y = 0 on the floor plane.
+    """
+    clear_scene()
+    R = WELL_RADIUS
+
+    cyl('Sump_Slab', (0, -.16, 0), R + .4, .32, CONCRETE, rotation=UP, verts=48, edge=.05)
+    # Stepped fall toward the middle, in three rings.
+    for i, (rr, drop) in enumerate(((R * .82, .10), (R * .58, .20), (R * .34, .30))):
+        cyl(f'Sump_Step_{i}', (0, -drop / 2, 0), rr, drop, CONCRETE,
+            rotation=UP, verts=40, edge=.03)
+    # Grating over the channels: concentric bars and radial bearers.
+    for i, rr in enumerate((R * .86, R * .62, R * .38)):
+        ring_band(f'Sump_Grate_{i}', rr, .17, -.02, .025, DARK, segs=44, edge=.008)
+    for i in range(28):
+        a = i * math.tau / 28
+        cube(f'Sump_Bearer_{i}', (math.cos(a) * R * .60, -.015, math.sin(a) * R * .60),
+             (R * .30, .04, .03), BRUSHED, rotation=(0, -a, 0), edge=.006)
+
+    # The sump cover itself, bolted, with a lifting ring.
+    cyl('Sump_Cover', (0, -.02, 0), R * .17, .12, BRUSHED, rotation=UP, verts=28, edge=.02)
+    cyl('Sump_CoverInner', (0, .03, 0), R * .13, .04, DARK, rotation=UP, verts=28, edge=.01)
+    for i in range(10):
+        a = i * math.tau / 10
+        cyl(f'Sump_Bolt_{i}', (math.cos(a) * R * .15, .05, math.sin(a) * R * .15),
+            .028, .04, DARK, rotation=UP, verts=8, edge=.006)
+    bpy.ops.mesh.primitive_torus_add(location=(0, .09, 0), rotation=UP,
+                                     major_radius=.24, minor_radius=.035,
+                                     major_segments=24, minor_segments=8)
+    ring = bpy.context.object
+    ring.name = 'Sump_LiftRing'
+    ring.data.materials.append(BRUSHED)
+    for poly in ring.data.polygons:
+        poly.use_smooth = True
+
+    # Hazard banding round the drain, and painted keep-clear chevrons.
+    for i in range(24):
+        a = i * math.tau / 24
+        cube(f'Sump_Hazard_{i}', (math.cos(a) * R * .27, .01, math.sin(a) * R * .27),
+             (.20, .012, .10), AMBER if i % 2 == 0 else DARK, rotation=(0, -a, 0), edge=.004)
+
+    # Risers coming down the wall into the floor, with valves and a gauge.
+    for i in range(5):
+        a = i * math.tau / 5 + .35
+        px, pz = math.cos(a) * (R - .55), math.sin(a) * (R - .55)
+        cyl(f'Sump_Riser_{i}', (px, 1.3, pz), .085, 2.6, BRUSHED, rotation=UP, verts=12)
+        cyl(f'Sump_Elbow_{i}', (px, .10, pz), .10, .22, BRUSHED, rotation=UP, verts=12, edge=.02)
+        cyl(f'Sump_Valve_{i}', (px, .92, pz), .15, .10, REDLIGHT, rotation=UP, verts=16, edge=.02)
+        cube(f'Sump_Clamp_{i}', (px, 1.85, pz), (.14, .05, .14), DARK, rotation=(0, -a, 0), edge=.01)
+
+    # Stores that end up at the bottom of anywhere, and a work lamp on a stand.
+    for i, (a, n) in enumerate(((.9, 3), (2.7, 2), (4.6, 3))):
+        bx, bz = math.cos(a) * (R - 2.2), math.sin(a) * (R - 2.2)
+        for k in range(n):
+            cube(f'Sump_Crate_{i}_{k}', (bx + k * .06, .28 + k * .56, bz - k * .05),
+                 (.42, .28, .34), PAINT if k % 2 else STEEL, rotation=(0, -a + k * .12, 0), edge=.03)
+    for i, a in enumerate((1.9, 5.1)):
+        lx, lz = math.cos(a) * (R - 3.4), math.sin(a) * (R - 3.4)
+        for k in range(3):
+            t = a + k * math.tau / 3
+            cube(f'Sump_LampLeg_{i}_{k}', (lx + math.cos(t) * .22, .32, lz + math.sin(t) * .22),
+                 (.03, .32, .03), DARK, rotation=(0, -t, .12), edge=.008)
+        cyl(f'Sump_LampMast_{i}', (lx, 1.0, lz), .035, 1.4, DARK, rotation=UP, verts=8)
+        cube(f'Sump_LampHead_{i}', (lx, 1.72, lz), (.24, .16, .12), DARK,
+             rotation=(0, -a, .18), edge=.02)
+        cube(f'Sump_LampGlow_{i}', (lx, 1.72, lz + .10), (.20, .12, .03), WHITELIGHT,
+             rotation=(0, -a, .18), edge=.008)
+    join_all('HabSump')
+    export('hab_sump_v5.glb')
+
+
 def build_hydroponics():
     """A grow rack. Three hundred people have to eat something."""
     clear_scene()
@@ -1593,6 +1760,8 @@ build_stair()
 build_landing()
 build_apartment()
 build_door()
+build_crown()
+build_sump()
 build_hydroponics()
 build_commons()
 build_secure_door()

@@ -12,7 +12,9 @@ const colliders = new ColliderSet();
 const silo = buildSilo({
   scene,
   colliders,
-  assets: { habShell: {}, habLevel: {}, habStair: {} },
+  // Stubs stand in for the GLBs; what matters is that every branch of the
+  // builder runs, including the ones that only fire when an asset is present.
+  assets: { habShell: {}, habLevel: {}, habStair: {}, habCrown: {}, habSump: {} },
   place: () => new THREE.Group(),
   addInteraction: () => {},
 });
@@ -80,6 +82,19 @@ for (let level = 0; level <= SILO.levels; level++) {
   assert.equal(blocked.length, 0,
     `level ${level}: walkway blocked at ${blocked.length} of 900 samples, e.g. ${blocked.slice(0, 4).join(', ')}`);
 }
+
+// Both ends of the shaft have to be closed. Looking up and looking down used
+// to finish on a blank disc, which is the most obviously unfinished thing a
+// silo can do; the head is a coffered slab and the floor is a stepped drain,
+// and both carry collision so neither is a hole you fall out of the world
+// through.
+const crownY = SILO.levels * SILO.levelHeight + SILO.levelHeight;
+assert.ok(colliders.contains(0, 0, 0.34, crownY - 0.2, crownY + 0.4),
+  'the head of the shaft is open');
+assert.ok(colliders.contains(4, 4, 0.34, crownY - 0.2, crownY + 0.4),
+  'the head of the shaft is open away from the axis');
+assert.ok(colliders.floorAt(0, 0, 0.34, 1.0) > -0.2,
+  'the floor of the shaft has no surface to stand on');
 
 // A merge once pasted the silo event block four times. Besides opening CCTV
 // repeatedly it paid out hydroponics four times and replaced the cache message
