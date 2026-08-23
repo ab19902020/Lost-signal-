@@ -482,7 +482,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
-    const fill = new THREE.PointLight(0xc7b49a, 210, 46, 1.5);
+    const fill = new THREE.PointLight(0xc7b49a, 175, 46, 1.5);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
       Math.sin(angle) * fillRadius);
@@ -492,7 +492,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xe8dcc6, 2400, shaftHeight + 12, 0.5, 0.7, 2);
+  const crown = new THREE.SpotLight(0xe8dcc6, 1500, shaftHeight + 12, 0.5, 0.7, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);
