@@ -63,7 +63,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const landingHalf = 1.8;
   // Matches the Blender ring: the treads at the foot of a flight whose outer
   // balustrade is open, so the stair discharges onto the landing.
-  const exitSteps = Math.max(2,
+  const landingSteps = Math.max(2,
     Math.round((landingHalf / stairRadius) / (stairTurn / stairSteps)) + 1);
 
   const shaftHeight = levels * levelHeight;
@@ -136,10 +136,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
         { climbable: true });
       // The balustrade: without it you walk off the outer edge of the stair.
-      // Open for the first few treads, where the flight discharges onto the
-      // level's landing — a flight walled in for its whole turn arrives at the
-      // floor with nowhere to step off.
-      if (i >= exitSteps) {
+      // Open beside both landings. The first treads discharge onto the lower
+      // floor; the last treads are where somebody on the upper floor enters
+      // the descending flight. Opening only the foot made every level look
+      // connected while a solid balustrade blocked the way down.
+      if (i >= landingSteps && i < stairSteps - landingSteps) {
         colliders.addBox(ringBox(angle, stairRadius + 0.16, goingHalf, 0.18,
           top, top + 1.05), {});
       }
@@ -552,5 +553,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   }
 
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
-           stairRadius, stairColumn, stairTurn, levelHeight, levels };
+           stairRadius, stairColumn, stairSteps, stairTurn, wellRadius, deckOuter,
+           levelHeight, levels };
 }

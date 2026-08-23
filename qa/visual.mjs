@@ -29,7 +29,7 @@ async function boot(page, quality = 'high') {
     const button = document.getElementById('start');
     return button && !button.disabled && button.textContent.includes('ENTER');
   }, null, { timeout: 90000, polling: 100 });
-  await page.evaluate(() => document.getElementById('start').click());
+  await page.evaluate(() => globalThis.__ls.start());
   await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
     { timeout: 30000, polling: 100 });
   await page.evaluate(() => globalThis.__ls.simulate(90));
@@ -72,11 +72,20 @@ await save(desktop, '02-bunker-overview');
 
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
+  ls.world('bunker');
+  ls.game.setHatchOpen(true);
+  ls.simulate(120);
+  ls.freecam(-3.9, 1.85, 4.9, -1.75, .65, 3.35, 56);
+});
+await save(desktop, '03-open-silo-hatch');
+
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
   ls.world('outside');
   ls.simulate(90);
   ls.freecam(-17, 8.5, 13.5, 0, 1.1, -8, 62);
 });
-await save(desktop, '03-surface-compound');
+await save(desktop, '04-surface-compound');
 
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
@@ -84,7 +93,7 @@ await desktop.evaluate(() => {
   ls.simulate(120);
   ls.freecam(10.5, 32.5, 10.5, 0, 25.5, 0, 68);
 });
-await save(desktop, '04-silo-top-landing');
+await save(desktop, '05-silo-top-landing');
 
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
@@ -92,7 +101,7 @@ await desktop.evaluate(() => {
   ls.simulate(90);
   ls.freecam(11.8, 9.4, 4.8, 0, 4.7, 0, 65);
 });
-await save(desktop, '05-silo-stair-and-landings');
+await save(desktop, '06-silo-stair-and-landings');
 
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
@@ -100,7 +109,7 @@ await desktop.evaluate(() => {
   ls.simulate(90);
   ls.freecam(15.2, 1.72, 0, 25.2, 1.55, 0, 62);
 });
-await save(desktop, '06-silo-home');
+await save(desktop, '07-silo-home');
 
 await stopDesktopPump();
 await desktop.close();
@@ -116,7 +125,7 @@ mobile.on('console', (message) => {
 mobile.on('pageerror', (error) => errors.push(String(error).slice(0, 240)));
 const stopMobilePump = await pumpFrames(mobile);
 await boot(mobile, 'mobile');
-await save(mobile, '07-mobile-landscape');
+await save(mobile, '08-mobile-landscape');
 await stopMobilePump();
 await mobile.close();
 

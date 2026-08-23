@@ -187,6 +187,10 @@ async function prepare() {
     if (import.meta.env.DEV) {
       globalThis.__ls = {
         game, body, quality,
+        // Visual QA starts the simulation directly. The real button path still
+        // exercises audio, fullscreen, orientation and pointer lock in the
+        // interaction tests, without making screenshots depend on browser UI.
+        start: () => beginGame({ restore: false }),
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
         world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); },
@@ -296,8 +300,10 @@ function wireGameEvents() {
     setOutdoorAudio(false);
     flash('SHELTER 47 — BLAST CHAMBER');
   });
-  addEventListener('lostsignal:cctv', openCCTV);
-  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
+  addEventListener('lostsignal:cctv', () => {
+    openCCTV();
+    completeObjective('cameras');
+  });
 
   addEventListener('lostsignal:hatch', (e) => {
     hatchOpen = e.detail.open;
@@ -309,7 +315,7 @@ function wireGameEvents() {
   addEventListener('lostsignal:descend', (e) => {
     if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
     enterWorld('silo', Math.PI * 0.5, -0.05);
-    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
+    flash('SILO 47 — TOP LANDING · SEVEN RESIDENTIAL LEVELS BELOW', 3200);
     completeObjective('descend');
   });
 
@@ -346,164 +352,6 @@ function wireGameEvents() {
     clickSound(520, .12, .05);
     completeObjective('cache');
   });
-
-
-  addEventListener('lostsignal:cctv', openCCTV);
-  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
-
-  addEventListener('lostsignal:hatch', (e) => {
-    hatchOpen = e.detail.open;
-    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
-    clickSound(hatchOpen ? 210 : 160, .22, .06);
-    completeObjective('hatch');
-  });
-
-  addEventListener('lostsignal:descend', (e) => {
-    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
-    enterWorld('silo', Math.PI * 0.5, -0.05);
-    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
-    completeObjective('descend');
-  });
-
-  addEventListener('lostsignal:ascend', () => {
-    enterWorld('bunker', 0, -0.02);
-    flash('SHELTER 47 — BLAST CHAMBER');
-  });
-
-  addEventListener('lostsignal:hydroponics', (e) => {
-    survival.resupply({ food: 2 });
-    updateStats();
-    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
-    completeObjective('hydroponics');
-  });
-
-  addEventListener('lostsignal:secureunit', () => {
-    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
-    clickSound(150, .2, .05);
-    completeObjective('secure');
-  });
-
-  addEventListener('lostsignal:resident', (e) => {
-    flash(e.detail.line, 4200);
-  });
-
-  addEventListener('lostsignal:cache', () => {
-    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
-    cacheEmptied = true;
-    reserve += 24;
-    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
-    updateAmmo();
-    updateStats();
-    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
-    clickSound(520, .12, .05);
-    completeObjective('cache');
-  });
-
-
-  addEventListener('lostsignal:cctv', openCCTV);
-  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
-
-  addEventListener('lostsignal:hatch', (e) => {
-    hatchOpen = e.detail.open;
-    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
-    clickSound(hatchOpen ? 210 : 160, .22, .06);
-    completeObjective('hatch');
-  });
-
-  addEventListener('lostsignal:descend', (e) => {
-    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
-    enterWorld('silo', Math.PI * 0.5, -0.05);
-    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
-    completeObjective('descend');
-  });
-
-  addEventListener('lostsignal:ascend', () => {
-    enterWorld('bunker', 0, -0.02);
-    flash('SHELTER 47 — BLAST CHAMBER');
-  });
-
-  addEventListener('lostsignal:hydroponics', (e) => {
-    survival.resupply({ food: 2 });
-    updateStats();
-    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
-    completeObjective('hydroponics');
-  });
-
-  addEventListener('lostsignal:secureunit', () => {
-    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
-    clickSound(150, .2, .05);
-    completeObjective('secure');
-  });
-
-  addEventListener('lostsignal:resident', (e) => {
-    flash(e.detail.line, 4200);
-  });
-
-  addEventListener('lostsignal:cache', () => {
-    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
-    cacheEmptied = true;
-    reserve += 24;
-    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
-    updateAmmo();
-    updateStats();
-    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
-    clickSound(520, .12, .05);
-    completeObjective('cache');
-  });
-
-
-  addEventListener('lostsignal:cctv', openCCTV);
-  addEventListener('lostsignal:cctv', () => completeObjective('cameras'));
-
-  addEventListener('lostsignal:hatch', (e) => {
-    hatchOpen = e.detail.open;
-    flash(hatchOpen ? 'HATCH UNSEALED — SILO ACCESS OPEN' : 'HATCH RESEALED');
-    clickSound(hatchOpen ? 210 : 160, .22, .06);
-    completeObjective('hatch');
-  });
-
-  addEventListener('lostsignal:descend', (e) => {
-    if (!e.detail.allowed) { flash('THE HATCH IS STILL SEALED — TURN THE WHEEL'); return; }
-    enterWorld('silo', Math.PI * 0.5, -0.05);
-    flash('SILO 47 — TOP LANDING · TWELVE LEVELS BELOW YOU', 3200);
-    completeObjective('descend');
-  });
-
-  addEventListener('lostsignal:ascend', () => {
-    enterWorld('bunker', 0, -0.02);
-    flash('SHELTER 47 — BLAST CHAMBER');
-  });
-
-  addEventListener('lostsignal:hydroponics', (e) => {
-    survival.resupply({ food: 2 });
-    updateStats();
-    flash(`LEVEL ${e.detail.level} HYDROPONICS — TWO DAYS OF GREENS`, 2800);
-    completeObjective('hydroponics');
-  });
-
-  addEventListener('lostsignal:secureunit', () => {
-    flash('SECURE UNIT — CARD READER REJECTS YOU. NOBODY WILL SAY WHAT IS BEHIND IT.', 4200);
-    clickSound(150, .2, .05);
-    completeObjective('secure');
-  });
-
-  addEventListener('lostsignal:resident', (e) => {
-    flash(e.detail.line, 4200);
-  });
-
-  addEventListener('lostsignal:cache', () => {
-    if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
-    cacheEmptied = true;
-    reserve += 24;
-    survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
-    updateAmmo();
-    updateStats();
-    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
-    clickSound(520, .12, .05);
-    completeObjective('cache');
-  });
-
-
 
   document.querySelectorAll('.modal .x').forEach((button) => {
     button.onclick = () => {
@@ -624,11 +472,14 @@ function nearestDownedAnimal() {
 
 function nearestResident() {
   if (currentWorld !== 'silo' || !game.residents) return null;
+  const forward = new THREE.Vector3(0, 0, -1).applyEuler(game.camera.rotation).normalize();
   let best = null;
   let bestDistance = 2.6;
   for (const root of game.residents.residents) {
     const distance = root.position.distanceTo(game.player.position);
-    if (distance < bestDistance && Math.abs(root.position.y - game.player.position.y) < 2.2) {
+    if (distance >= bestDistance || Math.abs(root.position.y - game.player.position.y) >= 2.2) continue;
+    const direction = root.position.clone().sub(game.player.position).normalize();
+    if (forward.dot(direction) > 0.12) {
       best = root;
       bestDistance = distance;
     }
@@ -638,18 +489,18 @@ function nearestResident() {
 
 function use() {
   if (!started || modal || cctv) return;
+  const interaction = game.nearestInteraction(currentWorld);
+  if (interaction) {
+    clickSound(420, .04, .035);
+    interaction.onUse();
+    return;
+  }
   const resident = nearestResident();
   if (resident) {
     window.dispatchEvent(new CustomEvent('lostsignal:resident', {
       detail: { line: resident.userData.resident?.line || '…' },
     }));
     completeObjective('resident');
-    return;
-  }
-  const interaction = game.nearestInteraction(currentWorld);
-  if (interaction) {
-    clickSound(420, .04, .035);
-    interaction.onUse();
     return;
   }
   const downed = nearestDownedAnimal();
@@ -780,6 +631,8 @@ function persistRun() {
     health, ammo, reserve, armed,
     completed: [...completed],
     cacheEmptied,
+    doorOpen: game.doorOpen?.() ?? false,
+    hatchOpen: game.hatchOpen?.() ?? false,
   });
 }
 
@@ -792,6 +645,9 @@ function restoreRun() {
   ammo = saved.ammo ?? 5;
   reserve = saved.reserve ?? 20;
   cacheEmptied = !!saved.cacheEmptied;
+  hatchOpen = !!saved.hatchOpen;
+  game.setDoorOpen?.(!!saved.doorOpen);
+  game.setHatchOpen?.(hatchOpen);
   for (const id of saved.completed || []) completed.add(id);
   if (saved.armed) {
     armed = true;
@@ -859,6 +715,7 @@ function closeCCTV() {
 }
 function switchCam(i) {
   currentCam = i;
+  if (cctv) setOutdoorAudio(i < 4);
   const strength = Math.round(camSignal[i] * 100);
   document.getElementById('camTitle').textContent =
     `CAM 0${i+1} // ${camNames[i]}  ·  SIG ${strength}%${nightVision ? '  ·  IR' : ''}`;
@@ -1185,19 +1042,24 @@ function updateEffects(dt) {
 
 function bloodBurst(point){const g=new THREE.SphereGeometry(.05,8,6),m=new THREE.MeshBasicMaterial({color:0x771714});for(let i=0;i<7;i++){const p=new THREE.Mesh(g,m);p.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.25,(Math.random()-.5)*.25,(Math.random()-.5)*.25));game.outside.add(p);setTimeout(()=>game.outside.remove(p),450)}}
 
+function beginGame({ restore = true } = {}) {
+  if (!game || started) return;
+  started = true;
+  const resumed = restore && restoreRun();
+  updateStats();updateAmmo();updateHealth();renderObjectives();
+  document.body.classList.add('playing');boot.style.display='none';updateOrientation();
+  setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
+  flash(resumed ? `RUN RESUMED — DAY ${survival.day}` : 'SHELTER 47 // REPOSITORY BUILD', resumed ? 2600 : 2200);
+}
+
 startButton.onclick=async()=>{
   if(!game){location.reload();return}
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
-  started=true;
-  if (restoreRun()) flash(`RUN RESUMED — DAY ${survival.day}`, 2600);
-  updateStats();updateAmmo();updateHealth();renderObjectives();
-  document.body.classList.add('playing');boot.style.display='none';updateOrientation();
-  setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
+  beginGame();
   // Requesting pointer lock without a trusted gesture rejects; that is normal
   // when the game is driven by a test harness and is not worth reporting.
   if(!coarse)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{});
-  flash('SHELTER 47 // REPOSITORY BUILD',2200);
 };
 
 // Weapon sway is driven by the body, so the rifle settles when the player does.

@@ -101,10 +101,18 @@ const results = await page.evaluate(async () => {
       Math.hypot(r.position.x - before[i].x, r.position.z - before[i].z) > 0.4).length;
     out.residentLevels = new Set(residents.map(r => Math.round(r.position.y))).size;
     out.residentLines = residents.filter(r => (r.userData.resident?.line || '').length > 10).length;
+    const residentRadii = residents.map(r => Math.hypot(r.position.x, r.position.z));
+    out.residentsOffGallery = residentRadii.filter(radius => radius < 13.2 || radius > 19.4).length;
+    out.residentRadiusRange = [
+      +Math.min(...residentRadii).toFixed(2),
+      +Math.max(...residentRadii).toFixed(2),
+    ];
 
     // Standing next to one should raise the prompt to speak.
     const target = residents[0];
     ls.body.teleport(target.position.x + 0.9, target.position.y, target.position.z);
+    ls.simulate(1);
+    ls.aimAt({ x: target.position.x, y: target.position.y + 1, z: target.position.z });
     ls.simulate(3);
     const prompt = document.getElementById('prompt');
     out.speakPrompt = (prompt.textContent || '').includes('RESIDENT');
