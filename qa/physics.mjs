@@ -150,6 +150,67 @@ results.silo = await page.evaluate(async () => {
     });
   }
 
+  // Open a residential leaf and physically cross the threshold with the real
+  // browser controller. Unit geometry samples are useful, but the supplied
+  // mobile video showed why a point behind a door is not proof that a player
+  // can actually get there.
+  const homeLevel = 0;
+  const homeBay = head.homeBays[homeLevel][2];
+  const homeAngle = homeBay * Math.PI * 2 / 18;
+  head.setHomeDoor(homeLevel, homeBay, false);
+  const homeClosed = ls.game.blocked?.('silo',
+    Math.cos(homeAngle) * (head.deckOuter - .30),
+    Math.sin(homeAngle) * (head.deckOuter - .30), .34, .2, 1.7) ?? true;
+  head.setHomeDoor(homeLevel, homeBay, true);
+  ls.body.teleport(Math.cos(homeAngle) * 18.1, .5, Math.sin(homeAngle) * 18.1);
+  settle(30);
+  ls.look(homeAngle - Math.PI / 2, 0);
+  ls.walkFrames(105);
+  settle(12);
+  const homeEntry = {
+    level: homeLevel, bay: homeBay, closedBlocked: homeClosed,
+    radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+    grounded: ls.body.grounded,
+  };
+
+  // The arched landmark now has an independently animated bulkhead and a room
+  // behind it. Walk through the opened leaf rather than merely checking its
+  // interaction callback exists.
+  const tunnelLevel = 0;
+  const tunnelAngle = head.tunnelBay * Math.PI * 2 / 18;
+  head.setTunnelDoor(tunnelLevel, false);
+  const tunnelClosed = ls.game.blocked?.('silo',
+    Math.cos(tunnelAngle) * head.tunnelDoorRadius,
+    Math.sin(tunnelAngle) * head.tunnelDoorRadius, .34, .2, 1.7) ?? true;
+  head.setTunnelDoor(tunnelLevel, true);
+  ls.body.teleport(Math.cos(tunnelAngle) * 18.1, .5, Math.sin(tunnelAngle) * 18.1);
+  settle(30);
+  ls.look(tunnelAngle - Math.PI / 2, 0);
+  ls.walkFrames(190);
+  settle(30);
+  const tunnelEntry = {
+    closedBlocked: tunnelClosed,
+    radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
+    grounded: ls.body.grounded,
+    doorMesh: !!head.tunnelDoors[tunnelLevel]?.root,
+  };
+
+  // Hold the player and camera still after the light pool settles. Any spread
+  // here is time-based flicker; movement and dust cannot excuse it.
+  ls.body.teleport(Math.cos(1.15) * 16.4, 12.5, Math.sin(1.15) * 16.4);
+  settle(210);
+  const lightEnergy = [];
+  for (let i = 0; i < 90; i++) {
+    settle(1);
+    if (i % 6 === 0) lightEnergy.push(head.lightState().energy);
+  }
+  const lightStability = {
+    minimum: +Math.min(...lightEnergy).toFixed(4),
+    maximum: +Math.max(...lightEnergy).toFixed(4),
+    spread: +(Math.max(...lightEnergy) - Math.min(...lightEnergy)).toFixed(4),
+    active: head.lightState().active,
+  };
+
   // Step into the light well: the player should fall the full height of the
   // shaft and land at the bottom. The drop point is the open ring between the
   // great stair and the galleries, a quarter turn off the landings, which all
@@ -167,8 +228,12 @@ results.silo = await page.evaluate(async () => {
     stairFoot,
     stairEntries,
     floors,
+    homeEntry,
+    tunnelEntry,
+    lightStability,
     overCentre,
     colliders: ls.game.colliders.silo.boxes.length,
+    doorArcs: ls.game.colliders.silo.arcs.length,
     interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,
   };
 });

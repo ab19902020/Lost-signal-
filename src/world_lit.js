@@ -24,6 +24,12 @@ const PALETTE = {
   wood: 0x4c3729,
   warning: 0x7c4030,
   deck: 0x585b52,
+  facade: 0x39362f,
+  inner: 0x625d52,
+  cream: 0x6b6355,
+  door: 0x294340,
+  orange: 0x7a3b24,
+  tile: 0x593528,
 };
 
 function gradeMaterials(scene) {
@@ -48,6 +54,12 @@ function gradeMaterials(scene) {
       else if (name.includes('rubber')) m.color.copy(colors.rubber);
       else if (name.includes('wood')) m.color.copy(colors.wood);
       else if (name.includes('warningred')) m.color.copy(colors.warning);
+      else if (name.includes('facade')) m.color.copy(colors.facade);
+      else if (name.includes('innerwall')) m.color.copy(colors.inner);
+      else if (name.includes('cream')) m.color.copy(colors.cream);
+      else if (name.includes('doorpaint')) m.color.copy(colors.door);
+      else if (name.includes('orange')) m.color.copy(colors.orange);
+      else if (name.includes('tileband')) m.color.copy(colors.tile);
       else {
         // Lift crushed blacks so ordinary surfaces still show their shape,
         // but leave emissive screens and signage alone.
@@ -67,14 +79,15 @@ function gradeMaterials(scene) {
         if ('metalness' in m && m.metalness > 0.8) m.metalness = 0.7;
       }
       if (m.normalScale) m.normalScale.multiplyScalar(0.65);
-      // Emissive fittings carry the room when their point light is culled, so
-      // a strip light forty metres away still reads as a strip light.
-      // Fittings carry the room when their point light is culled, so a strip
-      // light forty metres away still reads as one. Lit windows are held lower:
-      // a wall of them at full strength blows out to white up close.
+      // Emission identifies a fixture; it must not become a second exposure
+      // system. The old blanket minimum of 1.5 turned every ceiling strip and
+      // every apartment window into a clipped white rectangle on mobile.
       if (m.emissive && Math.max(m.emissive.r, m.emissive.g, m.emissive.b) > 0.05) {
-        const window = name.includes('window');
-        m.emissiveIntensity = window ? 0.42 : Math.max(m.emissiveIntensity ?? 1, 1.5);
+        if (name.includes('whitelight')) m.emissiveIntensity = 0.48;
+        else if (name.includes('window')) m.emissiveIntensity = 0.28;
+        else if (name.includes('warmlamp') || name.includes('pendant')) m.emissiveIntensity = 0.52;
+        else if (name.includes('growlight')) m.emissiveIntensity = 0.82;
+        else m.emissiveIntensity = Math.min(m.emissiveIntensity ?? 0.9, 1.05);
       }
       m.needsUpdate = true;
     }
@@ -119,7 +132,7 @@ export function createGameWorld(assets) {
     pool.position.copy(light.position);
     pool.target.position.set(light.position.x * 0.6, 0, light.position.z * 0.6);
     bunker.add(pool, pool.target);
-    return { light, pool, base: 48, poolBase: 28, phase: index * 1.7, failing: index === 2 };
+    return { light, pool };
   });
 
   // --- Practicals -----------------------------------------------------------
@@ -173,24 +186,8 @@ export function createGameWorld(assets) {
   outside.add(new THREE.AmbientLight(0x536875, 0.38));
 
   const baseUpdate = game.update.bind(game);
-  let elapsed = 0;
   game.update = (dt, ...rest) => {
     baseUpdate(dt, ...rest);
-    elapsed += dt;
-
-    // Slow ballast hum on every tube, plus one fixture that is on its way out.
-    for (const tube of tubes) {
-      const hum = 1 + Math.sin(elapsed * (1.6 + tube.phase * 0.1) + tube.phase) * 0.03;
-      let factor = hum;
-      if (tube.failing) {
-        const stutter = Math.sin(elapsed * 17.3) * Math.sin(elapsed * 2.1);
-        factor = hum * (stutter > 0.72 ? 0.25 : 1);
-      }
-      tube.light.intensity = tube.base * factor;
-      tube.pool.intensity = tube.poolBase * factor;
-    }
-
-    emergency.intensity = 12 + Math.sin(elapsed * 1.9) * 3;
   };
 
   return game;

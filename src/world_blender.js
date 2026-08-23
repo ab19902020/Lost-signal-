@@ -23,6 +23,8 @@ export function createGameWorld(assets) {
   const player = new THREE.Group();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.035, 180);
   const _cullPoint = new THREE.Vector3();   // reused: light culling runs every frame
+  const _interactionPoint = new THREE.Vector3();
+  const _interactionCamera = new THREE.Vector3();
   camera.rotation.order = 'YXZ';
   camera.position.set(0, 1.67, 0);
   player.add(camera);
@@ -385,9 +387,17 @@ export function createGameWorld(assets) {
 
   function nearestInteraction(world) {
     const ray=new THREE.Raycaster();
-    ray.far=2.7;
+    ray.far=3.15;
     ray.setFromCamera({x:0,y:0},camera);
-    const candidates=interactions.filter(o=>o.userData.interaction?.world===world);
+    camera.getWorldPosition(_interactionCamera);
+    // The silo now has a real interaction on every quarters door. Raycasting
+    // all 126 furnished meshes every frame is needless work on a phone; reject
+    // anything whose hinge/root is not even within reach first.
+    const candidates=interactions.filter((o) => {
+      if (o.userData.interaction?.world !== world) return false;
+      o.getWorldPosition(_interactionPoint);
+      return _interactionPoint.distanceToSquared(_interactionCamera) <= 18;
+    });
     const hits=ray.intersectObjects(candidates,true);
     if(!hits.length)return null;
     let o=hits[0].object;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { ColliderSet } from '../src/physics.js';
+import { CharacterBody, ColliderSet } from '../src/physics.js';
 import { buildSilo, SILO } from '../src/silo.js';
 
 // Build the authored collision without loading a renderer or any GLBs. This is
@@ -14,7 +14,10 @@ const silo = buildSilo({
   colliders,
   // Stubs stand in for the GLBs; what matters is that every branch of the
   // builder runs, including the ones that only fire when an asset is present.
-  assets: { habShell: {}, habLevel: {}, habStair: {}, habCrown: {}, habSump: {} },
+  assets: {
+    habShell: {}, habLevel: {}, habStair: {}, habCrown: {}, habSump: {},
+    habApartment: {}, habDoor: {}, habTunnel: {}, habBulkheadDoor: {},
+  },
   place: () => new THREE.Group(),
   addInteraction: () => {},
 });
@@ -96,7 +99,38 @@ assert.ok(colliders.contains(4, 4, 0.34, crownY - 0.2, crownY + 0.4),
 assert.ok(colliders.floorAt(0, 0, 0.34, 1.0) > -0.2,
   'the floor of the shaft has no surface to stand on');
 
-// Navigation: every room of every home you can walk into has to be standable.
+// Navigation: every front door must really open for the player capsule. Point
+// samples inside rooms once missed a narrow/misaligned threshold because they
+// never actually crossed it, so this drives the same CharacterBody used in play
+// from the gallery into all 119 homes.
+let doorwaysTraversed = 0;
+for (let level = 0; level < SILO.levels; level++) {
+  const y = level * SILO.levelHeight;
+  for (const bay of silo.homeBays[level]) {
+    const angle = (bay * Math.PI * 2) / SILO.segments;
+    const doorRadius = SILO.deckOuter - .30;
+    silo.setHomeDoor(level, bay, false);
+    assert.equal(colliders.contains(Math.cos(angle) * doorRadius, Math.sin(angle) * doorRadius,
+      PLAYER_RADIUS, y + .2, y + 1.7), true,
+    `level ${level} bay ${bay}: closed quarters door has no collision`);
+    silo.setHomeDoor(level, bay, true);
+    assert.equal(colliders.contains(Math.cos(angle) * doorRadius, Math.sin(angle) * doorRadius,
+      PLAYER_RADIUS, y + .2, y + 1.7), false,
+    `level ${level} bay ${bay}: open quarters door still blocks its threshold`);
+
+    const body = new CharacterBody();
+    body.teleport(Math.cos(angle) * 18.15, y + .02, Math.sin(angle) * 18.15);
+    const desired = new THREE.Vector3(Math.cos(angle) * 2.55, 0, Math.sin(angle) * 2.55);
+    for (let frame = 0; frame < 95; frame++) body.step(1 / 60, desired, colliders);
+    const reached = Math.hypot(body.position.x, body.position.z);
+    assert.ok(reached > SILO.deckOuter + .45,
+      `level ${level} bay ${bay}: capsule stopped at r=${reached.toFixed(2)} before entering the home`);
+    assert.ok(body.grounded, `level ${level} bay ${bay}: entering the home left the player airborne`);
+    doorwaysTraversed++;
+  }
+}
+
+// Every room beyond those thresholds has to be standable.
 // A home is a hall, a kitchen, a living room and two bedrooms behind their own
 // portals, and a partition placed a few centimetres wrong seals one of them off
 // without anything looking wrong from the walkway.
@@ -107,7 +141,7 @@ const ROOMS = [
 let roomsChecked = 0;
 for (let level = 0; level < SILO.levels; level++) {
   const y = level * SILO.levelHeight;
-  for (const bay of silo.openBays[level]) {
+  for (const bay of silo.homeBays[level]) {
     const angle = (bay * Math.PI * 2) / SILO.segments;
     for (const [name, lx, lz] of ROOMS) {
       const radius = silo.apartmentMid + lz;
@@ -123,15 +157,32 @@ for (let level = 0; level < SILO.levels; level++) {
   }
 }
 
-// The tunnel's bulkhead is shut, so its bay must stay solid: it is the one bay
-// whose facade the level ring leaves out, and a gap there is a hole in the wall.
+// The landmark arch is always a real passage. Its bulkhead blocks the far end
+// while shut, then opens into the maintenance room behind it on every level.
 for (let level = 0; level < SILO.levels; level++) {
   const y = level * SILO.levelHeight;
   const angle = (silo.tunnelBay * Math.PI * 2) / SILO.segments;
-  const r = SILO.deckOuter - 0.30;
-  assert.ok(colliders.contains(Math.cos(angle) * r, Math.sin(angle) * r,
-    PLAYER_RADIUS, y + 0.2, y + 1.7),
-  `level ${level}: the arched tunnel's bay is open when its bulkhead is shut`);
+  const entry = SILO.deckOuter - 0.30;
+  assert.equal(colliders.contains(Math.cos(angle) * entry, Math.sin(angle) * entry,
+    PLAYER_RADIUS, y + 0.2, y + 1.7), false,
+  `level ${level}: the landmark arch is blocked at its entrance`);
+  silo.setTunnelDoor(level, false);
+  assert.equal(colliders.contains(Math.cos(angle) * silo.tunnelDoorRadius,
+    Math.sin(angle) * silo.tunnelDoorRadius, PLAYER_RADIUS, y + .2, y + 1.7), true,
+  `level ${level}: shut service bulkhead has no collision`);
+  silo.setTunnelDoor(level, true);
+  assert.equal(colliders.contains(Math.cos(angle) * silo.tunnelDoorRadius,
+    Math.sin(angle) * silo.tunnelDoorRadius, PLAYER_RADIUS, y + .2, y + 1.7), false,
+  `level ${level}: open service bulkhead still blocks the passage`);
+
+  const body = new CharacterBody();
+  body.teleport(Math.cos(angle) * 18.1, y + .02, Math.sin(angle) * 18.1);
+  const desired = new THREE.Vector3(Math.cos(angle) * 2.7, 0, Math.sin(angle) * 2.7);
+  for (let frame = 0; frame < 185; frame++) body.step(1 / 60, desired, colliders);
+  const reached = Math.hypot(body.position.x, body.position.z);
+  assert.ok(reached > silo.tunnelDoorRadius + .8,
+    `level ${level}: capsule stopped at r=${reached.toFixed(2)} before the maintenance room`);
+  assert.ok(body.grounded, `level ${level}: maintenance-room traversal left the player airborne`);
 }
 
 // A merge once pasted the silo event block four times. Besides opening CCTV
@@ -148,6 +199,8 @@ for (const [event, count] of counts) {
 }
 assert.ok(!mainSource.includes('TWELVE LEVELS BELOW'), 'silo copy disagrees with its seven levels');
 
-console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings, `
-  + `walkway clear on all ${SILO.levels + 1} levels, ${roomsChecked} rooms reachable, `
+console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
+  + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `
+  + `walkway clear on all ${SILO.levels + 1} levels, `
+  + `${doorwaysTraversed} front doors traversed and ${roomsChecked} rooms reachable, `
   + `${counts.size} unique game events.`);

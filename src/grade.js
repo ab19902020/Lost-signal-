@@ -11,11 +11,11 @@ export const GradeShader = {
     // Keep the lens treatment visible without letting it obscure authored
     // detail on a small phone screen. The previous combination crushed the
     // corners and laid a coarse noise field over every concrete surface.
-    vignette: { value: 0.44 },
-    grain: { value: 0.022 },
-    aberration: { value: 0.0012 },
-    contrast: { value: 1.04 },
-    saturation: { value: 0.96 },
+    vignette: { value: 0.34 },
+    grain: { value: 0.006 },
+    aberration: { value: 0.00045 },
+    contrast: { value: 1.025 },
+    saturation: { value: 0.94 },
     lift: { value: new THREE.Color(0x0b1113) },
     damage: { value: 0 },
   },

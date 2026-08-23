@@ -85,7 +85,7 @@ jobs:
             resident_still_a_v5.glb resident_still_b_v5.glb resident_still_c_v5.glb \
             resident_still_d_v5.glb resident_still_e_v5.glb resident_still_f_v5.glb \
             remains_covered_v1.glb remains_slumped_v1.glb \
-            hab_crown_v5.glb hab_sump_v5.glb hab_tunnel_v5.glb \
+            hab_crown_v5.glb hab_sump_v5.glb hab_tunnel_v6.glb hab_bulkhead_door_v6.glb \
             access_hatch_v3.glb silo_cache_v3.glb; do
             test -s "public/assets/blender/$f" || { echo "Missing Blender asset: $f"; exit 1; }
           done

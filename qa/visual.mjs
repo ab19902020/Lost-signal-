@@ -179,6 +179,51 @@ await desktop.evaluate(() => {
 });
 await saveChecked(desktop, '05-silo-stair-and-landings', { minMean: 0.055, maxDark: 0.82 });
 
+// The user's mobile recording was made at eye height while moving along a
+// gallery. An overhead proof image cannot catch blown façade panels, repeating
+// ceiling bars or doorway finishes drawn over an opening, so review that exact
+// composition as its own gate.
+await desktop.setViewportSize({ width: 720, height: 405 });
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('silo');
+  const reviewY = 12;
+  for (const child of ls.game.silo.children) {
+    child.visible = true;
+    if (child === ls.game.camera || child.isLight) continue;
+    const isShell = child.getObjectByName?.('HabShell');
+    if (!isShell && Math.abs(child.position.y - reviewY) > 5.2) child.visible = false;
+  }
+  ls.game.siloWorld.update(1, { x: 15.4, y: reviewY + 1.65, z: 0 });
+  ls.freecam(15.4, reviewY + 1.65, 0, 18.7, reviewY + 1.55, 5.1, 64);
+  ls.game.camera.near = .08;
+  ls.game.camera.far = 25;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '05b-silo-gallery-player-height', {
+  minMean: 0.07, maxMean: 0.48, maxBright: 0.055,
+});
+
+// Prove that the landmark leaf is separate, visibly open, and reveals the
+// authored maintenance room behind it.
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  for (const child of ls.game.silo.children) {
+    child.visible = child === ls.game.camera || child.isLight ||
+      !!child.getObjectByName?.('HabShell') || Math.abs(child.position.y) < 4.2;
+  }
+  ls.game.siloWorld.setTunnelDoor(0, true);
+  for (let i = 0; i < 150; i++) {
+    ls.game.siloWorld.update(1 / 60, { x: -18.1, y: 1.65, z: 0 });
+  }
+  ls.freecam(-18.0, 1.65, 0, -26.4, 1.45, 0, 58);
+  ls.game.camera.far = 16;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '05c-open-service-bulkhead', {
+  minMean: 0.065, maxMean: 0.46, maxBright: 0.05,
+});
+
 // The wide shaft view above shows the stair/landing relationship. A second
 // mid-well angle makes SwiftShader draw every joined level at once and can take
 // minutes per frame, so the remaining silo view moves close to one home.
@@ -237,6 +282,20 @@ const mobileOverlap = await mobile.evaluate(() => {
 });
 if (mobileOverlap > 0) throw new Error(`mobile help button overlaps survival stats by ${mobileOverlap}px²`);
 await saveChecked(mobile, '07-mobile-landscape', { minMean: 0.09, maxBright: 0.07 });
+
+// Mobile must be reviewed in the world that failed in the supplied recording,
+// with the real HUD and player camera attached rather than a free camera.
+await mobile.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('silo');
+  const angle = .12;
+  ls.body.teleport(Math.cos(angle) * 15.8, 8.5, Math.sin(angle) * 15.8);
+  ls.look(angle - .82, -.015);
+  ls.simulate(180);
+});
+await saveChecked(mobile, '08-mobile-silo-gallery', {
+  minMean: 0.065, maxMean: 0.48, maxBright: 0.06,
+});
 await stopMobilePump();
 await mobile.close();
 
