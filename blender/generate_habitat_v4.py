@@ -13,7 +13,8 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
-# Visual rebuild revision 6: stateful quarters and service bulkheads.
+# Visual rebuild revision 7: stateful quarters, smooth service vaults and
+# floor-by-floor architectural lighting.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
@@ -825,6 +826,55 @@ def arch_head(name, xc, zc, half, spring, material, across=True, thick=.10, step
                      (thick, (y1 - y0) / 2, w), material, edge=.012)
 
 
+def arched_ring(name, xc, zc, inner, spring, band, depth, material,
+                steps=32, edge=.012):
+    """A genuinely curved, extruded half-ring in the X/Y plane.
+
+    The first tunnel was assembled from rotated boxes. At player height those
+    boxes read as a voxel arch, and the repeated stepped `arch_head` ribs made
+    the whole passage shimmer as the camera moved. This mesh has continuous
+    inner/outer curves and only the deliberate structural seams authored on
+    top of it.
+    """
+    verts = []
+    for z_offset in (-depth, depth):
+        for radius in (inner, inner + band):
+            for i in range(steps + 1):
+                angle = math.pi * i / steps
+                verts.append((xc + math.cos(angle) * radius,
+                              spring + math.sin(angle) * radius,
+                              zc + z_offset))
+
+    stride = steps + 1
+
+    def idx(z_layer, radial, i):
+        return z_layer * stride * 2 + radial * stride + i
+
+    faces = []
+    for i in range(steps):
+        # Front/back annular faces.
+        faces.append((idx(0, 0, i), idx(0, 0, i + 1),
+                      idx(0, 1, i + 1), idx(0, 1, i)))
+        faces.append((idx(1, 0, i), idx(1, 1, i),
+                      idx(1, 1, i + 1), idx(1, 0, i + 1)))
+        # The curved soffit and outer shoulder.
+        faces.append((idx(0, 0, i), idx(1, 0, i),
+                      idx(1, 0, i + 1), idx(0, 0, i + 1)))
+        faces.append((idx(0, 1, i), idx(0, 1, i + 1),
+                      idx(1, 1, i + 1), idx(1, 1, i)))
+    for i in (0, steps):
+        faces.append((idx(0, 0, i), idx(0, 1, i),
+                      idx(1, 1, i), idx(1, 0, i)))
+
+    mesh = bpy.data.meshes.new(f'{name}_Mesh')
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(material)
+    return world_uv(bevel(o, edge, segments=3))
+
+
 def pendant(name, x, z, ceiling, drop, radius):
     """A pendant lamp: brass rose, a flex, and a blown glass dome."""
     cyl(f'{name}_Rod', (x, ceiling - drop / 2, z), .011, drop, DARK, rotation=UP, verts=6)
@@ -1403,7 +1453,7 @@ def build_sump():
 
 
 def build_tunnel():
-    """Arched passage and playable maintenance room behind its bulkhead."""
+    """Smooth arched passage and playable maintenance room behind its bulkhead."""
     clear_scene()
     SPAN = 1.80          # half-width of the landmark arch
     SPRING = 1.95        # springing line
@@ -1421,40 +1471,48 @@ def build_tunnel():
              CONCRETE, edge=.04)
     cube('Tun_Spandrel', (0, (HEAD + LEVEL_HEIGHT) / 2, 0),
          (SPAN + 1.64, (LEVEL_HEIGHT - HEAD) / 2, .30), CONCRETE, edge=.04)
-    arch_head('Tun_Arch', 0, 0, SPAN, SPRING, CONCRETE, across=True, thick=.30, steps=14)
+    arch_head('Tun_Arch', 0, 0, SPAN, SPRING, CONCRETE,
+              across=True, thick=.30, steps=32)
 
-    # Voussoirs: radiating blocks round the arch, with a keystone at the crown.
-    VOUS = 15
-    for i in range(VOUS):
-        t = math.pi * (i + .5) / VOUS           # 0 at the right springing
-        r = SPAN + .26
-        x = math.cos(t) * r
-        y = SPRING + math.sin(t) * r
-        cube(f'Tun_Vous_{i}', (x, y, -.02), (.16, .30, .36), CONCRETE,
-             rotation=(0, 0, t - math.pi / 2), edge=.025)
-    cube('Tun_Key', (0, SPRING + SPAN + .30, -.02), (.20, .36, .40), CONCRETE, edge=.03)
+    # One continuous weathered-steel collar replaces the toy-like stack of
+    # rotated voussoir boxes. Small recessed fasteners retain the bunker-built
+    # character without turning the silhouette back into a staircase.
+    arched_ring('Tun_EntryCollar', 0, -.34, SPAN, SPRING, .22, .10,
+                BRUSHED, steps=40, edge=.015)
+    for k in (-1, 1):
+        cube(f'Tun_EntryLeg_{k}', (k * (SPAN + .11), SPRING / 2, -.34),
+             (.11, SPRING / 2, .10), BRUSHED, edge=.018)
+    for i in range(13):
+        t = math.pi * (i + .5) / 13
+        r = SPAN + .11
+        cyl(f'Tun_CollarBolt_{i}', (math.cos(t) * r,
+             SPRING + math.sin(t) * r, -.455), .035, .025,
+             DARK, verts=12, edge=.004)
     # Impost bands where the arch springs from the haunches.
     for k in (-1, 1):
         cube(f'Tun_Impost_{k}', (k * (SPAN + .22), SPRING - .06, -.03),
              (.42, .09, .38), BRUSHED, edge=.02)
 
-    # The passage: a barrel running back, ribbed, with restrained practicals.
-    for i in range(6):
-        z = .40 + i * (DEPTH / 6)
-        # The rib is a frame round the passage, not a slab across it: a cube of
-        # the opening's full width and height is a plug, and the tunnel was
-        # solid below the springing line.
-        arch_head(f'Tun_RibArch_{i}', 0, z, SPAN + .04, SPRING, CONCRETE,
-                  across=True, thick=.10, steps=10)
+    # A continuous concrete barrel and wall pair forms the passage. Five slim
+    # inset steel ribs then articulate its depth; they project by centimetres,
+    # not by whole block courses, so camera motion stays visually stable.
+    arched_ring('Tun_Vault', 0, DEPTH / 2, SPAN, SPRING, .16,
+                DEPTH / 2, CONCRETE, steps=40, edge=.010)
+    for k in (-1, 1):
+        cube(f'Tun_PassageWall_{k}', (k * (SPAN + .08), SPRING / 2, DEPTH / 2),
+             (.08, SPRING / 2, DEPTH / 2), CONCRETE, edge=.025)
+    for i in range(5):
+        z = .42 + i * ((DEPTH - .78) / 4)
+        arched_ring(f'Tun_RibArch_{i}', 0, z, SPAN - .045, SPRING,
+                    .13, .055, DARK, steps=32, edge=.009)
         for k in (-1, 1):
-            cube(f'Tun_Side_{i}_{k}', (k * (SPAN - .04), SPRING / 2, z),
-                 (.10, SPRING / 2, DEPTH / 12), CONCRETE, edge=.02)
-        # A light in the crown of every second rib bay.
+            cube(f'Tun_RibLeg_{i}_{k}', (k * (SPAN + .02), SPRING / 2, z),
+                 (.065, SPRING / 2, .055), DARK, edge=.010)
         if i % 2 == 0:
-            cube(f'Tun_Soffit_{i}', (0, SPRING + SPAN * .62, z + .18),
-                 (.30, .05, .16), WARMLAMP, edge=.012)
-            cube(f'Tun_SoffitHood_{i}', (0, SPRING + SPAN * .70, z + .18),
-                 (.38, .07, .22), DARK, edge=.02)
+            cube(f'Tun_Soffit_{i}', (0, SPRING + SPAN - .12, z + .14),
+                 (.28, .035, .15), WARMLAMP, edge=.010)
+            cube(f'Tun_SoffitHood_{i}', (0, SPRING + SPAN - .04, z + .14),
+                 (.36, .055, .20), DARK, edge=.016)
     cube('Tun_PassageFloor', (0, .03, DOOR_Z / 2),
          (SPAN, .03, DOOR_Z / 2), DECKPLATE, edge=.01)
     for k in (-1, 1):

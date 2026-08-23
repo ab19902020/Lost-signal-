@@ -650,8 +650,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // Warm. The silo used to be lit with a blue sky light and a blue ambient,
   // which turned every wall in it cold grey-blue — the opposite of how the
   // living spaces are meant to read.
-  scene.add(new THREE.HemisphereLight(0x9a8f7c, 0x1c1814, 0.92));
-  scene.add(new THREE.AmbientLight(0x5f5648, 0.34));
+  scene.add(new THREE.HemisphereLight(0xa99d89, 0x211b16, 1.08));
+  scene.add(new THREE.AmbientLight(0x665c4d, 0.44));
 
   // A hemisphere light barely touches a vertical wall — its contribution is
   // driven by how much of the surface faces up — so the shaft's tall surfaces,
@@ -659,7 +659,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // opposed directionals light every vertical face regardless of distance, at
   // the cost of two lights rather than one per level.
   for (const [dx, dz] of [[1, 0.35], [-1, -0.35]]) {
-    const wash = new THREE.DirectionalLight(0xc6b49c, 0.27);
+    const wash = new THREE.DirectionalLight(0xcbb9a0, 0.33);
     wash.position.set(dx * 40, shaftHeight * 0.6, dz * 40);
     wash.target.position.set(0, shaftHeight * 0.35, 0);
     scene.add(wash, wash.target);
@@ -757,7 +757,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 4; i++) {
     const angle = (i * TAU) / 4 + 0.35;
-    const fill = new THREE.PointLight(0xc7b49a, 88, 34, 1.8);
+    const fill = new THREE.PointLight(0xcbb79b, 104, 34, 1.8);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 3) * i + levelHeight * 0.55,
       Math.sin(angle) * fillRadius);
