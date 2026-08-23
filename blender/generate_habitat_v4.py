@@ -13,6 +13,7 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
+# Visual rebuild revision 6: stateful quarters and service bulkheads.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
