@@ -185,8 +185,11 @@ class Resident extends Creature {
       legL: 'Resident_Leg_-1', legR: 'Resident_Leg_1',
       shinL: 'Resident_Shin_-1', shinR: 'Resident_Shin_1',
       armL: 'Resident_Arm_-1', armR: 'Resident_Arm_1',
+      foreL: 'Resident_Forearm_-1', foreR: 'Resident_Forearm_1',
       torso: 'Resident_Torso', head: 'Resident_Head',
     });
+    this.eyes = [findNamed(root, 'Resident_EyeWhite_-1'), findNamed(root, 'Resident_EyeWhite_1')]
+      .filter(Boolean);
     this.line = options.line ?? RESIDENT_LINES[0];
     this.homeY = options.homeY ?? 0;
     this.radius = options.radius ?? 0.34;
@@ -236,6 +239,22 @@ class Resident extends Creature {
     swing(this.limbs, ['shinR'], this.phase + Math.PI + 1.1, moved * 0.07);
     swing(this.limbs, ['armL'], this.phase + Math.PI, moved * 0.12);
     swing(this.limbs, ['armR'], this.phase, moved * 0.12);
+    swing(this.limbs, ['foreL'], this.phase + Math.PI, moved * 0.045);
+    swing(this.limbs, ['foreR'], this.phase, moved * 0.045);
+
+    // A resident who notices the player raises a forearm and settles their
+    // stance instead of continuing the same mannequin walk cycle while they
+    // speak. The motion is deliberately restrained for the confined silo.
+    if (this.limbs.armR) {
+      const target = this.limbs.armR.rest - this.greeting * 0.54;
+      this.limbs.armR.node.rotation.x = THREE.MathUtils.damp(
+        this.limbs.armR.node.rotation.x, target, 7, dt);
+    }
+    if (this.limbs.foreR) {
+      const target = this.limbs.foreR.rest - this.greeting * 0.82;
+      this.limbs.foreR.node.rotation.x = THREE.MathUtils.damp(
+        this.limbs.foreR.node.rotation.x, target, 8, dt);
+    }
     if (this.limbs.torso) {
       this.limbs.torso.node.rotation.z = Math.sin(this.phase * 0.5) * 0.03 * (moved > 0 ? 1 : 0.3);
     }
@@ -243,7 +262,13 @@ class Resident extends Creature {
       // Idling, they look around; greeting, they look at you.
       const idle = Math.sin(this.phase * 0.4) * 0.3;
       this.limbs.head.node.rotation.y = THREE.MathUtils.lerp(idle, 0, this.greeting);
+      this.limbs.head.node.rotation.x = Math.sin(this.phase * 0.7) * 0.018
+        - this.greeting * 0.035;
     }
+    // Short, infrequent blinks keep the new close-up eyes alive without a
+    // morph-target rig or another per-character animation mixer.
+    const blink = Math.pow(Math.max(0, Math.sin(this.phase * 0.53 + this.root.id)), 22);
+    for (const eye of this.eyes) eye.scale.y = 1 - blink * 0.86;
   }
 }
 
