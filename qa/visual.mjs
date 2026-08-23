@@ -37,8 +37,11 @@ async function boot(page, quality = 'high') {
 
 async function save(page, name) {
   await page.waitForTimeout(350);
-  const path = join(outDir, `${name}.png`);
-  await page.screenshot({ path, timeout: 180000 });
+  // Film grain makes PNG compression disproportionately expensive under
+  // SwiftShader. A high-quality JPEG preserves the lighting/material review
+  // while keeping the full silo from timing out during capture.
+  const path = join(outDir, `${name}.jpg`);
+  await page.screenshot({ path, type: 'jpeg', quality: 92, timeout: 180000 });
   console.log(`visual: ${path}`);
 }
 
