@@ -9,13 +9,54 @@ import * as THREE from 'three';
 // sliding, walk-under clearance for ceiling pipes, and step-up onto low props.
 
 const EPSILON = 1e-4;
+const TAU = Math.PI * 2;
+const normaliseAngle = (a) => ((a % TAU) + TAU) % TAU;
 const _box = new THREE.Box3();
 const _size = new THREE.Vector3();
 
 export class ColliderSet {
   constructor(bounds = null) {
     this.boxes = [];
+    // Rings: the silo is a body of revolution, and its two circular walls and
+    // its walkways are not boxes. Approximating them with one axis-aligned box
+    // per bay put metres of invisible collision into the walkway — an
+    // axis-aligned box round a slab that is wide along the ring and thin
+    // through it is far larger than the slab. A ring is exact, and one test.
+    this.rings = [];
     this.bounds = bounds;
+  }
+
+  /**
+   * A band of revolution about the Y axis: solid between two radii, over a
+   * height span, except inside the angular gaps.
+   *
+   * `gaps` are [centre, halfWidth] pairs in radians — a doorway, or the
+   * opening a stair landing needs in the gallery railing. A capsule passes
+   * through a gap only if the whole of it fits, so a gap narrower than the
+   * player is still a wall.
+   */
+  addRing({ innerRadius, outerRadius, minY, maxY, gaps = [], climbable = false }) {
+    const ring = {
+      r0: Math.min(innerRadius, outerRadius),
+      r1: Math.max(innerRadius, outerRadius),
+      minY, maxY, climbable,
+      gaps: gaps.map(([centre, half]) => [normaliseAngle(centre), Math.abs(half)]),
+    };
+    this.rings.push(ring);
+    return ring;
+  }
+
+  // Is this angle far enough inside one of the ring's gaps for a capsule of
+  // `margin` radians to pass?
+  static _inGap(ring, angle, margin) {
+    for (const [centre, half] of ring.gaps) {
+      if (half <= margin) continue;
+      let d = normaliseAngle(angle) - centre;
+      if (d > Math.PI) d -= Math.PI * 2;
+      if (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) <= half - margin) return true;
+    }
+    return false;
   }
 
   // Register the world-space bounds of a placed Blender object.
@@ -49,6 +90,14 @@ export class ColliderSet {
       if (x < box.min.x - radius || x > box.max.x + radius) continue;
       if (z < box.min.z - radius || z > box.max.z + radius) continue;
       floor = box.max.y;
+    }
+    for (const ring of this.rings) {
+      if (!ring.climbable) continue;
+      if (ring.maxY > maxHeight || ring.maxY <= floor) continue;
+      const d = Math.hypot(x, z);
+      if (d < ring.r0 - radius || d > ring.r1 + radius) continue;
+      if (ColliderSet._inGap(ring, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
+      floor = ring.maxY;
     }
     return floor;
   }
@@ -91,6 +140,21 @@ export class ColliderSet {
         moved = true;
         corrected = true;
       }
+      for (const ring of this.rings) {
+        if (ring.maxY <= feetY + EPSILON || ring.minY >= headY - EPSILON) continue;
+        if (ring.climbable && ring.maxY <= feetY + stepHeight + EPSILON) continue;
+        const d = Math.hypot(position.x, position.z);
+        if (d < ring.r0 - radius || d > ring.r1 + radius) continue;
+        const angle = Math.atan2(position.z, position.x);
+        if (ColliderSet._inGap(ring, angle, radius / Math.max(d, 0.01))) continue;
+        // Out through the nearer face of the band.
+        const target = (d - ring.r0 < ring.r1 - d) ? ring.r0 - radius : ring.r1 + radius;
+        if (target <= 0) continue;
+        position.x = Math.cos(angle) * target;
+        position.z = Math.sin(angle) * target;
+        moved = true;
+        corrected = true;
+      }
       if (!moved) break;
     }
 
@@ -116,6 +180,14 @@ export class ColliderSet {
       if (box.max.y <= feetY || box.min.y >= headY) continue;
       if (x > box.min.x - radius && x < box.max.x + radius &&
           z > box.min.z - radius && z < box.max.z + radius) return true;
+    }
+    for (const ring of this.rings) {
+      if (ring.climbable) continue;
+      if (ring.maxY <= feetY || ring.minY >= headY) continue;
+      const d = Math.hypot(x, z);
+      if (d < ring.r0 - radius || d > ring.r1 + radius) continue;
+      if (ColliderSet._inGap(ring, Math.atan2(z, x), radius / Math.max(d, 0.01))) continue;
+      return true;
     }
     return false;
   }

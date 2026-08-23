@@ -93,33 +93,82 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // the landing and the floor is then unreachable from the stairwell. Every
   // level goes through here, the secure unit at the top included, because it
   // used to have its own copy of this without the opening.
-  function galleryRail(i, angle, y) {
-    if (i !== 0) {
-      colliders.addBox(ringBox(angle, wellRadius, arcHalf(wellRadius), 0.1, y + 0.02, y + 1.15), {});
-      return;
-    }
-    const rail = arcHalf(wellRadius);
-    for (const side of [-1, 1]) {
-      const centre = side * (landingHalf + (rail - landingHalf) / 2);
-      colliders.addBox(ringBox(angle + centre / wellRadius, wellRadius,
-        (rail - landingHalf) / 2, 0.1, y + 0.02, y + 1.15), {});
+  // The walkway, its railing and the wall of front doors are circles, so they
+  // are collided as circles. Built as one axis-aligned box per bay they were
+  // metres wider than the geometry — a box around a slab that is wide along
+  // the ring and thin through it is far bigger than the slab — and better than
+  // a third of every walkway was solid to the player and invisible on screen.
+  const doorGapHalf = doorHalf / (deckOuter - 0.30);
+  const railGapHalf = landingHalf / wellRadius;
+
+  function buildLevelRings(y, openBays) {
+    // The walkway itself.
+    colliders.addRing({ innerRadius: wellRadius, outerRadius: deckOuter,
+      minY: y - 0.3, maxY: y + 0.02, climbable: true });
+    // The railing over the well, open where the stair's landing arrives.
+    colliders.addRing({ innerRadius: wellRadius - 0.1, outerRadius: wellRadius + 0.1,
+      minY: y + 0.02, maxY: y + 1.15, gaps: [[0, railGapHalf]] });
+    // The wall of front doors: solid, except at the doorways that stand open.
+    // A shut door is simply not a gap.
+    colliders.addRing({ innerRadius: deckOuter - 0.45, outerRadius: deckOuter - 0.15,
+      minY: y, maxY: y + 2.24,
+      gaps: openBays.map((bay) => [(bay * Math.PI * 2) / segments, doorGapHalf]) });
+    // ...and solid all the way round above the door heads.
+    colliders.addRing({ innerRadius: deckOuter - 0.45, outerRadius: deckOuter - 0.15,
+      minY: y + 2.24, maxY: y + levelHeight });
+  }
+
+  // The homes behind that wall: their floor, their ceiling and the shell wall
+  // at the back of them.
+  function buildHomeRings(y) {
+    colliders.addRing({ innerRadius: deckOuter, outerRadius: apartmentBack,
+      minY: y - 0.3, maxY: y + 0.02, climbable: true });
+    colliders.addRing({ innerRadius: deckOuter, outerRadius: apartmentBack,
+      minY: y + levelHeight - 0.4, maxY: y + levelHeight });
+    colliders.addRing({ innerRadius: apartmentBack - 0.3, outerRadius: apartmentBack + 0.3,
+      minY: y, maxY: y + levelHeight });
+  }
+
+  // A wall running outward from the axis, added as several short boxes. One
+  // box around the whole slab is axis-aligned, so a long slab at an angle
+  // becomes a huge square; a run of short ones stays close to the wall.
+  function addRadialWall(angle, r0, r1, halfWidth, minY, maxY, opts = {}) {
+    const span = r1 - r0;
+    const pieces = Math.max(1, Math.ceil(span / 0.9));
+    const step = span / pieces;
+    for (let i = 0; i < pieces; i++) {
+      const mid = r0 + step * (i + 0.5);
+      colliders.addBox(ringBox(angle, mid, halfWidth, step / 2, minY, maxY), opts);
     }
   }
+
+  // ...and one running along the ring, split the same way for the same reason.
+  function addArcWall(angle, radius, halfWidth, halfDepth, minY, maxY, opts = {}) {
+    const pieces = Math.max(1, Math.ceil(halfWidth / 0.45));
+    const step = (halfWidth * 2) / pieces;
+    for (let i = 0; i < pieces; i++) {
+      const offset = -halfWidth + step * (i + 0.5);
+      colliders.addBox(ringBox(angle + offset / radius, radius, step / 2, halfDepth, minY, maxY), opts);
+    }
+  }
+
+  const doorwayAngle = (level, bay) => {
+    // Which homes stand open. Deterministic, so a door you left open is open
+    // when you come back, and roughly a third of the silo is welcoming.
+    return ((level * 7 + bay * 5) % 3) === 0;
+  };
+
+  const openBaysFor = (level) => {
+    const open = [];
+    for (let bay = 0; bay < segments; bay++) if (doorwayAngle(level, bay)) open.push(bay);
+    return open;
+  };
 
   for (let level = 0; level < levels; level++) {
     const y = levelY(level);
     place(assets.habLevel, scene, [0, y, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
-
-    for (let i = 0; i < segments; i++) {
-      const angle = (i * Math.PI * 2) / segments;
-      // Deck: walkable, with the light well left open through the middle.
-      colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, y - 0.3, y + 0.02),
-        { climbable: true });
-      // The gallery railing over the well. The frontage is NOT sealed here:
-      // the homes loop below authors it panel by panel around a real doorway,
-      // and a solid ring across it walled every one of them shut.
-      galleryRail(i, angle, y);
-    }
+    buildLevelRings(y, openBaysFor(level));
+    buildHomeRings(y);
     gallery.push({ level, y });
   }
 
@@ -160,11 +209,6 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const allLights = [];
   const apartmentMid = (deckOuter + apartmentBack) / 2;
   const apartmentDepth = (apartmentBack - deckOuter) / 2;
-  const doorwayAngle = (level, bay) => {
-    // Which homes stand open. Deterministic, so a door you left open is open
-    // when you come back, and roughly a third of the silo is welcoming.
-    return ((level * 7 + bay * 5) % 3) === 0;
-  };
 
   const homes = [];
   // Homes on the residential levels only; the top ring is the secure unit.
@@ -194,8 +238,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         // when a home was one open room and you were never near one; in a
         // four-metre bedroom an inverse-square light at head height is a
         // white-out.
-        for (const [depth, base] of [[2.2, 15], [5.0, 17], [8.4, 14]]) {
-          const lamp = new THREE.PointLight(0xffc078, base, 9, 2);
+        // A home is six and a half metres by ten with partitions in it. These
+        // were tuned when it was one open room and left every flat a murky
+        // brown box once it had rooms and a ceiling.
+        for (const [depth, base] of [[2.2, 26], [5.0, 30], [8.4, 24]]) {
+          const lamp = new THREE.PointLight(0xffc078, base, 12, 2);
           lamp.position.set(Math.cos(angle) * (deckOuter + depth), y + 3.15,
             Math.sin(angle) * (deckOuter + depth));
           lamp.visible = false;
@@ -227,12 +274,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         const centre = (deckOuter + apartmentBack) / 2;
         const T = 0.10, DW = 0.48, WIDE = 0.85, top = y + levelHeight - 0.5;
         // A partition running across the width, at local z, between x0 and x1.
-        const across = (z, x0, x1) => colliders.addBox(
-          ringBox(angle + ((x0 + x1) / 2) / centre, centre + z,
-            (x1 - x0) / 2, T, y, top), {});
+        const across = (z, x0, x1) => addArcWall(
+          angle + ((x0 + x1) / 2) / centre, centre + z, (x1 - x0) / 2, T, y, top);
         // A partition running back into the home, at local x, from z0 to z1.
-        const along = (x, z0, z1) => colliders.addBox(
-          ringBox(angle + x / centre, centre + (z0 + z1) / 2, T, (z1 - z0) / 2, y, top), {});
+        const along = (x, z0, z1) => addRadialWall(
+          angle + x / centre, centre + z0, centre + z1, T, y, top);
 
         const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
         const kitchenDoor = -2.05, livingGap = 1.95, bedA = -1.70, bedB = 1.70;
@@ -246,39 +292,12 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         along(0, BED_FRONT, halfD);
       }
 
-      // The floor of the home itself. Without it the deck collision stopped at
-      // the facade and walking through an open door dropped you down the silo.
-      const homeMid = (deckOuter + apartmentBack) / 2;
-      const homeHalf = (apartmentBack - deckOuter) / 2;
-      colliders.addBox(ringBox(angle, homeMid, arcHalf(apartmentBack), homeHalf,
-        y - 0.3, y + 0.02), { climbable: true });
-      // ...and its ceiling, so an open door is not a way onto the roof.
-      colliders.addBox(ringBox(angle, homeMid, arcHalf(apartmentBack), homeHalf,
-        y + levelHeight - 0.4, y + levelHeight), {});
-
-      // Home shell: side walls between neighbours, and the rear wall.
+      // The walls between one home and its neighbour. Radial rather than
+      // circular, so they stay boxes — but split along their length, because a
+      // box around a ten-metre slab lying at forty-five degrees is a
+      // seven-metre square that fills the whole home.
       const boundary = ((bay + 0.5) * Math.PI * 2) / segments;
-      colliders.addBox(ringBox(boundary, apartmentMid, 0.2, apartmentDepth, y, y + levelHeight), {});
-      colliders.addBox(ringBox(angle, apartmentBack, arcHalf(apartmentBack), 0.3, y, y + levelHeight), {});
-
-      // Facade: a panel either side of the doorway, and a lintel over it. A
-      // shut door fills the gap; an open one leaves it walkable. These match
-      // the wall the Blender ring builds — 300 mm thick at deckOuter - 0.30,
-      // with a 1.24 m clear opening between the jambs.
-      const wallMid = deckOuter - 0.30;
-      const reveal = doorHalf + 0.12;
-      const panelHalf = (arcHalf(deckOuter - 0.15) - reveal) / 2;
-      for (const side of [-1, 1]) {
-        const offset = doorOffset + side * (reveal + panelHalf);
-        colliders.addBox(ringBox(angle + offset / deckOuter, wallMid, panelHalf, 0.30,
-          y, y + levelHeight), {});
-      }
-      colliders.addBox(ringBox(angle + doorOffset / deckOuter, wallMid, reveal, 0.30,
-        y + 2.24, y + levelHeight), {});
-      if (!open) {
-        colliders.addBox(ringBox(angle + doorOffset / deckOuter, wallMid, doorHalf, 0.30,
-          y, y + 2.24), {});
-      }
+      addRadialWall(boundary, deckOuter, apartmentBack, 0.2, y, y + levelHeight);
     }
   }
 
@@ -341,12 +360,14 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // Top landing, above the residential levels. The CCTV console watches it.
   const topY = levelY(levels);
   place(assets.habLevel, scene, [0, topY, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
+  // Same rings as any other level, with no open doorways: up here the wall of
+  // the secure unit is solid. This level used to carry its own copy of the
+  // walkway collision, which is how it ended up without the railing opening
+  // the landing needs.
+  buildLevelRings(topY, []);
   for (let i = 0; i < segments; i++) {
     const angle = (i * Math.PI * 2) / segments;
-    colliders.addBox(ringBox(angle, deckMid, arcHalf(deckOuter), deckHalf, topY - 0.3, topY + 0.02),
-      { climbable: true });
-    colliders.addBox(ringBox(angle, deckOuter - 0.3, arcHalf(deckOuter - 0.3), 0.34, topY, topY + levelHeight), {});
-    galleryRail(i, angle, topY);
+
     // The level ring carries a doorway in every bay. On the residential levels
     // a home stands behind each one; up here there is only the secure unit, so
     // the openings get shut doors rather than being left as holes onto nothing.
@@ -440,6 +461,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // the visible count is held constant so the material shaders never recompile.
   const strips = [];
   const LIT_AT_ONCE = 14;
+  // Over how many metres a light ramps out as it nears the cull radius.
+  const LIGHT_FADE_METRES = 4;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
     const count = 4;
@@ -449,7 +472,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       light.position.set(Math.cos(angle) * (deckOuter - 2.2), y, Math.sin(angle) * (deckOuter - 2.2));
       light.visible = false;
       scene.add(light);
-      const entry = { light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 11 === 3 };
+      const entry = { light, base: 40, phase: level * 1.3 + i, failing: (level * count + i) % 23 === 3 };
       strips.push(entry);
       allLights.push(entry);
     }
@@ -468,8 +491,23 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       _lightSort.push(strip);
     }
     _lightSort.sort((a, b) => a.score - b.score);
+    // The visible count has to stay constant or every material in the scene
+    // recompiles, so the set is still the nearest LIT_AT_ONCE. What changed is
+    // that the last few fade down to nothing by the time they drop out: a
+    // light switched off at full brightness as you walk is a flash, and the
+    // whole silo appeared to flicker as you moved along a gallery.
+    // Fade by distance, not by rank. A lamp two metres away that happens to
+    // rank thirteenth is still a lamp two metres away; ranking it out dimmed
+    // whole rooms. What matters is that a light is nearly out by the time it
+    // reaches the cull radius, so switching it off is not a flash.
+    const cutoff = _lightSort[LIT_AT_ONCE]
+      ? Math.sqrt(_lightSort[LIT_AT_ONCE].score) : Infinity;
     for (let i = 0; i < _lightSort.length; i++) {
-      _lightSort[i].light.visible = i < LIT_AT_ONCE;
+      const entry = _lightSort[i];
+      entry.light.visible = i < LIT_AT_ONCE;
+      entry.fade = i < LIT_AT_ONCE
+        ? Math.min(1, Math.max(0, (cutoff - Math.sqrt(entry.score)) / LIGHT_FADE_METRES))
+        : 0;
     }
   }
 
@@ -482,7 +520,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 6; i++) {
     const angle = (i * Math.PI * 2) / 6;
-    const fill = new THREE.PointLight(0xc7b49a, 175, 46, 1.5);
+    // Reaching across a twenty-six metre well: at 175 the far gallery fell to
+    // black and the silo read as a void with a lit stair in it.
+    const fill = new THREE.PointLight(0xc7b49a, 400, 60, 1.35);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 5) * (i % 6) + levelHeight * 0.6,
       Math.sin(angle) * fillRadius);
@@ -537,9 +577,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (const strip of allLights) {
       if (!strip.light.visible) continue;
       const hum = 1 + Math.sin(elapsed * 1.4 + strip.phase) * 0.035;
-      const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.72
-        ? 0.15 : 1;
-      strip.light.intensity = strip.base * hum * stutter;
+      // A failing lamp browns out rather than snapping to near-dark: at 0.15
+      // it read as the whole level flashing rather than as one bad fitting.
+      const stutter = strip.failing && Math.sin(elapsed * 12.3 + strip.phase) * Math.sin(elapsed * 2.9) > 0.82
+        ? 0.55 : 1;
+      strip.light.intensity = strip.base * hum * stutter * (strip.fade ?? 1);
     }
     secureGlow.intensity = 10 + Math.sin(elapsed * 1.7) * 3;
 

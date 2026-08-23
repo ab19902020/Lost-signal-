@@ -18,9 +18,13 @@ const silo = buildSilo({
 });
 assert.ok(silo, 'silo collision did not build');
 
-const solidAt = (x, y, z) => colliders.boxes.some(({ box, climbable }) =>
-  !climbable && x >= box.min.x && x <= box.max.x &&
-  y >= box.min.y && y <= box.max.y && z >= box.min.z && z <= box.max.z);
+// Via contains() rather than by scanning boxes: the silo's circular surfaces —
+// the walkway, its railing, the wall of front doors — are ring colliders now,
+// and a check that only looked at boxes would not see any of them.
+const solidAt = (x, y, z) => colliders.contains(x, z, 0, y - 0.01, y + 0.01) &&
+  !colliders.boxes.some(({ box, climbable }) => climbable &&
+    x >= box.min.x && x <= box.max.x && y >= box.min.y && y <= box.max.y &&
+    z >= box.min.z && z <= box.max.z);
 
 const turn = SILO.stairTurn / SILO.stairSteps;
 const landingRadius = SILO.stairRadius + 0.16;
@@ -55,6 +59,28 @@ for (let level = 0; level <= SILO.levels; level++) {
   }
 }
 
+// You have to be able to walk the whole ring, on every level. The walkway used
+// to be collided as one axis-aligned box per bay, and a box drawn round a slab
+// that is wide along the ring and thin through it is metres bigger than the
+// slab — better than a third of every walkway was solid to the player and
+// invisible on screen, leaving a single walkable lane down the middle.
+const PLAYER_RADIUS = 0.34;
+for (let level = 0; level <= SILO.levels; level++) {
+  const y = level * SILO.levelHeight;
+  const blocked = [];
+  for (let step = 0; step < 180; step++) {
+    const angle = (step / 180) * Math.PI * 2;
+    for (const radius of [13.6, 14.8, 16.3, 17.8, 18.6]) {
+      if (colliders.contains(Math.cos(angle) * radius, Math.sin(angle) * radius,
+        PLAYER_RADIUS, y + 0.2, y + 1.7)) {
+        blocked.push(`${(angle * 180 / Math.PI).toFixed(0)}deg r${radius}`);
+      }
+    }
+  }
+  assert.equal(blocked.length, 0,
+    `level ${level}: walkway blocked at ${blocked.length} of 900 samples, e.g. ${blocked.slice(0, 4).join(', ')}`);
+}
+
 // A merge once pasted the silo event block four times. Besides opening CCTV
 // repeatedly it paid out hydroponics four times and replaced the cache message
 // with three "empty" messages, so duplicate game-event registrations fail the
@@ -69,4 +95,5 @@ for (const [event, count] of counts) {
 }
 assert.ok(!mainSource.includes('TWELVE LEVELS BELOW'), 'silo copy disagrees with its seven levels');
 
-console.log(`Unit QA passed: ${colliders.boxes.length} silo colliders, ${counts.size} unique game events.`);
+console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings, `
+  + `walkway clear on all ${SILO.levels + 1} levels, ${counts.size} unique game events.`);
