@@ -155,13 +155,26 @@ await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
   ls.simulate(120);
+  // This proof image reviews the three upper connections, not the entire
+  // seven-storey population. Keep the continuous shell for context but cull
+  // placed content below level six; otherwise SwiftShader spends minutes
+  // rasterising homes that sit behind the camera's far plane.
+  const shellMesh = ls.game.silo.getObjectByName('HabShell');
+  let shellRoot = shellMesh;
+  while (shellRoot?.parent && shellRoot.parent !== ls.game.silo) shellRoot = shellRoot.parent;
+  for (const child of ls.game.silo.children) {
+    if (child === shellRoot || child === ls.game.camera || child.isLight || child.position.y >= 19.5) continue;
+    child.visible = false;
+  }
   // The crown slab spans y=32.0..33.1. The former y=32.5 camera was embedded
   // inside that concrete after the crown asset was added, producing a nearly
   // black image while the build still passed. This sits below the slab, over
-  // the top gallery, and looks through the playable shaft volume.
-  ls.freecam(10.5, 30.35, 10.5, 0, 22.5, 0, 68);
+  // the top gallery, and looks through the playable shaft volume. It also sits
+  // just inside the well railing; from the walkway the nearest balustrade hid
+  // almost half of the stair connection this image exists to review.
+  ls.freecam(8.5, 30.1, 8.5, 0, 23.0, 0, 68);
   ls.game.camera.near = .12;
-  ls.game.camera.far = 32;
+  ls.game.camera.far = 22;
   ls.game.camera.updateProjectionMatrix();
 });
 await saveChecked(desktop, '05-silo-stair-and-landings', { minMean: 0.055, maxDark: 0.82 });
@@ -169,6 +182,7 @@ await saveChecked(desktop, '05-silo-stair-and-landings', { minMean: 0.055, maxDa
 // The wide shaft view above shows the stair/landing relationship. A second
 // mid-well angle makes SwiftShader draw every joined level at once and can take
 // minutes per frame, so the remaining silo view moves close to one home.
+await desktop.setViewportSize({ width: 640, height: 360 });
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   ls.world('silo');
@@ -178,6 +192,7 @@ await desktop.evaluate(() => {
     .sort((a, b) => (Math.abs(a.position.z) + Math.abs(a.position.x - 24.6)) -
       (Math.abs(b.position.z) + Math.abs(b.position.x - 24.6)))[0];
   if (!home) throw new Error('no level-one home available for visual QA');
+  home.visible = true;
 
   // Review the authored apartment itself. The gallery/stair shot already
   // covers the full environment; hiding unrelated rings here prevents a view
