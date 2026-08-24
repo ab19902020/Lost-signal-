@@ -280,13 +280,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const guardEnd = Math.min(panelEnd, stairTurn - landingOpeningAngle);
       if (guardEnd > guardStart) {
         const guardAngle = spin + (guardStart + guardEnd) / 2;
-        const guardHalf = (guardEnd - guardStart) * stairGuardRadius / 2 * 1.015;
-        colliders.addOrientedBox({
-          cx: Math.cos(guardAngle) * stairGuardRadius,
-          cz: Math.sin(guardAngle) * stairGuardRadius,
-          halfX: 0.18,
-          halfZ: guardHalf,
-          rotationY: -guardAngle,
+        // Resolve the faceted visual rail as the curved barrier it follows.
+        // Independent rotated rectangles create tiny corners between panels;
+        // a capsule following the helix can catch on one even though the rail
+        // looks continuous. Polar arcs keep the same guarded span and let the
+        // controller slide smoothly all the way to the landing opening.
+        colliders.addArc({
+          innerRadius: stairGuardRadius - 0.18,
+          outerRadius: stairGuardRadius + 0.18,
+          centre: guardAngle,
+          halfWidth: (guardEnd - guardStart) / 2,
           minY: top,
           maxY: top + 1.05,
         });
@@ -583,7 +586,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     // The authored landing parapets used to be visual only, so the player
     // could walk through either one and fall into the shaft. These oriented
     // boxes follow both radial edges and overlap the gallery returns.
-    const guardInner = landingInner;
+    // Begin the straight parapets where the circular stair balustrade meets
+    // them. Extending either parapet back to the service core puts a rail
+    // straight across the helical treads: it looks protective from the gallery
+    // and becomes an impassable barrier to anyone actually using the stair.
+    const guardInner = stairGuardRadius;
     const guardOuter = wellRadius + 0.12;
     const guardMid = (guardInner + guardOuter) / 2;
     const guardHalf = (guardOuter - guardInner) / 2;
