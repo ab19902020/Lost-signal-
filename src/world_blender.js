@@ -47,7 +47,12 @@ export function createGameWorld(assets) {
   const interactions = [];
   const colliders = {
     bunker: new ColliderSet({ minX: -6.55, maxX: 6.55, minZ: -6.85, maxZ: 6.85 }),
-    outside: new ColliderSet({ minX: -19.2, maxX: 19.2, minZ: -26.0, maxZ: 17.2 }),
+    // The surface used to be a hard box the size of the compound, which is why
+    // walking out of the gate put you straight back inside it. The world now
+    // runs from the compound to the town, so the bound is the edge of the
+    // ground itself; what actually stops the player is the fence, and where
+    // the fence is down, nothing does.
+    outside: new ColliderSet({ minX: -320, maxX: 140, minZ: -70, maxZ: 540 }),
     // The silo's enclosure is its ring of wall panels, not a rectangle.
     silo: new ColliderSet(null),
   };
@@ -257,16 +262,31 @@ export function createGameWorld(assets) {
   // surface used to be one fixed night with a single hard moonlight in it.
   const sky = createSky({ scene: outside, dayLength: 240, startAt: 0.30 });
 
-  // Reusable 4m Blender fence modules form the perimeter.
-  for (let x=-18; x<=18; x+=4) {
-    place(assets.fence,outside,[x,0,-27],[0,0,0]);
+  // The perimeter. Four-metre bays of security fence: footings, line posts,
+  // top rail, tension wire, chain link and three strands of barbed wire on
+  // angled outriggers. It is not a new fence — fifteen years of weather and
+  // whatever came through it have left bays leaning, torn and flat, and where
+  // it is down is where anything gets in.
+  const BREACH = new Set(['N:-2', 'W:3', 'S:-4']);
+  const LEANING = new Set(['N:2', 'E:-3', 'E:2', 'W:-2', 'S:3']);
+  // One bay in five carries the warning plate, as a real run does.
+  const SIGNED = new Set(['N:-4', 'N:1', 'E:-1', 'E:4', 'W:-5', 'W:1', 'S:4']);
+  const fenceBay = (run, index, position, rotation) => {
+    const key = `${run}:${index}`;
+    const asset = BREACH.has(key) ? (assets.fenceDown || assets.fence)
+      : LEANING.has(key) ? (assets.fenceTorn || assets.fence)
+        : SIGNED.has(key) ? (assets.fenceSigned || assets.fence)
+          : assets.fence;
+    // A flattened bay is not a wall: leave the gap in the collision too.
+    place(asset, outside, position, rotation, 1, { collide: !BREACH.has(key) });
+  };
+  for (let i = -4; i <= 4; i++) fenceBay('N', i, [i * 4, 0, -27], [0, 0, 0]);
+  for (let i = -5; i <= 4; i++) {
+    fenceBay('W', i, [-20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
+    fenceBay('E', i, [20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
   }
-  for (let z=-23; z<=15; z+=4) {
-    place(assets.fence,outside,[-20,0,z],[0,Math.PI/2,0]);
-    place(assets.fence,outside,[20,0,z],[0,Math.PI/2,0]);
-  }
-  for (let x=-18; x<=-6; x+=4) place(assets.fence,outside,[x,0,18],[0,0,0]);
-  for (let x=6; x<=18; x+=4) place(assets.fence,outside,[x,0,18],[0,0,0]);
+  for (let i = -4; i <= -2; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
+  for (let i = 2; i <= 4; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
   place(assets.gate,outside,[0,0,18],[0,0,0]);
 
   // Exterior lighting fixtures are Blender models; only emitted light is runtime.
@@ -387,6 +407,70 @@ export function createGameWorld(assets) {
     gateCar.name = 'Gate_Estate_Car';
     addInteraction(gateCar, 'ESTATE CAR — NOT RUNNING', 'outside',
       () => window.dispatchEvent(new CustomEvent('lostsignal:car')));
+  }
+
+  // --- The road out -------------------------------------------------------
+  // A B-road running from the gate to the town, half a kilometre of it, laid as
+  // forty-metre sections. Nothing has maintained it for fifteen years: about
+  // one length in four is cratered or lifted, and what was on it when it
+  // happened is still on it.
+  const TOWN_BEARING = -0.42;
+  const roadDirection = new THREE.Vector3(Math.sin(TOWN_BEARING), 0, Math.cos(TOWN_BEARING));
+  const roadPoint = (distance, across = 0) => [
+    roadDirection.x * distance + Math.cos(TOWN_BEARING) * across,
+    0,
+    18 + roadDirection.z * distance - Math.sin(TOWN_BEARING) * across,
+  ];
+  if (assets.road) {
+    const DAMAGED = new Set([2, 5, 6, 9, 11]);
+    for (let section = 0; section < 12; section++) {
+      const asset = DAMAGED.has(section) ? (assets.roadDamaged || assets.road) : assets.road;
+      place(asset, outside, roadPoint(20 + section * 40), [0, TOWN_BEARING, 0], 1,
+        { collide: false });
+    }
+  }
+
+  // What is still on it. Wrecks nose to tail where the queue stopped, debris
+  // where something came down, and the traffic furniture that was already
+  // there when it did.
+  const alongRoad = (asset, entries, options = {}) => {
+    if (!asset) return;
+    for (const [distance, across, spin, scale = 1] of entries) {
+      place(asset, outside, roadPoint(distance, across),
+        [0, TOWN_BEARING + spin, 0], scale, options);
+    }
+  };
+  alongRoad(assets.wreckCar, [
+    [26, -1.6, 0.06], [34, 1.5, -0.22], [48, -1.4, 1.62], [63, 1.7, 0.10],
+    [96, -1.5, 0.34], [104, 1.6, 2.90], [148, -1.7, 0.18], [206, 1.5, -0.42],
+    [268, -1.4, 1.20], [352, 1.6, 0.28],
+  ], { collide: false });
+  alongRoad(assets.propTruck, [[74, -1.8, 0.24], [318, 1.9, 2.68]], { collide: false });
+  alongRoad(assets.debrisField, [
+    [40, 5.5, 0.4], [88, -6.0, 1.9], [132, 6.5, 0.8], [190, -5.5, 2.6],
+    [244, 6.0, 1.3], [300, -6.5, 0.5], [386, 5.0, 2.1],
+  ], { collide: false });
+  alongRoad(assets.propBarrier, [
+    [18, -1.2, 0], [18, 0.2, 0], [18, 1.6, 0],
+    [176, -1.0, 0.3], [176, 0.6, -0.2],
+  ], { collide: false });
+  alongRoad(assets.propCone, [
+    [22, -2.6, 0], [30, 2.5, 0], [120, -2.4, 0], [232, 2.6, 0],
+  ], { collide: false });
+  alongRoad(assets.propStreetLight, [
+    [44, 5.0, 1.57], [124, -5.0, -1.57], [204, 5.0, 1.57], [284, -5.0, -1.57],
+    [364, 5.0, 1.57],
+  ], { shrink: 0.2, collide: false });
+  alongRoad(assets.propTrashBags, [[58, 4.4, 0.6], [212, -4.6, 2.2]], { collide: false });
+  // Dead hedgerow along the road, which is what a Berkshire lane actually has.
+  if (deadTrees.length) {
+    for (let i = 0; i < 22; i++) {
+      const distance = 34 + i * 19;
+      const side = i % 2 ? 1 : -1;
+      place(deadTrees[i % deadTrees.length], outside,
+        roadPoint(distance, side * (8.5 + (i % 3) * 1.4)),
+        [0, i * 1.1, 0], 0.85 + (i % 4) * 0.08, { collide: false });
+    }
   }
 
   // The town, on the horizon to the south-west past the gate. Not a place you

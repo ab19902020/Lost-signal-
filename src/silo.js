@@ -48,15 +48,18 @@ const TUNNEL_DOOR_DEPTH = 3.72;
 // floor made the silo read as a stack of white boxes. Clone only the handful
 // of finish materials and give each storey a restrained wayfinding identity;
 // geometry and textures stay shared.
+// One wayfinding colour per storey. Under the old single-amber lighting these
+// were almost indistinguishable; against cold service light they read, which
+// is the point of painting a level in the first place.
 const LEVEL_FINISHES = [
-  { facade: 0x35322d, accent: 0x613a2c },
-  { facade: 0x30362f, accent: 0x596044 },
-  { facade: 0x30363a, accent: 0x405b65 },
-  { facade: 0x3a302c, accent: 0x74452d },
-  { facade: 0x33302f, accent: 0x5d4c62 },
-  { facade: 0x2f3735, accent: 0x3d655d },
-  { facade: 0x39352c, accent: 0x75613a },
-  { facade: 0x302e2c, accent: 0x6b3d34 },
+  { facade: 0x413b32, accent: 0x8a4a30 },
+  { facade: 0x394338, accent: 0x6e7a4c },
+  { facade: 0x364049, accent: 0x3f7288 },
+  { facade: 0x46372f, accent: 0x96522c },
+  { facade: 0x3b3540, accent: 0x6d5480 },
+  { facade: 0x33413e, accent: 0x3d8375 },
+  { facade: 0x453f30, accent: 0x9a7a3c },
+  { facade: 0x3a3230, accent: 0x8a4038 },
 ];
 
 function styleLevel(root, level) {
@@ -117,8 +120,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const deckMid = (deckOuter + wellRadius) / 2;
   const deckHalf = (deckOuter - wellRadius) / 2;
 
-  scene.background = new THREE.Color(0x120e0b);
-  scene.fog = new THREE.FogExp2(0x211810, 0.0095);
+  // The silo used to be lit, fogged and backed in one warm amber, so every
+  // surface returned the same brown and the shaft had no depth to it. It is a
+  // utility structure: the service lighting is cold fluorescent and the only
+  // warm light in the place is what spills out of people's front doors. That
+  // contrast is what gives the galleries their shape.
+  scene.background = new THREE.Color(0x0a0d10);
+  scene.fog = new THREE.FogExp2(0x141a20, 0.0088);
 
   place(assets.habShell, scene, [0, 0, 0], [0, 0, 0], 1, { world: 'silo', collide: false });
 
@@ -844,12 +852,19 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // pool slot moves, and assigned sources receive hysteresis at the boundary.
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level) + levelHeight - 0.5;
-    const count = 4;
+    // Six fittings a level rather than four: with four, the walkway between
+    // them fell away to nothing and the ring read as four lit patches.
+    const count = 6;
     for (let i = 0; i < count; i++) {
       const angle = (i * TAU) / count + level * 0.5;
-      addLightSource(0xffd9a2, 28, 14,
+      addLightSource(0xcfe0ec, 24, 13.5,
         new THREE.Vector3(Math.cos(angle) * (deckOuter - 2.2), y,
           Math.sin(angle) * (deckOuter - 2.2)));
+      // A second, tighter fitting over the inner edge of the deck, so the
+      // balustrade and the drop beyond it are readable from the walkway.
+      addLightSource(0xbdd2e2, 13, 9.0,
+        new THREE.Vector3(Math.cos(angle + 0.5) * (wellRadius + 1.6), y,
+          Math.sin(angle + 0.5) * (wellRadius + 1.6)));
     }
   }
 
@@ -929,7 +944,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const fillRadius = stairRadius + 2.4;
   for (let i = 0; i < 4; i++) {
     const angle = (i * TAU) / 4 + 0.35;
-    const fill = new THREE.PointLight(0xcbb79b, 104, 34, 1.8);
+    const fill = new THREE.PointLight(0x9fb4c4, 88, 36, 1.8);
     fill.position.set(Math.cos(angle) * fillRadius,
       (shaftHeight / 3) * i + levelHeight * 0.55,
       Math.sin(angle) * fillRadius);
@@ -939,7 +954,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // A single hard light at the very top of the well, so looking up reads as a
   // long way from the surface and looking down reads as a long way to fall.
 
-  const crown = new THREE.SpotLight(0xe8dcc6, 330, shaftHeight + 12, 0.46, 0.78, 2);
+  const crown = new THREE.SpotLight(0xdce6ee, 340, shaftHeight + 12, 0.46, 0.78, 2);
   crown.position.set(0, topY + levelHeight - 0.4, 0);
   crown.target.position.set(0, 0, 0);
   scene.add(crown, crown.target);

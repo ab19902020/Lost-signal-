@@ -167,6 +167,9 @@ const exteriorUrls = {
   exteriorGround: `${BASE}assets/blender/exterior_ground_v3.glb`,
   exteriorEntrance: `${BASE}assets/blender/exterior_entrance_v3.glb`,
   fence: `${BASE}assets/blender/perimeter_fence_v3.glb`,
+  fenceSigned: `${BASE}assets/blender/perimeter_fence_signed_v1.glb`,
+  fenceTorn: `${BASE}assets/blender/perimeter_fence_damaged_v1.glb`,
+  fenceDown: `${BASE}assets/blender/perimeter_fence_down_v1.glb`,
   gate: `${BASE}assets/blender/perimeter_gate.glb`,
   floodlight: `${BASE}assets/blender/floodlight.glb`,
   deadTree: `${BASE}assets/blender/dead_tree.glb`,
@@ -176,6 +179,10 @@ const exteriorUrls = {
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
   rangeTarget: `${BASE}assets/blender/range_target_v1.glb`,
   distantTown: `${BASE}assets/blender/distant_town_v1.glb`,
+  road: `${BASE}assets/blender/road_section_v1.glb`,
+  roadDamaged: `${BASE}assets/blender/road_section_damaged_v1.glb`,
+  wreckCar: `${BASE}assets/blender/wreck_car_v1.glb`,
+  debrisField: `${BASE}assets/blender/debris_field_v1.glb`,
   estateCar: `${BASE}assets/blender/estate_car_v1.glb`,
 };
 
@@ -267,6 +274,16 @@ function prepare(root, options = {}) {
         if (slot === 'map') texture.colorSpace = THREE.SRGBColorSpace;
       }
       if ('roughness' in m && m.roughness == null) m.roughness = .65;
+      // Alpha-tested cut-outs — the chain link — need a much lower cutoff than
+      // the half the glTF default gives them. Wire is a thin minority of the
+      // texture's pixels, so its lower mips average well below 0.5 and the
+      // fence simply stops existing about thirty metres out. Cut low and let
+      // distance thin it instead of deleting it.
+      if (m.alphaTest > 0) {
+        m.alphaTest = 0.12;
+        m.depthWrite = true;
+        if (m.map) m.map.anisotropy = 16;
+      }
     }
     // Retiling is for Blender's world-scale box unwraps. A model that shares
     // one palette atlas across its whole mesh has no repeating surface to
