@@ -218,7 +218,7 @@ results.silo = await page.evaluate(async () => {
   const table = head.furnitureColliders.find((entry) => entry.name.startsWith('dining-table_0_'));
   let furnitureJump = { present: !!table, rise: 0, atop: false, landed: false };
   if (table) {
-    const approach = table.halfZ + ls.body.radius + .34;
+    const approach = table.halfZ + ls.body.radius + .12;
     ls.body.teleport(table.cx - table.sin * approach, table.minY,
       table.cz - table.cos * approach);
     settle(12);
@@ -226,8 +226,16 @@ results.silo = await page.evaluate(async () => {
     let peakY = startY;
     let atop = false;
     ls.jump();
-    for (let frame = 0; frame < 45; frame++) {
+    // Move over the leading edge, then release movement while the body is
+    // above the surface. Holding forward for the whole arc proves only that a
+    // player can clear the table; stopping on it proves the climbable top.
+    for (let frame = 0; frame < 12; frame++) {
       ls.walkFrames(1);
+      peakY = Math.max(peakY, ls.body.position.y);
+      if (ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08) atop = true;
+    }
+    for (let frame = 0; frame < 60; frame++) {
+      settle(1);
       peakY = Math.max(peakY, ls.body.position.y);
       if (ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08) atop = true;
     }
