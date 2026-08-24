@@ -4,6 +4,9 @@ import { chromium } from 'playwright';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/Lost-signal-/';
 const outDir = process.argv[3] || 'qa/out/visual';
+// This suite is deliberately rerun after Blender publishes generated GLBs;
+// screenshots from generator source plus an older landing binary are not a
+// valid visual approval of the stair-to-floor join.
 await mkdir(outDir, { recursive: true });
 
 const withQuality = (url, tier) => {
