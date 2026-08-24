@@ -89,16 +89,6 @@ function styleLevel(root, level) {
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
   new THREE.Box3(new THREE.Vector3(minX, minY, minZ), new THREE.Vector3(maxX, maxY, maxZ));
 
-// Conservative axis-aligned bounds for a slab standing at `distance` from the
-// axis, rotated to face the centre.
-function ringBox(angle, distance, halfWidth, halfDepth, minY, maxY) {
-  const cx = Math.cos(angle) * distance;
-  const cz = Math.sin(angle) * distance;
-  const ex = Math.abs(Math.cos(angle)) * halfDepth + Math.abs(Math.sin(angle)) * halfWidth;
-  const ez = Math.abs(Math.sin(angle)) * halfDepth + Math.abs(Math.cos(angle)) * halfWidth;
-  return box(cx - ex, minY, cz - ez, cx + ex, maxY, cz + ez);
-}
-
 export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   if (!assets.habShell || !assets.habLevel || !assets.habStair) return null;
 
@@ -266,8 +256,20 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let i = 0; i < stairSteps; i++) {
       const angle = spin + (i * stairTurn) / stairSteps;
       const top = base + i * rise + 0.09;
-      colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
-        { climbable: true });
+      // Keep collision in the tread's true rotated footprint. A conservative
+      // axis-aligned bound is almost two metres wider at diagonal bearings;
+      // neighbouring bounds then overlap into an invisible shelf that catches
+      // the player part-way down an otherwise continuous flight.
+      colliders.addOrientedBox({
+        cx: Math.cos(angle) * stairMid,
+        cz: Math.sin(angle) * stairMid,
+        halfX: treadDepth,
+        halfZ: goingHalf,
+        rotationY: -angle,
+        minY: top - 0.55,
+        maxY: top,
+        climbable: true,
+      });
       // Clip the collision exactly as the Blender balustrade is clipped. The
       // central route stays comfortably open while both edges become solid
       // immediately outside the 3.6 m landing.
@@ -279,8 +281,15 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       if (guardEnd > guardStart) {
         const guardAngle = spin + (guardStart + guardEnd) / 2;
         const guardHalf = (guardEnd - guardStart) * stairGuardRadius / 2 * 1.015;
-        colliders.addBox(ringBox(guardAngle, stairGuardRadius, guardHalf, 0.18,
-          top, top + 1.05), {});
+        colliders.addOrientedBox({
+          cx: Math.cos(guardAngle) * stairGuardRadius,
+          cz: Math.sin(guardAngle) * stairGuardRadius,
+          halfX: 0.18,
+          halfZ: guardHalf,
+          rotationY: -guardAngle,
+          minY: top,
+          maxY: top + 1.05,
+        });
       }
     }
     // The core the helix wraps is solid; the shaft around it stays open.
