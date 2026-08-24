@@ -34,6 +34,8 @@ jobs:
 
       - name: Capture visual QA views
         if: success()
+        env:
+          LS_VISUAL_FOCUS: '1'
         run: node qa/visual.mjs "http://127.0.0.1:5173/Lost-signal-/" qa/out/visual
 
       - name: Upload visual QA views
