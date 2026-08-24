@@ -42,8 +42,10 @@ let currentCam = 0;
 let yaw = 0;
 let pitch = -0.03;
 let armed = false;
-let ammo = 5;
-let reserve = 20;
+const MAGAZINE_SIZE = 30;
+const INITIAL_RESERVE = 90;
+let ammo = MAGAZINE_SIZE;
+let reserve = INITIAL_RESERVE;
 let reloading = false;
 let health = 100;
 const survival = new Survival();
@@ -211,7 +213,7 @@ async function prepare() {
           keys[code] = false;
         },
         arm: () => {
-          armed = true; game.setArmed(true); ammo = 5; reserve = 20;
+          armed = true; game.setArmed(true); ammo = MAGAZINE_SIZE; reserve = INITIAL_RESERVE;
           document.body.classList.add('armed'); updateAmmo();
         },
         aim: (value = true) => setAiming(value),
@@ -252,7 +254,7 @@ async function prepare() {
         },
       };
     }
-    engineState.textContent = '✓ Shelter 47, surface compound, wildlife and rifle loaded from this repository.';
+    engineState.textContent = '✓ Shelter 47, walk-in armoury, habitation silo and service rifle loaded.';
     backendEl.textContent = `S47 INTERNAL // EXTERNAL LINK LOST // ${quality.name.toUpperCase()} DISPLAY`;
     startButton.disabled = false;
     startButton.textContent = 'ENTER SHELTER';
@@ -282,13 +284,15 @@ function wireGameEvents() {
     updateStats();
     if (result.ok) clickSound(340, .18, .05);
   });
-  addEventListener('lostsignal:vaultopen', () => flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE'));
+  addEventListener('lostsignal:vaultopen', (event) => flash(event.detail?.open === false
+    ? 'ARMOURY SECURITY DOOR CLOSED'
+    : 'ARMOURY UNLOCKED — WALK IN AND INSPECT THE WALL RACKS'));
   addEventListener('lostsignal:takegun', () => {
     armed = true;
     game.setArmed(true);
     document.body.classList.add('armed');
     updateAmmo();
-    flash('SURVIVAL RIFLE EQUIPPED', 2200);
+    flash('SERVICE RIFLE EQUIPPED — AIM BEFORE FIRING', 2200);
     clickSound(360, .08, .05);
     completeObjective('rifle');
   });
@@ -381,14 +385,18 @@ function wireGameEvents() {
     flash(e.detail.line, 4200);
   });
 
+  addEventListener('lostsignal:quartermaster', (e) => {
+    flash(`QUARTERMASTER ELI: ${e.detail.line}`, 5200);
+  });
+
   addEventListener('lostsignal:cache', () => {
     if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
     cacheEmptied = true;
-    reserve += 24;
+    reserve += 60;
     survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
     updateAmmo();
     updateStats();
-    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    flash('+60 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
     clickSound(520, .12, .05);
     completeObjective('cache');
   });
@@ -428,7 +436,7 @@ let cacheEmptied = false;
 // objectives stay hidden until the ones before them are done, which keeps the
 // list to a couple of lines instead of a wall of spoilers.
 const OBJECTIVES = [
-  { id: 'rifle', text: 'Open the gun vault and take the rifle' },
+  { id: 'rifle', text: 'Enter the armoury and take the service rifle' },
   { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
   { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
   { id: 'descend', text: 'Descend into Silo 47' },
@@ -659,7 +667,7 @@ let reloadTimer = 0;
 let queuedReload = 0;
 
 function reload() {
-  if (reloading || ammo >= 5 || reserve <= 0) return;
+  if (reloading || ammo >= MAGAZINE_SIZE || reserve <= 0) return;
   setAiming(false);
   reloading = true;
   reloadTimer = 1.2;
@@ -676,7 +684,7 @@ function updateReload(dt) {
   if (!reloading) return;
   reloadTimer -= dt;
   if (reloadTimer > 0) return;
-  const take = Math.min(5 - ammo, reserve);
+  const take = Math.min(MAGAZINE_SIZE - ammo, reserve);
   ammo += take;
   reserve -= take;
   reloading = false;
@@ -720,8 +728,8 @@ function restoreRun() {
   Object.assign(survival, saved.survival || {});
   survival.elapsed = saved.elapsed || 0;
   health = saved.health ?? 100;
-  ammo = saved.ammo ?? 5;
-  reserve = saved.reserve ?? 20;
+  ammo = saved.ammo ?? MAGAZINE_SIZE;
+  reserve = saved.reserve ?? INITIAL_RESERVE;
   cacheEmptied = !!saved.cacheEmptied;
   hatchOpen = !!saved.hatchOpen;
   game.setDoorOpen?.(!!saved.doorOpen);

@@ -3,6 +3,7 @@ import { cloneGLTF, findNamed } from './assets.js';
 import { ColliderSet } from './physics.js';
 import { createCreatureSystem, populateSilo } from './creatures.js';
 import { buildSilo } from './silo.js';
+import { buildArmory } from './armory.js';
 
 // V3 WORLD RULE:
 // No visible architecture/props are authored with Three.js geometry.
@@ -93,10 +94,10 @@ export function createGameWorld(assets) {
 
   place(assets.electrical, bunker, [-4.85,.10,6.88], [0,0,0], .90);
   place(assets.lockers, bunker, [-2.55,0,6.55], [0,0,0], .84);
-  place(assets.bench, bunker, [2.35,0,6.30], [0,Math.PI,0], .88);
+  place(assets.bench, bunker, [4.85,0,6.25], [0,Math.PI,0], .88);
 
   // Low crates and cans can be stepped onto rather than walked into.
-  place(assets.clutter, bunker, [4.45,0,2.80], [0,-Math.PI/2,0], .92, { climbable: true });
+  place(assets.clutter, bunker, [-4.55,0,2.55], [0,Math.PI/2,0], .92, { climbable: true });
   place(assets.statusBoard, bunker, [0,1.15,7.17], [0,Math.PI,0], .90, { collide: false });
 
   // Physical security cameras, all Blender GLBs.
@@ -122,27 +123,21 @@ export function createGameWorld(assets) {
   place(assets.chair, bunker, [-3.15,0,-1.45], [0,0,0], 1, { climbable: true });
 
   // Bed and survival storage
-  place(assets.bed, bunker, [-4.75,0,4.10], [0,0,0], 1, { climbable: true });
-  place(assets.storage, bunker, [5.90,0,1.45], [0,Math.PI/2,0], .92);
+  place(assets.bed, bunker, [.70,0,5.55], [0,Math.PI/2,0], 1, { climbable: true });
   place(assets.storage, bunker, [5.90,0,-1.10], [0,Math.PI/2,0], .92);
+  place(assets.storage, bunker, [-5.90,0,-1.35], [0,-Math.PI/2,0], .92);
 
   // Generator
-  const generator = place(assets.generator, bunker, [4.60,0,4.95], [0,0,0], .90);
+  const generator = place(assets.generator, bunker, [-4.60,0,4.72], [0,0,0], .90);
   addInteraction(generator,'DIESEL GENERATOR','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:generator')));
 
-  // Gun vault + rifle display
-  const vault = place(assets.vault, bunker, [-6.38,0,.60], [0,Math.PI/2,0]);
-  const vaultDoor = findNamed(vault,'GunVault_Door');
-  const rifleDisplay = place(assets.rifle, vault, [0.0,1.52,-.30], [0,0,-.08], .80, { collide: false });
-  let vaultOpen = false;
-  addInteraction(vault,'GUN VAULT','bunker',()=>{
-    if (!vaultOpen) {
-      vaultOpen = true;
-      window.dispatchEvent(new CustomEvent('lostsignal:vaultopen'));
-    } else {
-      window.dispatchEvent(new CustomEvent('lostsignal:takegun'));
-    }
+  // The former cupboard-sized gun vault is now a room the player can enter.
+  // All 25 supplied weapon models are mounted inside and the supplied animated
+  // Adventurer runs the issue counter.
+  const armory = buildArmory({
+    assets, scene: bunker, colliders: colliders.bunker, place, addInteraction,
   });
+  if (armory?.lights?.length) bunkerLights.push(...armory.lights);
 
   // Blast door + fully Blender-built access control panel. The leaf slides
   // inside the wall line, so the room bounds already keep the player out of it.
@@ -327,13 +322,14 @@ export function createGameWorld(assets) {
   weaponView.position.set(.32,-.38,-.72);
   weaponView.rotation.set(-.04,-.08,0);
   weaponView.visible=false;
-  const rifle = cloneGLTF(assets.rifle);
-  // The authored rifle points down local +X. Rotate that axis into camera -Z
+  const rifle = cloneGLTF(armory?.weaponAsset || assets.rifle);
+  // Both rifle sources point down local +X. Rotate that axis into camera -Z
   // so the muzzle points where the crosshair points instead of lying sideways
   // across the lower third of the screen.
   rifle.rotation.set(0,Math.PI / 2,0);
-  rifle.scale.setScalar(.78);
-  rifle.position.set(0,-.02,0);
+  rifle.scale.setScalar(armory?.weaponAsset ? .16 : .78);
+  rifle.position.set(armory?.weaponAsset ? -.04 : 0,armory?.weaponAsset ? -.08 : -.02,0);
+  rifle.name = 'Equipped_Service_Rifle';
   weaponView.add(rifle);
 
   // CCTV cameras look at the Blender exterior scene.
@@ -410,7 +406,7 @@ export function createGameWorld(assets) {
 
   function setArmed(v) {
     weaponView.visible=v;
-    rifleDisplay.visible=!v;
+    armory?.setArmed(v);
   }
 
   function playGun(kind) {
@@ -434,8 +430,8 @@ export function createGameWorld(assets) {
     if (world === 'silo') siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
+    armory?.update(dt);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
-    if (vaultDoor) vaultDoor.rotation.y = THREE.MathUtils.damp(vaultDoor.rotation.y,vaultOpen?-1.68:0,5.0,dt);
     if (hatchHinge) hatchHinge.rotation.x = THREE.MathUtils.damp(
       hatchHinge.rotation.x, hatchOpen ? 1.38 : 0, 5.2, dt);
     dust.rotation.y += dt*.008;
@@ -461,7 +457,7 @@ export function createGameWorld(assets) {
     bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
     weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setDoorOpen,setHatchOpen,update,
-    bunkerLights,emergency,siloWorld,
+    bunkerLights,emergency,siloWorld,armory,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
   };

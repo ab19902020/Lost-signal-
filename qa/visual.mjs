@@ -16,6 +16,8 @@ await mkdir(outDir, { recursive: true });
 // is produced from the same state as its full-suite counterpart.
 const focused = process.env.LS_VISUAL_FOCUS === '1';
 const focusedViews = new Set([
+  '02a-walk-in-armoury',
+  '02b-animated-quartermaster',
   '05a-silo-landing-guard-closeup',
   '05aa-secure-top-stair-transition',
   '06-silo-home',
@@ -149,6 +151,49 @@ await desktop.evaluate(() => {
   ls.freecam(-5.6, 2.45, 5.7, 1.2, 1.2, -2.8, 66);
 });
 await saveChecked(desktop, '02-bunker-overview', { minMean: 0.12, maxBright: 0.07 });
+
+// Review the new room from its actual doorway. All 25 supplied models should
+// read as mounted inventory, the door should be visibly pocketed, and the
+// central aisle must remain broad enough to walk rather than becoming a prop
+// diorama the player can only look into.
+await desktop.setViewportSize({ width: 960, height: 540 });
+const armouryProof = await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('bunker');
+  const armory = ls.game.armory;
+  if (!armory) throw new Error('walk-in armoury did not load for visual QA');
+  armory.open();
+  ls.simulate(150);
+  ls.freecam(3.80, 1.66, -.12, 3.80, 1.48, 4.20, 62);
+  ls.game.camera.near = .05;
+  ls.game.camera.far = 12;
+  ls.game.camera.updateProjectionMatrix();
+  return {
+    weapons: armory.displayWeapons.length,
+    doorX: armory.shell.getObjectByName('Armory_Door_Leaf')?.position.x || 0,
+  };
+});
+if (armouryProof.weapons !== 25) throw new Error(`armoury shows ${armouryProof.weapons}/25 supplied models`);
+if (armouryProof.doorX > -1.6) throw new Error(`armoury door is not pocketed (${armouryProof.doorX.toFixed(2)} m)`);
+await saveChecked(desktop, '02a-walk-in-armoury', {
+  minMean: 0.065, maxMean: 0.54, maxDark: 0.84, maxBright: 0.08,
+});
+
+// Conversation-distance proof of the exact character the user supplied. This
+// catches a wrong up axis, back-facing import, broken skin, lost backpack or a
+// scale error that a wide store shot can hide.
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  const person = ls.game.armory?.quartermaster;
+  if (!person) throw new Error('supplied Adventurer character is missing');
+  ls.freecam(4.97, 1.55, 2.30, 4.97, 1.42, 4.03, 46);
+  ls.game.camera.near = .05;
+  ls.game.camera.far = 8;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '02b-animated-quartermaster', {
+  minMean: 0.06, maxMean: 0.54, maxDark: 0.86, maxBright: 0.08,
+});
 
 const hatchRotation = await desktop.evaluate(() => {
   const ls = globalThis.__ls;

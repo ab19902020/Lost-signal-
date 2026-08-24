@@ -56,10 +56,67 @@ await walk(90);
 results.backWall = await read();
 
 // Walk into the storage rack standing against the east wall.
-await setup(3.6, 1.45, -Math.PI / 2);
+await setup(3.6, -1.10, -Math.PI / 2);
 await frames(2);
 await walk(90);
 results.storageRack = await read();
+
+// The armoury is a room, not an interaction pretending to be one: its shut
+// pocket door blocks the player, the open door admits the real controller, the
+// back wall stops them, every supplied weapon is present, and the quartermaster
+// is a solid animated character rather than a ghost prop.
+results.armory = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const armory = ls.game.armory;
+  if (!armory) return { present: false };
+  const settle = (count) => ls.simulate(count);
+
+  ls.world('bunker');
+  ls.body.teleport(3.80, .02, -.10);
+  ls.look(Math.PI, 0); // camera forward is +Z, straight through the entrance
+  settle(8);
+  ls.walkFrames(55);
+  const shutDoorZ = ls.body.position.z;
+
+  armory.open();
+  settle(75);
+  const doorOffset = armory.shell.getObjectByName('Armory_Door_Leaf')?.position.x || 0;
+  ls.body.teleport(3.80, .02, -.10);
+  ls.look(Math.PI, 0);
+  settle(8);
+  ls.walkFrames(105);
+  settle(12);
+  const openDoorZ = ls.body.position.z;
+
+  const person = armory.quartermaster;
+  let characterCollision = null;
+  if (person) {
+    ls.body.teleport(person.position.x + .03, .02, person.position.z);
+    settle(3);
+    characterCollision = Math.hypot(ls.body.position.x - person.position.x,
+      ls.body.position.z - person.position.z);
+  }
+
+  armory.primaryDisplay?.userData.interaction?.onUse();
+  settle(3);
+  const characterBox = person ? ls.bounds(person) : null;
+  return {
+    present: true,
+    weapons: armory.displayWeapons.length,
+    shutDoorZ: +shutDoorZ.toFixed(2),
+    openDoorZ: +openDoorZ.toFixed(2),
+    doorOffset: +doorOffset.toFixed(2),
+    character: !!person,
+    characterHeight: characterBox ? +(characterBox.max.y - characterBox.min.y).toFixed(2) : 0,
+    characterAnimations: armory.animationCount,
+    characterCollision: characterCollision == null ? null : +characterCollision.toFixed(2),
+    rifleIssued: armory.isIssued(),
+    rifleVisibleOnRack: armory.primaryDisplay?.visible ?? true,
+    armed: ls.state().armed,
+    magazine: ls.state().ammo,
+    staticColliders: armory.staticColliderCount,
+  };
+});
 
 // Sprint down the open middle of the room, then crouch under the desk line.
 await setup(0, 5.5, Math.PI);

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { CharacterBody, ColliderSet } from '../src/physics.js';
 import { buildSilo, SILO } from '../src/silo.js';
+import { ARMORY_WEAPON_KEYS } from '../src/armory.js';
 
 // Build the authored collision without loading a renderer or any GLBs. This is
 // deliberately runnable anywhere `npm run build` runs, including before a
@@ -315,6 +316,19 @@ for (const id of ['jumpBtn', 'aimBtn']) {
 }
 assert.ok(mainSource.includes('jump: wantsJump'), 'jump input is not reaching the character body');
 assert.ok(mainSource.includes('targetFov = aiming ? 52 : 70'), 'rifle aim does not alter the sight picture');
+
+// The supplied pack is intentionally complete: dropping near-duplicate weapon
+// files makes the new room look dressed in a screenshot while silently failing
+// the user's request to see the whole collection on its walls.
+assert.equal(ARMORY_WEAPON_KEYS.length, 25, 'the armoury does not enumerate all 25 supplied models');
+assert.equal(new Set(ARMORY_WEAPON_KEYS).size, 25, 'an armoury wall slot repeats a weapon model');
+const assetsSource = await readFile(new URL('../src/assets.js', import.meta.url), 'utf8');
+for (const key of ARMORY_WEAPON_KEYS) {
+  assert.ok(assetsSource.includes(`${key}:`), `the asset loader does not publish ${key}`);
+}
+assert.ok(assetsSource.includes('legacyOrientation: false'),
+  'the supplied Y-up models are still being passed through the legacy rotation fix');
+assert.ok(mainSource.includes('MAGAZINE_SIZE = 30'), 'the service rifle still uses the old five-round magazine');
 
 console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
   + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `

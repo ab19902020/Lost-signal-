@@ -35,6 +35,32 @@ check(physics.world.wildlife === 0,
   `the surface has ${physics.world.wildlife} animals on it and should have none`);
 check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes');
 
+check(physics.armory?.present, 'the walk-in armoury did not load');
+if (physics.armory?.present) {
+  check(physics.armory.weapons === 25,
+    `the armoury displays ${physics.armory.weapons} of the 25 supplied models`);
+  check(physics.armory.shutDoorZ < 0.25,
+    `the shut armoury door let the player reach z=${physics.armory.shutDoorZ}`);
+  check(physics.armory.doorOffset < -1.65,
+    `the armoury door moved only ${physics.armory.doorOffset} m into its pocket`);
+  check(physics.armory.openDoorZ > 2.0,
+    `the open armoury stopped the player at z=${physics.armory.openDoorZ}`);
+  check(physics.armory.openDoorZ < 4.45,
+    `the player walked through the armoury back wall to z=${physics.armory.openDoorZ}`);
+  check(physics.armory.staticColliders >= 15,
+    `the armoury exposes only ${physics.armory.staticColliders} solid fittings`);
+  check(physics.armory.character && physics.armory.characterHeight > 1.7,
+    'the supplied full-height Adventurer character is missing');
+  check(physics.armory.characterAnimations >= 24,
+    'the supplied Adventurer animation set is not active');
+  check(physics.armory.characterCollision >= .64,
+    `the player passed through the quartermaster (${physics.armory.characterCollision} m)`);
+  check(physics.armory.rifleIssued && !physics.armory.rifleVisibleOnRack,
+    'taking the service rifle did not remove it from its wall mount');
+  check(physics.armory.armed && physics.armory.magazine === 30,
+    `the issued rifle loaded ${physics.armory.magazine} rounds instead of 30`);
+}
+
 // A 1x1 map is three.js substituting a placeholder for a texture that failed to
 // load — which is exactly how the shelter once shipped untextured.
 for (const texture of physics.textures) {

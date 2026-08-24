@@ -15,6 +15,7 @@ const bunkerUrls = {
   cctv: `${BASE}assets/blender/cctv_console_v2.glb`,
   vault: `${BASE}assets/blender/gun_vault_v2.glb`,
   rifle: `${BASE}assets/blender/hunting_rifle.glb`,
+  armory: `${BASE}assets/blender/walk_in_armory_v1.glb`,
   generator: `${BASE}assets/blender/generator.glb`,
   bed: `${BASE}assets/blender/bed.glb`,
   chair: `${BASE}assets/blender/chair.glb`,
@@ -30,6 +31,38 @@ const bunkerUrls = {
   statusBoard: `${BASE}assets/blender/status_board_v3.glb`,
   accessControl: `${BASE}assets/blender/access_control_v3.glb`,
   wallCamera: `${BASE}assets/blender/wall_camera_v3.glb`,
+};
+
+// User-supplied Quaternius assets. These GLBs already use glTF's Y-up
+// convention, unlike the earliest Lost Signal Blender exports, so they must
+// not pass through the legacy quarter-turn correction.
+const suppliedUrls = {
+  adventurer: `${BASE}assets/supplied/adventurer.glb`,
+  armoryAssault01: `${BASE}assets/supplied/assault_rifle_01.glb`,
+  armoryAssault02: `${BASE}assets/supplied/assault_rifle_02.glb`,
+  armoryAssault03: `${BASE}assets/supplied/assault_rifle_03.glb`,
+  armoryBayonet: `${BASE}assets/supplied/bayonet.glb`,
+  armoryBipod: `${BASE}assets/supplied/bipod.glb`,
+  armoryBullpup: `${BASE}assets/supplied/bullpup.glb`,
+  armoryPistol01: `${BASE}assets/supplied/pistol_01.glb`,
+  armoryPistol02: `${BASE}assets/supplied/pistol_02.glb`,
+  armoryPistol03: `${BASE}assets/supplied/pistol_03.glb`,
+  armoryPistol04: `${BASE}assets/supplied/pistol_04.glb`,
+  armoryRevolver01: `${BASE}assets/supplied/revolver_01.glb`,
+  armoryRevolver02: `${BASE}assets/supplied/revolver_02.glb`,
+  armoryRevolver03: `${BASE}assets/supplied/revolver_03.glb`,
+  armoryScope: `${BASE}assets/supplied/scope.glb`,
+  armoryShotgunSawed: `${BASE}assets/supplied/shotgun_sawed_off.glb`,
+  armoryShotgunShort: `${BASE}assets/supplied/shotgun_short_stock.glb`,
+  armoryShotgun01: `${BASE}assets/supplied/shotgun_01.glb`,
+  armoryShotgun02: `${BASE}assets/supplied/shotgun_02.glb`,
+  armorySniper01: `${BASE}assets/supplied/sniper_rifle_01.glb`,
+  armorySniper02: `${BASE}assets/supplied/sniper_rifle_02.glb`,
+  armorySniper03: `${BASE}assets/supplied/sniper_rifle_03.glb`,
+  armorySniper04: `${BASE}assets/supplied/sniper_rifle_04.glb`,
+  armorySmg01: `${BASE}assets/supplied/submachine_gun_01.glb`,
+  armorySmg02: `${BASE}assets/supplied/submachine_gun_02.glb`,
+  armoryTripod: `${BASE}assets/supplied/tripod.glb`,
 };
 
 // Creatures are loaded best-effort: the game still boots if the asset workflow
@@ -183,16 +216,16 @@ function prepare(root) {
   return root;
 }
 
-async function loadModel(url) {
+async function loadModel(url, options = {}) {
   const gltf = await loader.loadAsync(url);
-  gltf.scene = orientToYUp(gltf.scene);
+  gltf.scene = options.legacyOrientation === false ? gltf.scene : orientToYUp(gltf.scene);
   prepare(gltf.scene);
   return gltf;
 }
 
-async function loadSet(entries, assets, onItem) {
+async function loadSet(entries, assets, onItem, options = {}) {
   await Promise.all(entries.map(async ([key, url]) => {
-    assets[key] = await loadModel(url);
+    assets[key] = await loadModel(url, options);
     onItem(key);
   }));
 }
@@ -202,7 +235,8 @@ export async function loadGameAssets(onProgress = () => {}) {
   const assets = {};
   const bunkerEntries = Object.entries(bunkerUrls);
   const exteriorEntries = Object.entries(exteriorUrls);
-  const total = bunkerEntries.length + exteriorEntries.length;
+  const suppliedEntries = Object.entries(suppliedUrls);
+  const total = bunkerEntries.length + exteriorEntries.length + suppliedEntries.length;
   let loaded = 0;
   const tick = (key) => {
     loaded += 1;
@@ -214,6 +248,7 @@ export async function loadGameAssets(onProgress = () => {}) {
   await Promise.all([
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
+    loadSet(suppliedEntries, assets, tick, { legacyOrientation: false }),
   ]);
 
   await Promise.all(Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {
