@@ -97,15 +97,19 @@ for (const z of [-1.35, -0.7, 0, 0.7, 1.35]) {
 // that is wide along the ring and thin through it is metres bigger than the
 // slab — better than a third of every walkway was solid to the player and
 // invisible on screen, leaving a single walkable lane down the middle.
-// Both long sides of every landing are physical guards, while the 3.6 m centre
-// route remains open from the gallery to the stair.
+// Both long sides of every landing are physical guards from the circular stair
+// newels out to the gallery. Inside that join the same two edges are the broad
+// arrival/departure mouths of the helical stair, so putting straight rails
+// there would barricade the treads instead of protecting them.
 for (let level = 0; level <= SILO.levels; level++) {
   const y = level * SILO.levelHeight;
   for (const radius of [2.1, 3.5, 6.0, 9.0, 12.7]) {
-    for (const side of [-1, 1]) {
-      assert.equal(colliders.contains(radius, -side * SILO.landingHalf, 0.12,
-        y + 0.40, y + 1.15), true,
-      `level ${level}: landing side ${side} is unguarded at radius ${radius}`);
+    if (radius >= SILO.stairRadius + .4) {
+      for (const side of [-1, 1]) {
+        assert.equal(colliders.contains(radius, -side * SILO.landingHalf, 0.12,
+          y + 0.40, y + 1.15), true,
+        `level ${level}: landing side ${side} is unguarded at radius ${radius}`);
+      }
     }
     // Inside the stair radius, overlapping climbable treads intentionally
     // register in the cheap contains() query. The player controller steps onto
