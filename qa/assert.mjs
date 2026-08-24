@@ -24,6 +24,7 @@ const check = (condition, message) => { if (!condition) failures.push(message); 
 
 const physics = run('qa/physics.mjs');
 const combat = run('qa/combat.mjs');
+const weapons = run('qa/weapons.mjs');
 
 // The player has to be stopped by the room and by the props standing in it.
 check(physics.backWall.z <= 6.6, 'player walked through the shelter wall');
@@ -37,8 +38,8 @@ check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes')
 
 check(physics.armory?.present, 'the walk-in armoury did not load');
 if (physics.armory?.present) {
-  check(physics.armory.weapons === 25,
-    `the armoury displays ${physics.armory.weapons} of the 25 supplied models`);
+  check(physics.armory.weapons === 29,
+    `the armoury displays ${physics.armory.weapons} of the 29 racked models`);
   check(physics.armory.shutDoorZ < 0.25,
     `the shut armoury door let the player reach z=${physics.armory.shutDoorZ}`);
   check(physics.armory.doorOffset < -1.65,
@@ -123,8 +124,13 @@ if (physics.silo.present) {
   check(physics.silo.aim.active, 'rifle aim mode did not engage');
   check(physics.silo.aim.fov < 56, `rifle aim FOV stayed at ${physics.silo.aim.fov}°`);
   check(physics.silo.aim.centred, 'rifle did not centre under the crosshair while aiming');
-  check(Math.abs(physics.silo.aim.rifleYaw - Math.PI / 2) < .03,
+  // The exact yaw is the viewmodel's business — it is measured from the model
+  // now, not assumed — but the weapon still has to be turned onto the firing
+  // line rather than lying across the bottom of the screen.
+  check(Math.abs(Math.abs(physics.silo.aim.rifleYaw) - Math.PI / 2) < .03,
     `rifle is still sideways (${physics.silo.aim.rifleYaw} rad yaw)`);
+  check(/^Equipped_armory/.test(physics.silo.aim.rifleName || ''),
+    `the held model is ${physics.silo.aim.rifleName}, not a weapon off the armoury wall`);
   check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
   check(physics.silo.tunnelEntry.doorMesh, 'the animated arched bulkhead asset did not load');
   check(physics.silo.tunnelEntry.radius > 24.0,
@@ -168,6 +174,69 @@ check(combat.residentCollision?.distance >= combat.residentCollision?.minimum - 
 check(combat.residentsOffGallery === 0,
   `${combat.residentsOffGallery} residents walked through a gallery wall or balustrade`);
 
+// The top of the silo is a secure unit with people posted on it: a sentry on
+// the door, a dog on a beat, and the infirmary the shelter's CONDITION readout
+// has always implied existed.
+if (combat.garrison) {
+  check(combat.garrison.sentry, 'no sentry is posted on the secure gallery');
+  check(combat.garrison.sentryY > 27, `the sentry stands at y=${combat.garrison.sentryY}, not the top level`);
+  check(combat.garrison.dog, 'the patrol dog is missing');
+  check(combat.garrison.dogWalked > 1,
+    `the patrol dog moved ${combat.garrison.dogWalked} m in five seconds`);
+  check(combat.garrison.dogRadius > 13.5 && combat.garrison.dogRadius < 19.5,
+    `the patrol dog walked off the gallery to radius ${combat.garrison.dogRadius}`);
+  check(combat.garrison.kit >= 10,
+    `the infirmary is stocked with only ${combat.garrison.kit} items`);
+  const treatment = combat.garrison.treatment || {};
+  check(treatment.offered, 'the infirmary offers no way to treat an injury');
+  check(treatment.after > treatment.hurt,
+    `treatment left condition at ${treatment.after}% after a wound took it to ${treatment.hurt}%`);
+  check(treatment.dosesLeft === 2,
+    `the infirmary has ${treatment.dosesLeft} courses left after one treatment, expected 2`);
+} else {
+  console.error('note: the silo garrison did not build, skipping its checks');
+}
+
+// The armoury shipped for three releases with twenty-five weapons on the walls
+// and one of them working. Every usable weapon has to come off its rack, hang
+// in the player's hands as its own model, put a round downrange, mark what it
+// hits and load again.
+check(weapons.takeInteractions === weapons.expected,
+  `${weapons.takeInteractions} of ${weapons.expected} racked weapons can be taken`);
+check(weapons.inspectInteractions === 3,
+  `${weapons.inspectInteractions} bench fittings offer an inspect interaction, expected 3`);
+check(!weapons.issuedThroughShutDoor, 'a weapon was issued through the shut armoury door');
+check(weapons.racked.length === 0, `rack handover failed: ${weapons.racked.join('; ')}`);
+check(weapons.sameModel.length === 0,
+  `the viewmodel did not swap: ${weapons.sameModel.join('; ')}`);
+// Pointing a muzzle at the player's own face is the single worst thing a
+// first-person weapon can do, and with twenty-six of them from four packs it
+// is not something a per-weapon flag was ever going to get right.
+check(weapons.backwards.length === 0,
+  `these weapons are held pointing backwards: ${weapons.backwards.join('; ')}`);
+check(weapons.fired.length === 0, `a weapon fired blanks: ${weapons.fired.join('; ')}`);
+check(weapons.noDecal.length === 0,
+  `these weapons left no mark on the wall they hit: ${weapons.noDecal.join(', ')}`);
+check(weapons.badReload.length === 0, `a weapon failed to reload: ${weapons.badReload.join('; ')}`);
+check(weapons.distinctNames === weapons.expected,
+  `only ${weapons.distinctNames} of ${weapons.expected} weapons are named separately in the HUD`);
+check(weapons.automatic?.autoLeft < weapons.automatic?.autoMagazine - 3,
+  `holding the trigger on an automatic fired ${weapons.automatic?.autoMagazine - weapons.automatic?.autoLeft} round(s)`);
+check(weapons.automatic?.semiLeft === weapons.automatic?.semiMagazine,
+  'holding the trigger emptied a semi-automatic');
+check(weapons.marks > 0, 'no bullet marks were laid down over the whole run');
+check(weapons.liveMarks > 0, 'bullet marks did not stay on the wall while the player was there');
+
+// Shooting a person kills them, and the body ends up on the deck they were
+// standing on rather than snapping upright or dropping through the gallery.
+check(weapons.person?.down, 'shooting a resident did not kill them');
+check(weapons.person?.tipped > 1.4, `a downed resident tipped only ${weapons.person?.tipped} rad`);
+check(Math.abs((weapons.person?.startY ?? 0) - (weapons.person?.endY ?? 99)) < 1,
+  `a downed resident fell from y=${weapons.person?.startY} to y=${weapons.person?.endY}`);
+check(weapons.quartermaster?.down, 'the quartermaster cannot be brought down');
+check(weapons.quartermaster?.tipped > 1.4,
+  `the downed quartermaster tipped only ${weapons.quartermaster?.tipped} rad`);
+
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed:`);
   for (const failure of failures) console.error(`  - ${failure}`);
@@ -175,6 +244,7 @@ if (failures.length) {
   // the CI log alone.
   console.error('\nphysics:', JSON.stringify(physics));
   console.error('combat:', JSON.stringify(combat));
+  console.error('weapons:', JSON.stringify(weapons));
   process.exit(1);
 }
 console.log('\nAll gameplay checks passed.');

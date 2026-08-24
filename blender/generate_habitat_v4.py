@@ -905,14 +905,22 @@ def build_landing(top=False):
              deck_mid + (r / 5 - .5) * 1.82 * deck_span), (half * .92, .11, .07),
              DARK, edge=.02)
     gallery_inset = .18
-    # Ordinary floors leave the tread envelope clear for the next flight. At
-    # the top there is no continuing flight, so the side parapets run all the
-    # way back and a third parapet closes the otherwise lethal inner edge.
-    guard_inner = (LANDING_INNER if top else STAIR_GUARD_RADIUS) - asset_origin
+    # Ordinary floors leave the tread envelope clear on both sides: the flight
+    # below arrives through one long edge and the flight above departs through
+    # the other. The head platform has no departing flight, so only that edge
+    # is closed all the way back to the core, and a third parapet shuts the
+    # otherwise lethal inner edge.
+    #
+    # Local +X is the edge the arriving flight comes up through — the landing
+    # is placed rotated a quarter turn, so local +X is the world -Z side the
+    # helix descends into. Running a parapet across it walls the player off the
+    # only stair they can walk down, which is exactly what this used to do.
     guard_outer = outer - gallery_inset
-    guard_span = (guard_outer - guard_inner) / 2
-    guard_mid = (guard_outer + guard_inner) / 2
     for side in (-1, 1):
+        seal = top and side < 0
+        guard_inner = (LANDING_INNER if seal else STAIR_GUARD_RADIUS) - asset_origin
+        guard_span = (guard_outer - guard_inner) / 2
+        guard_mid = (guard_outer + guard_inner) / 2
         # Cast parapets, matching the galleries the landing runs out to. They
         # overlap the exact stair newels without crossing the tread envelope.
         # At the outer end they terminate flush in the gallery's solid returns,
@@ -935,8 +943,9 @@ def build_landing(top=False):
                  (.03, .03, .03), DARK, edge=.006)
     if top:
         # A poured knee wall with a continuous steel handrail. It sits just
-        # inside the deck edge, behind the final tread, and joins both side
-        # newels so there is no child-sized or capsule-sized escape gap.
+        # inside the deck edge, inboard of the treads' inner radius, and ties
+        # the sealed side's newel to the stair's own balustrade so there is no
+        # child-sized or capsule-sized escape gap over the shaft.
         cube('TopLanding_InnerParapet', (0, .55, inner + .15),
              (half, .52, .15), CONCRETE, edge=.035)
         cube('TopLanding_InnerFoot', (0, .10, inner + .15),

@@ -308,12 +308,17 @@ results.silo = await page.evaluate(async () => {
   ls.arm();
   ls.aim(true);
   settle(90);
-  const rifle = ls.game.weaponView.children[0];
+  // The held model hangs under a second group that carries the reload gesture,
+  // alongside the first-person arms. Read the weapon itself rather than
+  // whatever that group's first child happens to be this release.
+  const rifle = ls.game.weaponAction.children
+    .find((child) => child.name.startsWith('Equipped_'));
   const aim = {
     active: ls.state().aiming,
     fov: +ls.game.camera.fov.toFixed(2),
     centred: Math.abs(ls.game.weaponView.position.x) < .04,
     rifleYaw: +rifle.rotation.y.toFixed(3),
+    rifleName: rifle.name,
   };
   ls.aim(false);
   settle(45);

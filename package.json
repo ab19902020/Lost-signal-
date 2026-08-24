@@ -8,6 +8,7 @@
     "qa:game": "node qa/game.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/game.png",
     "qa:visual": "node qa/visual.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/visual",
     "qa:physics": "node qa/physics.mjs http://127.0.0.1:5173/Lost-signal-/",
+    "qa:weapons": "node qa/weapons.mjs http://127.0.0.1:5173/Lost-signal-/",
     "qa": "node qa/assert.mjs",
     "build": "node qa/unit.mjs && node qa/glb-floor.mjs && vite build",
     "qa:unit": "node qa/unit.mjs",
