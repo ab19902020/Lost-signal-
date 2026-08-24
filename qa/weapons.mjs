@@ -39,7 +39,9 @@ await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, nu
 
 const results = await page.evaluate(async ({ keys, catalogue }) => {
   const ls = globalThis.__ls;
-  const out = { racked: [], fired: [], sameModel: [], noArms: [], noDecal: [], badReload: [], names: [] };
+  const THREE = ls.THREE;
+  const out = { racked: [], fired: [], sameModel: [], backwards: [], noDecal: [],
+    badReload: [], names: [] };
 
   // --- the racks: every usable model has to be a real interaction ----------
   const armory = ls.game.armory;
@@ -70,7 +72,42 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
     if (!state.model || !state.model.includes(key)) {
       out.sameModel.push(`${key}: viewmodel is ${state.model}`);
     }
-    if (!state.arms) out.noArms.push(key);
+
+    // Which way the barrel is actually pointing.
+    //
+    // Every firearm is back-heavy — stock, grip, magazine and action all sit
+    // behind the barrel — so a weapon held correctly has its centre of mass
+    // behind the middle of its own bounding box along the firing line. This is
+    // measured in the viewmodel rig's frame, where forward is always -Z,
+    // rather than in world space where it would depend on which way the player
+    // happened to be facing. Negative means looking down your own muzzle.
+    const model = ls.game.weaponAction.children.find((c) => c.name.startsWith('Equipped_'));
+    if (model) {
+      const rig = ls.game.weaponAction;
+      rig.updateMatrixWorld(true);
+      const toRig = rig.matrixWorld.clone().invert();
+      const v = new THREE.Vector3();
+      const box = new THREE.Box3();
+      let n = 0;
+      let sum = 0;
+      model.traverse((o) => {
+        const attr = o.geometry?.attributes?.position;
+        if (!attr) return;
+        const toLocal = toRig.clone().multiply(o.matrixWorld);
+        const step = Math.max(1, Math.floor(attr.count / 400));
+        for (let i = 0; i < attr.count; i++) {
+          v.fromBufferAttribute(attr, i).applyMatrix4(toLocal);
+          box.expandByPoint(v);
+          if (i % step === 0) { sum += v.z; n++; }
+        }
+      });
+      const size = box.getSize(new THREE.Vector3());
+      const centre = box.getCenter(new THREE.Vector3());
+      const bias = n ? (sum / n - centre.z) / Math.max(size.z, 1e-4) : 0;
+      // Below a couple of per cent the model is symmetric enough that the sign
+      // means nothing; only a clear lean the wrong way is a fault.
+      if (bias < -0.02) out.backwards.push(`${key}: ${bias.toFixed(3)}`);
+    }
 
     // Point at the shelter's back wall and pull the trigger.
     ls.moveTo(0, 0);
@@ -81,6 +118,12 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
     ls.fire();
     ls.simulate(4);
     const after = ls.weapon();
+    // A second round, well after the slowest action in the collection has
+    // cycled: hip spread is wide enough that a single shot can legitimately
+    // go out through the armoury doorway and hit nothing at all.
+    ls.simulate(100);
+    ls.fire();
+    ls.simulate(6);
     if (spec.kind === 'melee') {
       if (after.ammo !== 0) out.fired.push(`${key}: a blade consumed ammunition`);
     } else if (after.ammo !== before.ammo - 1) {

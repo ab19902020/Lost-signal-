@@ -11,7 +11,8 @@ import { createGameWorld } from './world.js';
 import { CharacterBody } from './physics.js';
 import { GradeShader, CameraFeedShader } from './grade.js';
 import { Survival, loadRun, saveRun, clearRun } from './survival.js';
-import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose } from './weapons.js';
+import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose, hipPose }
+  from './weapons.js';
 import { createDecalField } from './decals.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
@@ -31,6 +32,8 @@ const staminaBar = document.getElementById('staminaBar');
 const staminaFill = document.getElementById('staminaFill');
 const taskListEl = document.getElementById('taskList');
 const dayEl = document.getElementById('dayStat');
+const clockEl = document.getElementById('clockStat');
+const skyEl = document.getElementById('skyStat');
 const powerEl = document.getElementById('powerStat');
 const waterEl = document.getElementById('waterStat');
 const airEl = document.getElementById('airStat');
@@ -67,6 +70,7 @@ const decals = createDecalField();
 let health = 100;
 const survival = new Survival();
 let saveTimer = 0;
+let clockTimer = 0;
 let recovery = 0;
 let hatchOpen = false;
 let hurtFlash = 0;
@@ -231,7 +235,14 @@ async function prepare() {
         },
         arm: (key = DEFAULT_WEAPON) => {
           loadout.resupply(key);
-          equipWeapon(key, { announce: false });
+          // Straight into the hands, without walking the carry rules: a test
+          // that wants to fire all twenty-six should not have to put twenty-two
+          // of them back first.
+          if (!carried.includes(key)) {
+            if (carried.length >= CARRY_SLOTS) carried[Math.max(0, carried.indexOf(weaponKey))] = key;
+            else carried.push(key);
+          }
+          drawWeapon(key, { announce: false });
           return weaponKey;
         },
         // Every rack slot, so a harness can take each weapon down in turn and
@@ -243,8 +254,6 @@ async function prepare() {
           magazine: weapon?.magazine ?? 0, ammo, reserve,
           model: game.weaponAction?.children
             .find((child) => child.name.startsWith('Equipped_'))?.name ?? null,
-          arms: game.weaponAction?.children
-            .find((child) => child.name.startsWith('Fps_'))?.name ?? null,
         }),
         decals: () => decals.count(),
         marks: () => decals.total(),
@@ -259,6 +268,13 @@ async function prepare() {
         },
         // Hold the trigger, as a finger does. Only the automatics keep firing.
         hold: (value = true) => { triggerHeld = !!value; },
+        carried: () => [...carried],
+        slot: (index) => selectSlot(index),
+        cycle: (step = 1) => cycleWeapon(step),
+        scoped: () => scoped,
+        time: (value) => { game.sky?.setTimeOfDay(value); updateStats(); },
+        weather: (value) => { game.sky?.setWeather(value); },
+        sky: () => ({ ...game.sky?.state }),
         aim: (value = true) => setAiming(value),
         jump: () => queueJump(),
         aimAt: (target) => {
@@ -333,6 +349,19 @@ function wireGameEvents() {
     : 'ARMOURY UNLOCKED — WALK IN AND INSPECT THE WALL RACKS'));
   addEventListener('lostsignal:takegun', (event) => {
     equipWeapon(event.detail?.key || DEFAULT_WEAPON);
+  });
+  addEventListener('lostsignal:rangehit', (event) => {
+    const { distance, standing, hits } = event.detail;
+    flash(standing > 0
+      ? `PLATE DOWN AT ${distance} M — ${standing} STANDING`
+      : `ALL PLATES DOWN — ${hits} FOR ${game.range.score().shots}`, 1600);
+  });
+  addEventListener('lostsignal:rangereset', (event) => {
+    const { hits, shots } = event.detail;
+    flash(shots > 0
+      ? `RANGE RESET — LAST STRING ${hits} HITS FROM ${shots} ROUNDS`
+      : 'RANGE RESET — SIX PLATES STANDING', 2400);
+    clickSound(520, .08, .04);
   });
   addEventListener('lostsignal:sentry', (event) => {
     flash(event.detail?.line || '…', 5200);
@@ -658,12 +687,29 @@ function use() {
   }
 }
 
+// Looking down glass is a different act from lining up irons. The four
+// precision rifles black out the frame, put a real reticle in the eyepiece and
+// take the weapon out of the picture — you are looking through it, not at it.
+const scopeRangeEl = document.getElementById('scopeRange');
+let scoped = false;
+
+function setScoped(value) {
+  const next = !!value && !!weapon?.scope;
+  if (scoped === next) return scoped;
+  scoped = next;
+  document.body.classList.toggle('scoped', scoped);
+  if (game) game.weaponView.visible = armed && !scoped;
+  if (scoped && scopeRangeEl) scopeRangeEl.textContent = `${weapon.scope} — ${weapon.name}`;
+  return scoped;
+}
+
 function setAiming(value) {
   const next = !!value && armed && !reloading && !modal && !cctv && !seated && !sprinting;
   if (aiming === next) return aiming;
   aiming = next;
   document.body.classList.toggle('aiming', aiming);
   document.getElementById('aimBtn')?.classList.toggle('on', aiming);
+  setScoped(aiming);
   return aiming;
 }
 
@@ -700,8 +746,14 @@ function syncAmmo() {
  * Take a weapon off the armoury wall. The one being put down keeps whatever is
  * left in it, and goes back on its own hook.
  */
-function equipWeapon(key, { announce = true } = {}) {
-  if (!isUsable(key)) return false;
+// You carry a loadout, not one gun. Four slots: taking a fifth weapon puts
+// down whatever is in your hands, which goes back on its own hook.
+const CARRY_SLOTS = 4;
+const carried = [];
+
+/** Draw a weapon already on the player. */
+function drawWeapon(key, { announce = true } = {}) {
+  if (!isUsable(key) || !carried.includes(key)) return false;
   if (armed) syncAmmo();
   weaponKey = key;
   weapon = WEAPONS[key];
@@ -715,6 +767,7 @@ function equipWeapon(key, { announce = true } = {}) {
   shotCooldown = 0;
   setAiming(false);
   game.setArmed(key);
+  game.armory?.setEquipped(carried);
   document.body.classList.add('armed');
   updateAmmo();
   if (announce) {
@@ -725,6 +778,37 @@ function equipWeapon(key, { announce = true } = {}) {
   }
   completeObjective('rifle');
   return true;
+}
+
+/** Take a weapon off the wall and onto the player, drawing it. */
+function equipWeapon(key, { announce = true } = {}) {
+  if (!isUsable(key)) return false;
+  if (!carried.includes(key)) {
+    if (carried.length >= CARRY_SLOTS) {
+      // Full: what is in your hands goes back on its hook to make room.
+      const droppedAt = Math.max(0, carried.indexOf(weaponKey));
+      const dropped = carried[droppedAt];
+      carried[droppedAt] = key;
+      if (announce && dropped) flash(`${WEAPONS[dropped].name} RACKED`, 1600);
+    } else {
+      carried.push(key);
+    }
+  }
+  return drawWeapon(key, { announce });
+}
+
+/** Switch between what is already on the player. */
+function selectSlot(index) {
+  const key = carried[index];
+  if (!key || key === weaponKey || reloading || modal || cctv) return false;
+  return drawWeapon(key, { announce: false }) && (flash(WEAPONS[key].name, 1200), true);
+}
+
+function cycleWeapon(step) {
+  if (carried.length < 2) return false;
+  const from = Math.max(0, carried.indexOf(weaponKey));
+  const to = (from + step + carried.length * 2) % carried.length;
+  return selectSlot(to);
 }
 
 /** Anything that can be shot in the world the player is standing in. */
@@ -777,6 +861,13 @@ function fireRound(world, spread, damage) {
     return true;
   }
   if (impact) {
+    // A range plate is not scenery: it rings and folds away.
+    const plate = game.range?.targetFor(impact.object);
+    if (plate && game.range.strike(plate)) {
+      burst(impact.point, 'dust', 5, 0.22);
+      plateRingSound(plate.distance);
+      return false;
+    }
     burst(impact.point, 'dust', 4, 0.16);
     // A round has to leave a mark, or the whole collection reads as a set of
     // noise-makers. The face normal comes back in the hit object's local space.
@@ -786,8 +877,11 @@ function fireRound(world, spread, damage) {
     } else {
       _hitNormal.copy(game.camera.getWorldPosition(_shotOrigin)).sub(impact.point).normalize();
     }
+    // The mark matches what made it: buckshot leaves a scatter of small pits,
+    // a .50 leaves a crater, a blade leaves a scrape.
     const mark = decals.add(world, impact.point, _hitNormal, {
-      size: weapon.family === 'shotgun' ? 0.07 : 0.11,
+      kind: weapon.kind === 'melee' ? 'gouge' : 'hole',
+      size: weapon.calibre ?? 0.10,
     });
     if (mark) mark.userData.isDecal = true;
   }
@@ -817,6 +911,7 @@ function fire() {
   const world = activeScene();
   world.updateMatrixWorld();
 
+  game.range?.countShot();
   const spread = (aiming ? (weapon.adsSpread ?? 0) : (weapon.spread ?? 0)) * SPREAD_TO_NDC;
   const pellets = Math.max(1, weapon.pellets ?? 1);
   let struck = false;
@@ -849,6 +944,21 @@ function swing() {
     resolveHit(target, living[0].point, weapon.damage);
     alarmBystanders(0.6);
     return true;
+  }
+  // A swing that lands on a wall still scrapes it.
+  const impact = ray.intersectObjects(worldGeometry(world), true)
+    .find((hit) => hit.object.isMesh && hit.object.visible && !targetRootOf(hit.object));
+  if (impact) {
+    if (impact.face) {
+      _normalMatrix.getNormalMatrix(impact.object.matrixWorld);
+      _hitNormal.copy(impact.face.normal).applyMatrix3(_normalMatrix).normalize();
+    } else {
+      _hitNormal.copy(game.camera.getWorldPosition(_shotOrigin)).sub(impact.point).normalize();
+    }
+    const mark = decals.add(world, impact.point, _hitNormal,
+      { kind: 'gouge', size: weapon.calibre ?? 0.08 });
+    if (mark) mark.userData.isDecal = true;
+    burst(impact.point, 'dust', 3, 0.10);
   }
   return false;
 }
@@ -937,11 +1047,24 @@ function updateReload(dt) {
   updateAmmo();
 }
 
+const slotsEl = document.getElementById('weaponSlots');
+
 function updateAmmo() {
   const nameEl = document.getElementById('weaponName');
   if (nameEl) nameEl.textContent = armed ? weapon.name : 'UNARMED';
   ammoEl.textContent = !armed ? '—'
     : (weapon.kind === 'melee' ? 'BLADE' : `${ammo} / ${reserve}`);
+  if (!slotsEl) return;
+  // What else is on you, and which key draws it.
+  slotsEl.innerHTML = '';
+  carried.forEach((key, index) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = key === weaponKey ? 'slot on' : 'slot';
+    chip.dataset.slot = String(index);
+    chip.textContent = `${index + 1} ${WEAPONS[key].name}`;
+    slotsEl.appendChild(chip);
+  });
 }
 
 // A flat generator is not a number going red: the shelter goes dark, and the
@@ -965,7 +1088,8 @@ function persistRun() {
     survival: survival.snapshot,
     elapsed: survival.elapsed,
     health, ammo, reserve, armed,
-    weaponKey, loadout: (armed ? (syncAmmo(), loadout.snapshot()) : loadout.snapshot()),
+    weaponKey, carried: [...carried],
+    loadout: (armed ? (syncAmmo(), loadout.snapshot()) : loadout.snapshot()),
     completed: [...completed],
     cacheEmptied,
     doorOpen: game.doorOpen?.() ?? false,
@@ -991,6 +1115,12 @@ function restoreRun() {
     // Runs saved before the collection existed have no weapon key at all, and
     // restore holding the service rifle they were issued.
     const key = isUsable(saved.weaponKey) ? saved.weaponKey : DEFAULT_WEAPON;
+    for (const held of saved.carried || [key]) {
+      if (isUsable(held) && !carried.includes(held) && carried.length < CARRY_SLOTS) {
+        carried.push(held);
+      }
+    }
+    if (!carried.includes(key)) carried.push(key);
     if (!saved.loadout) {
       const pool = loadout.for(key);
       pool.magazine = ammo;
@@ -1006,6 +1136,16 @@ const statClass = (value, warn, bad) => (value <= bad ? 'bad' : (value <= warn ?
 
 function updateStats() {
   dayEl.textContent = String(survival.day);
+  const sky = game?.sky?.state;
+  if (sky && clockEl) {
+    const minutes = Math.floor(sky.timeOfDay * 24 * 60);
+    clockEl.textContent = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:`
+      + `${String(minutes % 60).padStart(2, '0')}`;
+  }
+  if (sky && skyEl) {
+    skyEl.textContent = sky.label;
+    skyEl.className = sky.rain > 0.45 ? 'warn' : 'ok';
+  }
   powerEl.textContent = `${Math.round(survival.power)}%`;
   powerEl.className = statClass(survival.power, 35, 12);
   waterEl.textContent = `${Math.floor(survival.water)} DAYS`;
@@ -1097,14 +1237,24 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)cycleWeapon(1)}if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false});
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement){triggerHeld=true;fire()}});
   renderer.domElement.addEventListener('pointerup',(e)=>{if(e.button===2)setAiming(false);if(e.button===0)triggerHeld=false});
   addEventListener('blur',()=>{triggerHeld=false});
   renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
-  addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
+  addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){
+    // Glass slows the hand: at eight power a raw mouse delta throws the aim
+    // clean off the target, which is what a magnified sight picture is for.
+    const gain=scoped?(weapon?.zoom??52)/70:1;
+    yaw-=e.movementX*.0022*gain;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018*gain))}});
+  // The wheel changes weapons, as it does in every other shooter.
+  renderer.domElement.addEventListener('wheel',(e)=>{
+    if(!started||modal||cctv)return;
+    e.preventDefault();
+    cycleWeapon(e.deltaY>0?1:-1);
+  },{passive:false});
 
   const move={x:0,y:0},pad=document.getElementById('movePad'),nub=document.getElementById('moveNub');
   let moveId=null,cx=0,cy=0;
@@ -1127,6 +1277,12 @@ function wireControls() {
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
   document.getElementById('jumpBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();queueJump()});
   document.getElementById('aimBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();setAiming(!aiming)});
+  document.getElementById('weaponSlots')?.addEventListener('pointerdown',(e)=>{
+    const chip=e.target.closest('.slot');
+    if(!chip)return;
+    e.preventDefault();e.stopPropagation();
+    selectSlot(+chip.dataset.slot);
+  });
   document.getElementById('helpBtn').addEventListener('click',()=>toggleHelp());
   document.querySelector('#help .x').addEventListener('click',()=>toggleHelp(false));
 
@@ -1417,6 +1573,27 @@ function weaponFireSound(spec) {
     decay: voice.tailDecay, level: voice.level * voice.tailLevel, type: 'lowpass' });
 }
 
+// Steel at range: a bright ring, arriving late by however long the sound took
+// to come back from the plate.
+function plateRingSound(distance = 20) {
+  if (!ac || !master) return;
+  const at = ac.currentTime + Math.min(0.35, distance / 343);
+  for (const [partial, level] of [[1, 0.16], [2.41, 0.09], [3.86, 0.05]]) {
+    const osc = ac.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(880 * partial, at);
+    osc.frequency.exponentialRampToValueAtTime(860 * partial, at + 0.9);
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(level, at);
+    gain.gain.exponentialRampToValueAtTime(0.0006, at + 0.9);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(at);
+    osc.stop(at + 0.95);
+  }
+  noiseBurst({ at, hz: 2600, q: 1.4, decay: 0.05, level: 0.12 });
+}
+
 function weaponReloadSound(spec) {
   if (!ac || !master) return;
   const sequence = spec?.audio?.reload;
@@ -1537,6 +1714,7 @@ function updateWeapon(dt) {
   const blend = aiming ? 1 : 0;
   const sway = Math.min(body.horizontalSpeed / 3, 1) * (aiming ? .22 : 1);
   const bob = body.distanceWalked * 3.4;
+  weaponHip.set(...hipPose(weapon));
   weaponAim.set(...aimPose(weapon));
   weaponTarget.lerpVectors(weaponHip, weaponAim, blend);
   weaponTarget.x += Math.cos(bob * .5) * .014 * sway;
@@ -1554,6 +1732,13 @@ function updateWeapon(dt) {
   // Optics differ. A scoped rifle pulls the frame in much further than a
   // pistol at arm's length, so the sight picture comes out of the catalogue.
   const targetFov = aiming ? (weapon?.zoom ?? 52) : 70;
+  // A scoped rifle is never quite still, and magnification is what makes that
+  // visible. Breathing walks the aim; holding it steady is the player's job.
+  if (scoped) {
+    const wander = Math.min(1, 0.35 + (1 - stamina) * 0.9);
+    yaw += Math.sin(breath * 0.83) * 0.00028 * wander;
+    pitch += Math.cos(breath * 0.61) * 0.00022 * wander;
+  }
   const nextFov = THREE.MathUtils.damp(game.camera.fov, targetFov, 12, dt);
   if (Math.abs(nextFov - game.camera.fov) > .001) {
     game.camera.fov = nextFov;
@@ -1641,6 +1826,9 @@ function simulate(dt) {
     flash(`DAY ${survival.day} IN SHELTER 47`, 2600);
   }
   if (tick.blackoutChanged) setBlackout(survival.blackout);
+
+  clockTimer += dt;
+  if (clockTimer > 1) { clockTimer = 0; updateStats(); }
 
   saveTimer += dt;
   if (saveTimer > 5) { saveTimer = 0; persistRun(); }

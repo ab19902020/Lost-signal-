@@ -62,10 +62,17 @@ function holeTexture() {
 
 const TINTS = {
   // Concrete and steel chip pale; flesh does not, so a round that passes
-  // through someone marks the wall behind them differently.
+  // through someone marks the wall behind them differently. A heavy round
+  // burns as well as breaks, and a blade leaves a bright scrape.
   hole: 0xb9b3a8,
+  scorch: 0x2a2521,
+  gouge: 0xcfc7b8,
   blood: 0x6d1410,
 };
+
+// Past this width a round is not making a hole any more, it is making a
+// crater: a wider scorch goes down first and the hole sits in the middle of it.
+const CRATER_CALIBRE = 0.12;
 
 export function createDecalField() {
   // `document` only exists in the browser, and qa/unit.mjs builds the world
@@ -113,6 +120,15 @@ export function createDecalField() {
    */
   function add(scene, point, normal, { kind = 'hole', size = 0.11 } = {}) {
     if (!scene || !point) return null;
+    // A heavy round scorches a patch of wall before it punches through it.
+    if (kind === 'hole' && size >= CRATER_CALIBRE) {
+      mark(scene, point, normal, 'scorch', size * 2.1, 0.30);
+    }
+    return mark(scene, point, normal, kind, size,
+      kind === 'blood' ? 0.72 : (kind === 'gouge' ? 0.6 : 0.95));
+  }
+
+  function mark(scene, point, normal, kind, size, strength) {
     const slot = pool[next];
     next = (next + 1) % POOL;
     placed++;
@@ -130,9 +146,10 @@ export function createDecalField() {
     slot.mesh.rotateZ(Math.random() * Math.PI * 2);
 
     const scale = size * (0.82 + Math.random() * 0.42);
-    slot.mesh.scale.set(scale, scale, 1);
+    // A blade does not make a round hole; it drags one.
+    slot.mesh.scale.set(kind === 'gouge' ? scale * 0.34 : scale, scale, 1);
     slot.material.color.setHex(TINTS[kind] ?? TINTS.hole);
-    slot.strength = kind === 'blood' ? 0.72 : 0.95;
+    slot.strength = strength;
     slot.material.opacity = slot.strength;
     slot.mesh.visible = true;
     slot.life = LIFE;

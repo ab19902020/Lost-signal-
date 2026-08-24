@@ -261,12 +261,13 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     mixer?.update(dt);
   }
 
-  // The rack a weapon came off is empty while the player is carrying it, and
-  // fills back up the moment they swap to something else. One slot, one model:
-  // the collection on the walls always matches what is not in your hands.
-  function setEquipped(key) {
-    equipped = key && displayByKey.has(key) ? key : null;
-    for (const [slot, root] of displayByKey) root.visible = slot !== equipped;
+  // The racks a weapon came off are empty while the player is carrying it, and
+  // fill back up the moment they put it down. One slot, one model: the
+  // collection on the walls always matches what is not on the player.
+  function setEquipped(keys) {
+    const carried = new Set(Array.isArray(keys) ? keys : (keys ? [keys] : []));
+    equipped = carried.size ? [...carried][carried.size - 1] : null;
+    for (const [slot, root] of displayByKey) root.visible = !carried.has(slot);
   }
 
   return {

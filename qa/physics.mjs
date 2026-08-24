@@ -319,7 +319,6 @@ results.silo = await page.evaluate(async () => {
     centred: Math.abs(ls.game.weaponView.position.x) < .04,
     rifleYaw: +rifle.rotation.y.toFixed(3),
     rifleName: rifle.name,
-    armsPresent: ls.game.weaponAction.children.some((c) => c.name.startsWith('Fps_')),
   };
   ls.aim(false);
   settle(45);

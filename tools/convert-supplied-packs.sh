@@ -53,14 +53,10 @@ conv --input "$PACKS/fps/M939 Truck/m939Truck.fbx"             --output "$OUT/pr
 conv --input "$PACKS/post/German Shepard/Characters_GermanShepherd.fbx" \
      --output "$OUT/german_shepherd.glb" --name German_Shepherd --ground --centre
 
-# --- First-person arms -----------------------------------------------------
-# Both rigs share one arm mesh, posed around the weapon they shipped with, and
-# carry Idle / Shoot / Reload. Exporting the arms without the weapon lets the
-# armoury's own model sit in front of whichever pair suits how it is held.
-conv --input "$PACKS/fps/Fps Rig AKM/FpsAKM.fbx" --only ArmModel \
-     --output "$OUT/fps_arms_rifle.glb" --name Fps_Arms_Rifle
-conv --input "$PACKS/fps/Fps Rig/FpsGlock.fbx" --only ArmModel \
-     --output "$OUT/fps_arms_pistol.glb" --name Fps_Arms_Pistol
+# The pack's rigged first-person arms are deliberately not converted. They are
+# posed around the two weapons they shipped with, and there are twenty-six in
+# the armoury: borrowed hands never held any of the others convincingly, so the
+# viewmodel is the weapon alone.
 
 # --- Weapons the FPS pack adds to the armoury ------------------------------
 # The armoury's existing models all lie along +X at roughly six units to the

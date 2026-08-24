@@ -483,31 +483,173 @@ def build_camera():
 
 
 def build_exterior_ground():
+    """The ground the compound stands on.
+
+    This is Berkshire, years after it happened. The grass came back — it always
+    does — so what is underfoot is rough pasture gone to seed, not a car park.
+    The eleven-by-nine grid of concrete slabs that used to cover the middle read
+    as a field of black panels at night and had no business being there: the
+    hard standing is now a single worn apron in front of the shelter door and a
+    track running up to the gate, with grass either side of it.
+    """
     clear_scene()
-    # The compound used to sit on a near-black plane: at .075 albedo under a
-    # moon there is nothing for the light to come back off, so the surface read
-    # as a hole with props floating on it. Dry ground at night is dark, not
-    # absent, and the apron is worn asphalt rather than tar.
-    soil = mat('Soil', (.185, .175, .142), 0, .97)
-    dust = mat('Dust', (.245, .232, .196), 0, .99)
-    gravel = mat('Gravel', (.155, .152, .142), 0, .95)
-    cube('ExteriorSoil', (0, -.32, 0), (28, .30, 32), soil, edge=.10)
-    # A wider skirt behind the fence, so the ground runs out past the wire
-    # instead of ending on a black horizon two metres beyond it.
-    cube('ExteriorSkirt', (0, -.40, 0), (72, .30, 78), soil, edge=.20)
-    cube('Apron', (0, .01, -3), (10, .06, 17), mat('Asphalt', (.155, .158, .152), 0, .94), edge=.05)
-    # Wind-drifted dust and gravel, so the ground is not one flat tone.
-    drifts = [(-14.5, -19, 7.5, 5.0), (16.5, -12.5, 6.0, 7.5), (-17.5, 6, 5.5, 9.0),
-              (13.5, 13.5, 8.0, 5.5), (-4.5, -24.5, 9.0, 4.0), (7.5, 22.5, 7.0, 4.5)]
-    for index, (x, z, sx, sz) in enumerate(drifts):
-        cube(f'ExteriorDrift_{index}', (x, -.015, z), (sx, .022, sz),
-             dust if index % 2 == 0 else gravel, rotation=(0, index * .21, 0), edge=.30)
-    # cracked concrete slabs
-    for i in range(-4,5):
-        for j in range(-5,6):
-            x=i*2.0+(j%2)*.12; z=j*2.3-2
-            cube(f'ExteriorSlab_{i}_{j}',(x,.09,z),(.93,.055,1.05),CONCRETE,rotation=(0,(i+j)*.006,0),edge=.025)
+    grass = mat('MeadowGrass', (.105, .152, .078), 0, .96)
+    grass_dry = mat('DryGrass', (.185, .188, .112), 0, .97)
+    grass_dark = mat('RankGrass', (.072, .108, .058), 0, .96)
+    soil = mat('BareEarth', (.128, .116, .098), 0, .98)
+    asphalt = mat('WornAsphalt', (.115, .118, .116), 0, .93)
+
+    # The field, and a wider skirt of it behind the fence so the ground runs
+    # out past the wire instead of ending two metres beyond it.
+    cube('ExteriorGrass', (0, -.30, 0), (30, .30, 34), grass, edge=.10)
+    cube('ExteriorSkirt', (0, -.38, 0), (150, .30, 160), grass, edge=.20)
+
+    # Patchwork: rough pasture is never one tone. Big soft overlapping mats of
+    # dry, rank and bare ground, all a couple of centimetres proud of the field.
+    patches = [
+        (-19, -22, 9.0, 7.0, grass_dry), (14, -17, 8.0, 9.5, grass_dark),
+        (-22, 5, 7.5, 11.0, grass_dark), (17, 12, 9.5, 7.0, grass_dry),
+        (-7, -27, 11.0, 5.5, grass_dry), (8, 24, 8.5, 6.0, grass_dark),
+        (-26, -6, 8.0, 8.0, grass_dry), (24, 2, 7.0, 9.0, grass_dark),
+        (-12, 20, 6.5, 6.0, grass_dry), (20, -27, 8.0, 6.0, grass_dry),
+        (-40, -30, 22.0, 18.0, grass_dark), (44, -12, 20.0, 22.0, grass_dry),
+        (-46, 18, 20.0, 20.0, grass_dry), (38, 30, 24.0, 18.0, grass_dark),
+    ]
+    for index, (x, z, sx, sz, material) in enumerate(patches):
+        cube(f'GrassPatch_{index}', (x, -.005, z), (sx, .020, sz), material,
+             rotation=(0, index * .27, 0), edge=.60)
+
+    # Worn earth only where boots and wheels have actually killed the grass: a
+    # single track from the gate to the shelter door, and the turning circle in
+    # front of it. Anything wider than that and the compound stops being a field
+    # with a shelter in it and goes back to being a car park.
+    cube('GateTrack', (0, .006, 3.0), (3.1, .024, 15.0), soil, edge=.45)
+    cube('DoorEarth', (0, .008, -12.2), (4.2, .026, 3.4), soil, edge=.42)
+    cube('TruckStand', (8.6, .004, 13.4), (3.6, .020, 3.2), soil, rotation=(0, .18, 0), edge=.45)
+    cube('TruckStand2', (-8.6, .004, 13.4), (3.6, .020, 3.2), soil, rotation=(0, -.14, 0), edge=.45)
+    # ...and the stores yard along the north wall, where the containers sit.
+    cube('StoresYard', (-4.0, .004, -22.6), (16.0, .020, 3.6), soil, edge=.50)
+
+    # The hard standing that is left: one apron slab at the door, and the
+    # track's asphalt where it comes through the gate.
+    cube('Apron', (0, .05, -11.4), (4.6, .05, 3.6), asphalt, edge=.06)
+    cube('GateApron', (0, .045, 16.4), (2.9, .045, 3.4), asphalt, edge=.06)
+    for i in range(-2, 3):
+        cube(f'ApronSlab_{i}', (i * 1.75, .105, -11.4), (.82, .05, 3.3), CONCRETE,
+             rotation=(0, i * .004, 0), edge=.03)
     export('exterior_ground_v3.glb')
+
+
+def build_distant_town():
+    """The town on the horizon.
+
+    Somewhere to be going. It is deliberately a silhouette and not a place: a
+    church tower, a terrace, a mill chimney and a gasholder, read at six hundred
+    metres through haze. Building it properly is a different job; this is so the
+    player can stand at the gate and see where that job will be.
+    """
+    clear_scene()
+    # Half a kilometre of air between here and there washes a lot of colour out
+    # of a building. These are painted for that distance, not for close up:
+    # anything darker read as a row of black cut-outs on the horizon.
+    stone = mat('TownStone', (.315, .305, .285), 0, .95)
+    brick = mat('TownBrick', (.330, .232, .190), 0, .94)
+    slate = mat('TownSlate', (.170, .180, .196), 0, .88)
+    steel = mat('TownSteel', (.250, .262, .262), .30, .70)
+
+    # The church: a square tower with a stair turret, which is what you pick out
+    # of an English skyline first.
+    cube('Town_ChurchTower', (0, 13.0, 0), (3.4, 13.0, 3.4), stone, edge=.30)
+    cube('Town_ChurchParapet', (0, 26.4, 0), (3.9, .9, 3.9), stone, edge=.20)
+    for sx, sz in ((-3.0, -3.0), (3.0, -3.0), (-3.0, 3.0), (3.0, 3.0)):
+        cube(f'Town_ChurchPinnacle_{sx:.0f}_{sz:.0f}', (sx, 28.2, sz), (.55, 1.9, .55),
+             stone, edge=.12)
+    cube('Town_ChurchNave', (0, 5.0, 11.0), (5.0, 5.0, 8.0), stone, edge=.30)
+    cube('Town_ChurchRoof', (0, 11.4, 11.0), (5.3, 1.6, 8.2), slate,
+         rotation=(0, 0, 0), edge=.25)
+
+    # A terrace of houses running away from it, and a couple of blocks behind.
+    for i in range(9):
+        h = 4.6 + (i % 3) * .5
+        cube(f'Town_Terrace_{i}', (-14.0 - i * 7.0, h, 6.0 + (i % 2) * 3.0),
+             (3.4, h, 5.2), brick, edge=.25)
+        cube(f'Town_TerraceRoof_{i}', (-14.0 - i * 7.0, h * 2 + 1.4, 6.0 + (i % 2) * 3.0),
+             (3.6, 1.4, 5.4), slate, edge=.20)
+    for i in range(6):
+        h = 6.5 + (i % 4) * 1.8
+        cube(f'Town_Block_{i}', (18.0 + i * 9.5, h, -4.0 + (i % 3) * 7.0),
+             (4.2, h, 5.0), stone, edge=.30)
+
+    # The mill chimney and the gasholder: the two things that survive.
+    cyl('Town_Chimney', (46.0, 18.0, 16.0), 1.5, 36.0, brick, verts=16, edge=.10)
+    cyl('Town_ChimneyCap', (46.0, 36.4, 16.0), 1.9, 1.2, stone, verts=16, edge=.08)
+    cyl('Town_Gasholder', (-64.0, 8.5, 14.0), 9.0, 17.0, steel, verts=24, edge=.10)
+    torus('Town_GasholderRing', (-64.0, 17.2, 14.0), 9.1, .35, steel,
+          rotation=(math.pi / 2, 0, 0), major_segments=28)
+
+    # A line of dead poplars along the road in, so the town does not sit on a
+    # bare edge.
+    for i in range(11):
+        cyl(f'Town_Poplar_{i}', (-8.0 + i * 11.0, 5.0, -22.0 - (i % 3) * 2.0),
+            .35, 10.0, mat('TownTimber', (.205, .186, .158), 0, .95), verts=8, edge=.04)
+
+    join_all('DistantTown')
+    export('distant_town_v1.glb')
+
+
+def build_estate_car():
+    """A period estate car, the kind that was on every Berkshire drive.
+
+    Boxy, three-box-ish, steel wheels, roof rack. Two of them are wrecks in the
+    compound and one at the gate still has glass in it: it is what the player
+    will eventually drive to the town.
+    """
+    clear_scene()
+    paint = mat('CarPaint', (.118, .132, .126), .25, .55)
+    trim = mat('CarTrim', (.035, .038, .038), .30, .60)
+    glassy = mat('CarGlass', (.045, .062, .068), .10, .22)
+    tyre = mat('CarTyre', (.016, .017, .017), 0, .95)
+    rim = mat('CarRim', (.24, .25, .25), .70, .40)
+    lamp = mat('CarLamp', (.52, .50, .44), .20, .30)
+
+    # Body: a long boxy shell with a stepped bonnet and a squared-off tail.
+    cube('Car_Body', (0, .74, 0), (.84, .34, 2.20), paint, edge=.09)
+    cube('Car_Bonnet', (0, .96, -1.52), (.80, .12, .70), paint, edge=.06)
+    cube('Car_Cabin', (0, 1.28, .12), (.78, .32, 1.24), paint, edge=.08)
+    cube('Car_Windscreen', (0, 1.30, -1.06), (.72, .30, .10), glassy,
+         rotation=(-.42, 0, 0), edge=.02)
+    cube('Car_Backlight', (0, 1.30, 1.32), (.72, .28, .10), glassy,
+         rotation=(.38, 0, 0), edge=.02)
+    for side in (-1, 1):
+        cube(f'Car_SideGlass_{side}', (side * .79, 1.30, .16), (.03, .26, 1.10),
+             glassy, edge=.02)
+        cube(f'Car_Sill_{side}', (side * .86, .48, 0), (.05, .12, 2.00), trim, edge=.03)
+        cube(f'Car_Mirror_{side}', (side * .95, 1.18, -.92), (.11, .06, .05), trim, edge=.02)
+    cube('Car_Grille', (0, .86, -2.18), (.72, .16, .08), trim, edge=.02)
+    cube('Car_BumperFront', (0, .62, -2.24), (.86, .11, .10), trim, edge=.03)
+    cube('Car_BumperRear', (0, .62, 2.24), (.86, .11, .10), trim, edge=.03)
+    for side in (-1, 1):
+        cube(f'Car_Headlamp_{side}', (side * .52, .92, -2.20), (.20, .11, .06), lamp, edge=.02)
+        cube(f'Car_Taillamp_{side}', (side * .60, .86, 2.22), (.16, .13, .05),
+             mat('CarTail', (.32, .035, .028), .20, .40), edge=.02)
+    # Roof rack: nobody in 1990 drove an estate without one.
+    for z in (-.55, .55):
+        between(f'Car_RackBar_{z:.2f}', (-.70, 1.64, z), (.70, 1.64, z), .028, trim, 10)
+    for side in (-1, 1):
+        for z in (-.55, .55):
+            cube(f'Car_RackFoot_{side}_{z:.2f}', (side * .68, 1.58, z), (.05, .05, .05),
+                 trim, edge=.01)
+    # Wheels.
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            x = sx * .84
+            z = sz * 1.46
+            cyl(f'Car_Tyre_{sx}_{sz}', (x, .34, z), .34, .21, tyre,
+                rotation=(0, 0, math.pi / 2), verts=20, edge=.02)
+            cyl(f'Car_Rim_{sx}_{sz}', (x + sx * .02, .34, z), .21, .19, rim,
+                rotation=(0, 0, math.pi / 2), verts=14, edge=.015)
+    join_all('EstateCar')
+    export('estate_car_v1.glb')
 
 
 def build_entrance():
@@ -602,6 +744,40 @@ def build_rubble():
     for i in range(5):
         between('RubbleRebar'+str(i),(-.9+i*.38,.15,-.25),(-.55+i*.30,.65,.55),.018,STEEL,10)
     export('rubble_cluster_v3.glb')
+
+
+def build_range_target():
+    """A falling-plate target on a stand.
+
+    The armoury issues twenty-six weapons and the compound had nothing to point
+    them at. This is what a shelter's range would actually use: a steel plate on
+    a pivot with a painted bull, standing off a welded frame. The plate is its
+    own object so the game can swing it back on a hit and stand it up again.
+    """
+    clear_scene()
+    # Frame: two feet, two uprights, a cross member the plate hangs from.
+    for x in (-.46, .46):
+        cube(f'Target_Foot_{x:.2f}', (x, .06, 0), (.10, .06, .40), DARK, edge=.02)
+        cube(f'Target_Post_{x:.2f}', (x, .72, 0), (.055, .66, .055), STEEL, edge=.015)
+        between(f'Target_Brace_{x:.2f}', (x, .12, -.34), (x, .70, 0), .028, DARK, 10)
+    cube('Target_Head', (0, 1.36, 0), (.52, .05, .06), STEEL, edge=.015)
+    cube('Target_Plaque', (0, .30, -.07), (.20, .07, .012), YELLOW, edge=.004)
+
+    # The plate. Its own pivot sits on the cross member, so the game only has to
+    # rotate this object about X to knock it down.
+    cube('Target_Plate', (0, -.34, 0), (.34, .34, .022), BRUSHED, edge=.012)
+    cube('Target_Ring', (0, -.34, -.026), (.24, .24, .006), DARK, edge=.006)
+    cube('Target_Bull', (0, -.34, -.034), (.09, .09, .006), RED, edge=.004)
+    cyl('Target_Pivot', (0, 0, 0), .035, .74, DARK, rotation=(0, math.pi / 2, 0), verts=12)
+    for name in ('Target_Plate', 'Target_Ring', 'Target_Bull', 'Target_Pivot'):
+        bpy.data.objects[name].location.y += 1.36
+    # Parent the face to the pivot so one rotation takes the whole plate.
+    pivot = bpy.data.objects['Target_Pivot']
+    for name in ('Target_Plate', 'Target_Ring', 'Target_Bull'):
+        child = bpy.data.objects[name]
+        child.parent = pivot
+        child.matrix_parent_inverse = pivot.matrix_world.inverted()
+    export('range_target_v1.glb')
 
 
 def build_remains_covered():
@@ -712,6 +888,7 @@ for fn in (
     build_bench, build_clutter, build_status, build_access, build_camera,
     build_exterior_ground, build_entrance, build_fence, build_gate,
     build_floodlight, build_tree, build_barrier, build_rubble,
+    build_range_target, build_distant_town, build_estate_car,
     build_remains_covered, build_remains_slumped
 ):
     fn()

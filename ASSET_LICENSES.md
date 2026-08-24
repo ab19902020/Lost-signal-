@@ -20,9 +20,8 @@ reproduces the GLBs from a local copy of them.
   terms. Only the environment props and the working dog are used: the pack's
   human and zombie characters are deliberately left out.
 - **FPS pack** — `akm.glb`, `mossberg_590a1.glb`, `glock_19.glb`,
-  `combat_knife.glb`, `prop_truck.glb` and the rigged first-person arms
-  (`fps_arms_rifle.glb`, `fps_arms_pistol.glb`); supplied by the project owner
-  under the pack's own terms.
+  `combat_knife.glb` and `prop_truck.glb`; supplied by the project owner under
+  the pack's own terms.
 - **Survival Pack** — `survival_*.glb`, the infirmary's stores; supplied by the
   project owner under the pack's own terms.
 - **Soldier** — `soldier.glb` by JToastie; supplied by the project owner under

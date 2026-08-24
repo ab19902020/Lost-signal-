@@ -74,10 +74,6 @@ const packUrls = {
   armoryMossberg: `${BASE}assets/supplied/mossberg_590a1.glb`,
   armoryGlock: `${BASE}assets/supplied/glock_19.glb`,
   armoryCombatKnife: `${BASE}assets/supplied/combat_knife.glb`,
-  // Rigged first-person arms with idle/shoot/reload takes, posed once around a
-  // rifle and once around a handgun.
-  fpsArmsRifle: `${BASE}assets/supplied/fps_arms_rifle.glb`,
-  fpsArmsPistol: `${BASE}assets/supplied/fps_arms_pistol.glb`,
   // The surface.
   solarArray: `${BASE}assets/supplied/solar_array.glb`,
   deadTree01: `${BASE}assets/supplied/dead_tree_01.glb`,
@@ -178,6 +174,9 @@ const exteriorUrls = {
   remainsSlumped: `${BASE}assets/blender/remains_slumped_v1.glb`,
   barrier: `${BASE}assets/blender/concrete_barrier_v3.glb`,
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
+  rangeTarget: `${BASE}assets/blender/range_target_v1.glb`,
+  distantTown: `${BASE}assets/blender/distant_town_v1.glb`,
+  estateCar: `${BASE}assets/blender/estate_car_v1.glb`,
 };
 
 // Assets exported before the up-axis fix carry the authored Y-up world rotated

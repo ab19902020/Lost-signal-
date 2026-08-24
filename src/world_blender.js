@@ -5,6 +5,8 @@ import { createCreatureSystem, populateSilo } from './creatures.js';
 import { buildSilo } from './silo.js';
 import { buildArmory } from './armory.js';
 import { buildGarrison } from './garrison.js';
+import { createRange } from './range.js';
+import { createSky } from './sky.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -17,14 +19,22 @@ export function createGameWorld(assets) {
   bunker.fog = new THREE.FogExp2(0x050807, 0.019);
 
   const outside = new THREE.Scene();
-  outside.background = new THREE.Color(0x06090a);
-  outside.fog = new THREE.FogExp2(0x0b1010, 0.020);
+  // The surface had no sky and a near-black fog at twice the density it needed,
+  // so anything more than about thirty metres out — the fence, the treeline,
+  // the far end of the compound — fell into a void with a hard edge where the
+  // floodlights stopped. It now runs a real clock: sun, moon, stars and
+  // weather, with the fog tracking the horizon so distance is haze, not void.
+  outside.fog = new THREE.FogExp2(0x141d26, 0.0095);
 
   // Silo 47-A, reached through the hatch in the shelter floor.
   const silo = new THREE.Scene();
 
   const player = new THREE.Group();
-  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.035, 180);
+  // The far plane used to sit at 180 m, which was fine for a compound with
+  // nothing beyond its fence. It now has to reach a sky and a town on the
+  // horizon, so it goes out to nine hundred; the near plane comes back a
+  // fraction to keep the depth buffer's ratio sane.
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 900);
   const _cullPoint = new THREE.Vector3();   // reused: light culling runs every frame
   const _interactionPoint = new THREE.Vector3();
   const _interactionCamera = new THREE.Vector3();
@@ -243,19 +253,9 @@ export function createGameWorld(assets) {
   place(assets.exteriorGround, outside, [0,0,0], [0,0,0], 1, { collide: false });
   place(assets.exteriorEntrance, outside, [0,0,-17], [0,0,0], 1, { shrink: 0.12 });
 
-  // The compound reads as night, not as a void. The old sky term was almost
-  // black against an almost-black ground, so the surface had no shape at all
-  // until you walked into a floodlight.
-  outside.add(new THREE.HemisphereLight(0x4b6068,0x14120e,.86));
-  const moon = new THREE.DirectionalLight(0xa6bdc9,3.1);
-  moon.position.set(-25,28,12);
-  moon.castShadow = true;
-  moon.shadow.mapSize.set(1024,1024);
-  moon.shadow.camera.left=-45;
-  moon.shadow.camera.right=45;
-  moon.shadow.camera.top=45;
-  moon.shadow.camera.bottom=-45;
-  outside.add(moon);
+  // Sun, moon, stars, cloud and rain, all on the shelter's own clock. The
+  // surface used to be one fixed night with a single hard moonlight in it.
+  const sky = createSky({ scene: outside, dayLength: 240, startAt: 0.30 });
 
   // Reusable 4m Blender fence modules form the perimeter.
   for (let x=-18; x<=18; x+=4) {
@@ -271,12 +271,14 @@ export function createGameWorld(assets) {
 
   // Exterior lighting fixtures are Blender models; only emitted light is runtime.
   const floodPositions=[[-14,0,-20],[14,0,-20],[-14,0,11],[14,0,11]];
+  const floodLights=[];
   floodPositions.forEach(([x,y,z])=>{
     place(assets.floodlight,outside,[x,y,z],[0,0,0],1,{ shrink: 0.1 });
     const l=new THREE.SpotLight(0xdbeaf0,4.5,34,.62,.45,1.6);
     l.position.set(x,4.35,z);
     l.target.position.set(x*.35,0,z*.35);
     outside.add(l,l.target);
+    floodLights.push(l);
   });
 
   // --- Surface dressing ----------------------------------------------------
@@ -308,6 +310,7 @@ export function createGameWorld(assets) {
   // side of the yard, angled off the fence line, which is what the shelter's
   // POWER reading has been quietly claiming all along.
   const solarArrays = [];
+  let solarGlow = null;
   if (assets.solarArray) {
     // The array ships with a pale cast plinth, which at night was the brightest
     // thing in the compound. Weather it down once and share the result.
@@ -337,46 +340,87 @@ export function createGameWorld(assets) {
     }
     // One low spill under the field so it reads at night without adding a
     // second floodlight rig.
-    const glow = new THREE.PointLight(0x8fb3c4, 4.5, 24, 2.0);
-    glow.position.set(14.2, 3.6, -8.4);
-    outside.add(glow);
+    solarGlow = new THREE.PointLight(0x8fb3c4, 4.5, 24, 2.0);
+    solarGlow.position.set(14.2, 3.6, -8.4);
+    outside.add(solarGlow);
   }
 
-  // Yard clutter. Everything here is collided, so the compound is somewhere you
-  // pick your way through rather than an empty slab with scenery painted on it.
+  // The yard, laid out as a yard rather than scattered.
+  //
+  // Everything up here has a job and a place to be: stores along the north
+  // wall, vehicles parked at the gate, the range down the west side and the
+  // solar field down the east. The middle stays clear — it is the apron the
+  // shelter's stair comes up onto, and the route between the gate and the door
+  // has to read at a glance. Loose props dropped at random across the whole
+  // compound looked like a scrapyard, not a place anyone was keeping.
   const dress = (asset, entries, options = {}) => {
     if (!asset) return;
     for (const [x, z, r, scale = 1] of entries) {
       place(asset, outside, [x, 0, z], [0, r, 0], scale, options);
     }
   };
-  dress(assets.propContainer, [[-15.4, -17.2, .12], [-15.8, 8.4, -.06]]);
-  dress(assets.propContainerRed, [[-15.2, -4.6, .04]]);
-  dress(assets.propTruck, [[7.4, 12.6, 2.62], [-9.2, -21.4, .38]]);
-  dress(assets.propWaterTower, [[-17.6, -25.4, .5]], { shrink: 0.35 });
+
+  // North wall: the stores yard. Containers in a line, tower behind them.
+  dress(assets.propContainer, [[-13.6, -23.4, 0], [-6.4, -23.4, 0]]);
+  dress(assets.propContainerRed, [[0.8, -23.4, 0]]);
+  dress(assets.propWaterTower, [[10.4, -24.6, .35]], { shrink: 0.35 });
   dress(assets.propBarrel, [
-    [-6.2, -16.4, .3], [-5.4, -17.1, 1.2], [-6.9, -17.6, 2.4],
-    [9.6, -3.2, .8], [10.3, -3.9, 2.1], [-12.4, 14.6, .4], [12.8, 6.4, 1.7],
+    [-15.2, -20.4, .3], [-14.4, -20.9, 1.2], [-15.6, -21.3, 2.4],
+    [4.6, -21.6, .8], [5.4, -22.1, 2.1],
   ]);
-  dress(assets.propPallet, [[-4.4, 9.2, .2], [-3.6, 9.9, 1.1], [8.2, -10.4, 2.7]]);
-  dress(assets.propPalletBroken, [[-4.9, 10.8, 2.2], [13.4, 15.2, .6]]);
-  dress(assets.propPipes, [[-13.2, -10.6, 1.55], [-12.4, -9.4, 1.62]]);
-  dress(assets.propCinderBlock, [
-    [3.4, -13.6, .4], [3.9, -13.2, 1.9], [3.6, -13.9, 2.8], [-9.8, 4.2, .7],
-  ], { collide: false });
-  dress(assets.propWheels, [[6.2, 15.4, .3], [-11.6, -6.2, 1.4]]);
-  dress(assets.propTrashBags, [[-2.6, 13.8, .9], [2.2, 14.4, 2.6], [-14.6, 17.2, .2]],
-    { collide: false });
-  dress(assets.propBarrier, [
-    [-2.4, -8.6, 0], [-1.2, -8.6, 0], [1.2, -8.6, 0], [2.4, -8.6, 0],
-    [-2.4, 16.2, 0], [2.4, 16.2, 0],
-  ]);
-  dress(assets.propCone, [
-    [-3.6, -7.4, 0], [3.6, -7.4, 0], [0, 16.9, 0], [-6.2, 4.8, 0], [6.4, 1.2, 0],
-  ], { collide: false });
-  dress(assets.propStreetLight, [[-9.4, 16.8, 1.6], [9.4, -16.8, -1.5]], { shrink: 0.2 });
+  dress(assets.propPipes, [[-2.4, -20.8, 0], [-1.6, -21.4, 0]]);
+
+  // Gate end: what came in and never went out again.
+  dress(assets.propTruck, [[6.8, 13.8, 3.02], [-6.8, 13.8, 3.02]]);
+  dress(assets.propPallet, [[10.6, 9.4, .2], [11.4, 10.1, 1.1]]);
+  dress(assets.propPalletBroken, [[10.1, 11.0, 2.2]]);
+  dress(assets.propWheels, [[12.4, 12.2, .3]]);
+  dress(assets.propTrashBags, [[-10.4, 12.2, .9], [-11.2, 13.0, 2.6]], { collide: false });
   dress(assets.propTownSign, [[0, 21.6, 0]], { shrink: 0.2 });
-  dress(assets.propChest, [[4.6, -4.2, .6], [-7.8, 11.4, 2.3]]);
+
+  // Cars. Two wrecks that were abandoned in the yard, and one at the gate that
+  // still has glass in it — the one that will eventually be worth the drive.
+  dress(assets.estateCar, [[-12.2, 6.4, 1.42], [13.2, -6.8, 2.86]], { shrink: 0.05 });
+  const gateCar = assets.estateCar ? place(assets.estateCar, outside,
+    [2.8, 0, 16.2], [0, Math.PI * 0.02, 0], 1, { shrink: 0.05 }) : null;
+  if (gateCar) {
+    gateCar.name = 'Gate_Estate_Car';
+    addInteraction(gateCar, 'ESTATE CAR — NOT RUNNING', 'outside',
+      () => window.dispatchEvent(new CustomEvent('lostsignal:car')));
+  }
+
+  // The town, on the horizon to the south-west past the gate. Not a place you
+  // can walk into yet — it is six hundred metres of dead field away, drawn as
+  // the silhouette it would be at that range, so there is somewhere to go.
+  const townMaterials = [];
+  if (assets.distantTown) {
+    const town = place(assets.distantTown, outside, [-210, 0, 470], [0, -0.42, 0], 1,
+      { collide: false });
+    town.name = 'Distant_Town';
+    // It sits far beyond the fog's useful range — at half a kilometre the
+    // exponential fog is total, and the town would simply be the fog colour.
+    // Take it out of the fog and apply aerial perspective by hand instead, so
+    // it washes toward whatever the horizon is doing at that hour.
+    town.traverse((part) => {
+      if (!part.isMesh) return;
+      part.material = part.material.clone();
+      part.material.fog = false;
+      part.castShadow = false;
+      part.receiveShadow = false;
+      part.material.userData.baseColor = part.material.color.clone();
+      townMaterials.push(part.material);
+    });
+  }
+  dress(assets.propStreetLight, [[-4.2, 17.2, 1.6], [4.2, 17.2, -1.6]], { shrink: 0.2 });
+
+  // The route from the gate to the shelter door, marked out rather than
+  // obstructed: cones down one side, a barrier line short of the entrance.
+  dress(assets.propCone, [
+    [-3.2, 14.0, 0], [-3.2, 9.0, 0], [-3.2, 4.0, 0],
+    [3.2, 14.0, 0], [3.2, 9.0, 0], [3.2, 4.0, 0],
+  ], { collide: false });
+  dress(assets.propBarrier, [[-2.6, -8.4, 0], [-1.3, -8.4, 0], [1.3, -8.4, 0], [2.6, -8.4, 0]]);
+  dress(assets.propChest, [[-4.8, -7.6, .6]]);
 
   // The people who did not get inside. Nothing graphic: shapes under weighted
   // tarpaulins, and one who sat down against the compound wall in a hooded
@@ -391,6 +435,39 @@ export function createGameWorld(assets) {
     [[-8.9, 0, -8.2, 0.35], [12.4, 0, 9.1, -2.4], [2.6, 0, -19.2, 3.0]].forEach(([x, y, z, r]) =>
       place(assets.remainsSlumped, outside, [x, y, z], [0, r, 0], 1, { collide: false }));
   }
+
+  // Somewhere to find out what the armoury's twenty-six weapons actually do.
+  const range = createRange({
+    scene: outside,
+    colliders: colliders.outside,
+    assets,
+    place,
+    addInteraction,
+  });
+
+  // Nothing on the surface should read as a hole cut in the picture. A few of
+  // the supplied props are painted so dark that under a moon they came out as
+  // flat black rectangles — an army truck at the gate looked like a missing
+  // wall. Lift the floor on albedo without touching anything already visible.
+  const lifted = new Map();
+  const liftFromBlack = (material) => {
+    if (!material?.color) return material;
+    if (lifted.has(material)) return lifted.get(material);
+    const luminance = material.color.r * 0.29 + material.color.g * 0.59 + material.color.b * 0.12;
+    if (luminance >= 0.055) {
+      lifted.set(material, material);
+      return material;
+    }
+    const copy = material.clone();
+    copy.color.addScalar(0.055 - luminance);
+    lifted.set(material, copy);
+    return copy;
+  };
+  outside.traverse((part) => {
+    if (!part.isMesh) return;
+    part.material = Array.isArray(part.material)
+      ? part.material.map(liftFromBlack) : liftFromBlack(part.material);
+  });
 
   // Surface access uses the same Blender keypad asset.
   const returnPanel = place(assets.accessControl,outside,[-2.15,.55,-13.55],[0,0,0],.64,{ collide: false });
@@ -423,7 +500,28 @@ export function createGameWorld(assets) {
     rain.setMatrixAt(i,rainMatrix);
   }
   rain.frustumCulled=false;
+  rain.visible=false;
   outside.add(rain);
+
+  // Dust on the wind. Dry Berkshire pasture with nothing holding it down: the
+  // air over the compound is never clean, and it is what sells the floodlight
+  // beams and the low sun.
+  const outdoorDustCount = 420;
+  const outdoorDustGeo = new THREE.BufferGeometry();
+  const outdoorDustPositions = new Float32Array(outdoorDustCount * 3);
+  const outdoorDustDrift = [];
+  for (let i = 0; i < outdoorDustCount; i++) {
+    outdoorDustPositions[i * 3] = (Math.random() - .5) * 64;
+    outdoorDustPositions[i * 3 + 1] = Math.random() * 9;
+    outdoorDustPositions[i * 3 + 2] = (Math.random() - .5) * 70;
+    outdoorDustDrift.push(.25 + Math.random() * .7);
+  }
+  outdoorDustGeo.setAttribute('position', new THREE.BufferAttribute(outdoorDustPositions, 3));
+  const outdoorDust = new THREE.Points(outdoorDustGeo, new THREE.PointsMaterial({
+    color: 0xcfc6b2, size: .035, transparent: true, opacity: .22, depthWrite: false,
+  }));
+  outdoorDust.frustumCulled = false;
+  outside.add(outdoorDust);
 
   // The held weapon, as a first-person viewmodel. `weaponView` carries the
   // sway, bob and recoil the player controller drives; the model inside it is
@@ -441,105 +539,136 @@ export function createGameWorld(assets) {
   let heldModel = null;
   let heldKey = null;
 
-  // A pair of hands behind the weapon. The supplied FPS rigs ship one arm mesh
-  // posed twice — once around a rifle, once around a handgun — with idle, shoot
-  // and reload takes on a real skeleton, so the player's hands move with the
-  // action rather than a floating gun drifting in front of the camera.
-  const ARM_RIGS = {
-    rifle: 'fpsArmsRifle', smg: 'fpsArmsRifle', shotgun: 'fpsArmsRifle',
-    sniper: 'fpsArmsRifle', pistol: 'fpsArmsPistol', revolver: 'fpsArmsPistol',
-    blade: 'fpsArmsPistol',
-  };
-  // The rigs are authored at their own scale and are not centred on anything.
-  // A bounding box is no help either — these are skinned meshes whose bind pose
-  // is nothing like the pose they are drawn in — so each rig is scaled
-  // explicitly and then slid until a named bone lands on the weapon's grip.
-  const ARM_VIEW = {
-    fpsArmsRifle: { scale: 0.030, grip: 'HandL', at: [0.02, -0.01, 0.04], rotation: [0, 0, 0] },
-    fpsArmsPistol: { scale: 0.028, grip: 'HandL', at: [0.02, 0.00, 0.02], rotation: [0, 0, 0] },
-  };
-  const _gripWorld = new THREE.Vector3();
-  const _gripLocal = new THREE.Vector3();
+  // Scratch working space for measuring the held model.
   const _weaponBox = new THREE.Box3();
   const _weaponSize = new THREE.Vector3();
-  const armRigs = new Map();
-  let arms = null;
-  let armMixer = null;
-  let armClips = null;
-  let armIdle = null;
+  const _weaponCentre = new THREE.Vector3();
+  const _vertex = new THREE.Vector3();
 
-  function armRigFor(assetKey) {
-    if (armRigs.has(assetKey)) return armRigs.get(assetKey);
-    const gltf = assets[assetKey];
-    if (!gltf) {
-      armRigs.set(assetKey, null);
-      return null;
+  /**
+   * Which way the barrel points, decided from the model rather than a table.
+   *
+   * The packs do not agree on an axis, some carry a residual node rotation from
+   * conversion, and there are twenty-six of them — a per-weapon flag was always
+   * going to be wrong somewhere, and pointing a muzzle at the player's own face
+   * is the worst way to find out. Every firearm is back-heavy: stock, grip,
+   * magazine and action are all behind the barrel. So weigh the vertices. The
+   * mass centroid sits behind the middle of the bounding box, and the muzzle is
+   * the other way.
+   *
+   * Returns a unit vector along the model's own axes, or null if the model has
+   * no usable geometry.
+   */
+  function muzzleAxis(model) {
+    model.updateWorldMatrix(true, true);
+    _weaponBox.setFromObject(model);
+    _weaponBox.getSize(_weaponSize);
+    _weaponBox.getCenter(_weaponCentre);
+    const axis = _weaponSize.x >= _weaponSize.z ? 'x' : 'z';
+    const span = _weaponSize[axis];
+    if (span < 1e-5) return null;
+
+    let total = 0;
+    let sum = 0;
+    // ...and how deep each half is. The back of a weapon carries a stock or a
+    // grip hanging off the line of the barrel; the muzzle end is just barrel.
+    let lowHeight = 0;
+    let highHeight = 0;
+    for (const mesh of collectMeshes(model)) {
+      const position = mesh.geometry?.attributes?.position;
+      if (!position) continue;
+      // A few hundred vertices are plenty to find a centre of mass, and keep a
+      // weapon swap off the frame budget.
+      const stride = Math.max(1, Math.floor(position.count / 400));
+      for (let i = 0; i < position.count; i += stride) {
+        _vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        sum += _vertex[axis];
+        total++;
+        const drop = Math.abs(_vertex.y - _weaponCentre.y);
+        if (_vertex[axis] < _weaponCentre[axis]) lowHeight = Math.max(lowHeight, drop);
+        else highHeight = Math.max(highHeight, drop);
+      }
     }
-    const view = ARM_VIEW[assetKey];
-    const root = cloneGLTF(gltf);
-    root.name = `Fps_${assetKey}`;
-    root.rotation.set(...view.rotation);
-    root.scale.setScalar(view.scale);
-    root.visible = false;
-    // Skinned arms move a long way from their bind pose, so nothing about them
-    // can be culled against it.
-    root.traverse((part) => { if (part.isMesh) part.frustumCulled = false; });
-    weaponAction.add(root);
-    weaponAction.updateWorldMatrix(true, true);
-    const grip = findNamed(root, view.grip);
-    if (grip) {
-      grip.getWorldPosition(_gripWorld);
-      weaponAction.worldToLocal(_gripLocal.copy(_gripWorld));
-      root.position.set(view.at[0] - _gripLocal.x, view.at[1] - _gripLocal.y,
-        view.at[2] - _gripLocal.z);
-    }
-    const mixer = new THREE.AnimationMixer(root);
-    const clips = {};
-    for (const clip of gltf.animations || []) {
-      const action = mixer.clipAction(clip);
-      clips[clip.name.toLowerCase()] = action;
-    }
-    const rig = { root, mixer, clips };
-    mixer.addEventListener('finished', (event) => {
-      if (rig !== arms || !armIdle || event.action === armIdle) return;
-      event.action.fadeOut(.14);
-      armIdle.reset().fadeIn(.14).play();
-    });
-    armRigs.set(assetKey, rig);
-    return rig;
+    if (!total) return null;
+    const bias = (sum / total - _weaponCentre[axis]) / span;
+    // A pistol is near enough symmetric along its length for the weighing to
+    // say nothing, so fall back to which half is deeper.
+    const heavyEnd = Math.abs(bias) >= 0.02
+      ? Math.sign(bias)
+      : Math.sign(highHeight - lowHeight);
+    if (!heavyEnd) return null;
+    const direction = new THREE.Vector3();
+    direction[axis] = -heavyEnd;
+    return direction;
   }
 
-  function setArms(family) {
-    const rig = armRigFor(ARM_RIGS[family] || 'fpsArmsRifle');
-    if (arms === rig) return;
-    if (arms) {
-      arms.root.visible = false;
-      arms.mixer.stopAllAction();
+  function collectMeshes(root) {
+    const meshes = [];
+    root.traverse((part) => { if (part.isMesh || part.isSkinnedMesh) meshes.push(part); });
+    return meshes;
+  }
+  /**
+   * Which way the barrel points, decided from the model rather than a table.
+   *
+   * The packs do not agree on an axis, some carry a residual node rotation from
+   * conversion, and there are twenty-six of them — a per-weapon flag was always
+   * going to be wrong somewhere, and pointing a muzzle at the player's own face
+   * is the worst way to find out. Every firearm is back-heavy: stock, grip,
+   * magazine and action are all behind the barrel. So weigh the vertices. The
+   * mass centroid sits behind the middle of the bounding box, and the muzzle is
+   * the other way.
+   *
+   * Returns a unit vector along the model's own axes, or null if the model has
+   * no usable geometry.
+   */
+  function muzzleAxis(model) {
+    model.updateWorldMatrix(true, true);
+    _weaponBox.setFromObject(model);
+    _weaponBox.getSize(_weaponSize);
+    _weaponBox.getCenter(_weaponCentre);
+    const axis = _weaponSize.x >= _weaponSize.z ? 'x' : 'z';
+    const span = _weaponSize[axis];
+    if (span < 1e-5) return null;
+
+    let total = 0;
+    let sum = 0;
+    // ...and how deep each half is. The back of a weapon carries a stock or a
+    // grip hanging off the line of the barrel; the muzzle end is just barrel.
+    let lowHeight = 0;
+    let highHeight = 0;
+    for (const mesh of collectMeshes(model)) {
+      const position = mesh.geometry?.attributes?.position;
+      if (!position) continue;
+      // A few hundred vertices are plenty to find a centre of mass, and keep a
+      // weapon swap off the frame budget.
+      const stride = Math.max(1, Math.floor(position.count / 400));
+      for (let i = 0; i < position.count; i += stride) {
+        _vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        sum += _vertex[axis];
+        total++;
+        const drop = Math.abs(_vertex.y - _weaponCentre.y);
+        if (_vertex[axis] < _weaponCentre[axis]) lowHeight = Math.max(lowHeight, drop);
+        else highHeight = Math.max(highHeight, drop);
+      }
     }
-    arms = rig;
-    armMixer = rig?.mixer || null;
-    armClips = rig?.clips || null;
-    armIdle = armClips?.idle || null;
-    if (!rig) return;
-    rig.root.visible = true;
-    armIdle?.reset().play();
+    if (!total) return null;
+    const bias = (sum / total - _weaponCentre[axis]) / span;
+    // A pistol is near enough symmetric along its length for the weighing to
+    // say nothing, so fall back to which half is deeper.
+    const heavyEnd = Math.abs(bias) >= 0.02
+      ? Math.sign(bias)
+      : Math.sign(highHeight - lowHeight);
+    if (!heavyEnd) return null;
+    const direction = new THREE.Vector3();
+    direction[axis] = -heavyEnd;
+    return direction;
   }
 
-  /** Play one of the rig's takes once, then settle back to idle. */
-  function playArms(name, seconds) {
-    const action = armClips?.[name];
-    if (!action) return;
-    action.reset();
-    action.setLoop(THREE.LoopOnce, 1);
-    action.clampWhenFinished = true;
-    // Stretch or squeeze the take to the length the game gives the action, so a
-    // three-second pump reload is not a half-second mime repeated six times.
-    const clipLength = action.getClip().duration || 1;
-    action.timeScale = seconds > 0 ? clipLength / seconds : 1;
-    armIdle?.fadeOut(.12);
-    action.fadeIn(.10).play();
+  function collectMeshes(root) {
+    const meshes = [];
+    root.traverse((part) => { if (part.isMesh || part.isSkinnedMesh) meshes.push(part); });
+    return meshes;
   }
-
   function setWeapon(key) {
     if (heldKey === key && heldModel) return heldModel;
     if (heldModel) {
@@ -552,23 +681,26 @@ export function createGameWorld(assets) {
     const model = cloneGLTF(source);
     const view = WEAPONS[heldKey]?.view
       || { scale: armory?.weaponAsset ? .16 : .78, offset: [armory?.weaponAsset ? -.04 : 0, armory?.weaponAsset ? -.08 : -.02, 0] };
-    // Point the barrel where the crosshair points. Most of the packs lay a
-    // weapon along +X, but not all of them, and a converted model can carry a
-    // residual node rotation of its own — so measure the model's longest
-    // horizontal axis in its own root space rather than assuming one. `flip`
-    // is the one thing measurement cannot settle: which end is the muzzle.
+    // Point the barrel where the crosshair points, both which axis it lies on
+    // and which way along it. `flip` stays as a last-resort override for a
+    // model the weighing cannot read.
     model.rotation.set(0, 0, 0);
-    model.updateWorldMatrix(true, true);
-    _weaponBox.setFromObject(model).getSize(_weaponSize);
+    const muzzle = muzzleAxis(model);
     const alongX = _weaponSize.x >= _weaponSize.z;
-    const yaw = (alongX ? Math.PI / 2 : Math.PI) + (view.flip ? Math.PI : 0);
+    // Turn the muzzle direction onto camera -Z.
+    let yaw;
+    if (muzzle) {
+      yaw = Math.atan2(muzzle.x, -muzzle.z);
+    } else {
+      yaw = alongX ? Math.PI / 2 : Math.PI;
+    }
+    if (view.flip) yaw += Math.PI;
     model.rotation.set(0, yaw, 0);
     model.scale.setScalar(view.scale);
     model.position.set(...view.offset);
     model.name = `Equipped_${heldKey || 'Rifle'}`;
     weaponAction.add(model);
     heldModel = model;
-    setArms(WEAPONS[heldKey]?.family);
     return model;
   }
   setWeapon(DEFAULT_WEAPON);
@@ -654,7 +786,6 @@ export function createGameWorld(assets) {
     const key = value === true ? DEFAULT_WEAPON : (value || null);
     weaponView.visible = !!key;
     if (key) setWeapon(key);
-    if (arms) arms.root.visible = !!key;
     armory?.setEquipped(key);
     return key;
   }
@@ -672,10 +803,7 @@ export function createGameWorld(assets) {
   };
 
   function playGun(kind, seconds = 0) {
-    if (kind === 'shoot') {
-      playArms('shoot', 0.16);
-      return;
-    }
+    if (kind === 'shoot') return;
     if (kind !== 'reload') return;
     const weapon = WEAPONS[heldKey];
     actionStyle = weapon?.family === 'sniper' && /bolt|materiel/i.test(weapon.name)
@@ -683,11 +811,9 @@ export function createGameWorld(assets) {
       : (ACTION_STYLE[weapon?.family] || 'magazine');
     actionLength = Math.max(.25, seconds || weapon?.reloadTime || 1.2);
     actionTimer = actionLength;
-    playArms('reload', actionLength);
   }
 
   function updateAction(dt) {
-    armMixer?.update(dt);
     let x = 0, y = 0, z = 0, pitch = 0, roll = 0;
     if (actionTimer > 0) {
       actionTimer = Math.max(0, actionTimer - dt);
@@ -740,6 +866,11 @@ export function createGameWorld(assets) {
       siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
       garrison?.update(dt);
     }
+    if (world === 'outside') range?.update(dt);
+    // Time passes wherever the player is standing. The sky is a few dozen
+    // sums and a handful of uniform writes, so it runs every frame and the
+    // surface is never waiting at the moment you left it.
+    sky.update(dt);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     armory?.update(dt);
@@ -749,6 +880,36 @@ export function createGameWorld(assets) {
       hatchHinge.rotation.x, hatchOpen ? 1.38 : 0, 5.2, dt);
     dust.rotation.y += dt*.008;
 
+    // Weather. The rain is the sky's, not a permanent fixture of the surface.
+    if (world === 'outside') {
+      rain.visible = sky.state.rain > 0.02;
+      rainMat.opacity = 0.05 + sky.state.rain * 0.20;
+      // Compound lighting is on a photocell, like every real yard light: it
+      // burns through the night and shuts off when there is daylight to see by.
+      // Dust settles in the wet and lifts when it is dry and bright.
+      const array = outdoorDustGeo.attributes.position.array;
+      for (let i = 0; i < outdoorDustCount; i++) {
+        array[i * 3] += outdoorDustDrift[i] * dt * 1.6;
+        array[i * 3 + 1] += Math.sin(elapsed * .6 + i) * dt * .08;
+        if (array[i * 3] > 32) {
+          array[i * 3] = -32;
+          array[i * 3 + 2] = (Math.random() - .5) * 70;
+        }
+      }
+      outdoorDustGeo.attributes.position.needsUpdate = true;
+      outdoorDust.material.opacity = .06 + (1 - sky.state.rain) * .18 * (.4 + sky.state.dayFactor * .6);
+      const night = 1 - sky.state.dayFactor;
+      for (const light of floodLights) light.intensity = 4.5 * night;
+      if (range?.lamp) range.lamp.intensity = 5.5 * night;
+      if (solarGlow) solarGlow.intensity = 4.5 * night;
+      // Aerial perspective on the town: half a kilometre of air takes most of
+      // the colour out of it and leaves whatever the horizon is doing.
+      const horizon = sky.uniforms.horizon.value;
+      for (const material of townMaterials) {
+        material.color.copy(material.userData.baseColor).lerp(horizon, 0.58);
+      }
+    }
+    if (!rain.visible) return;
     for(let i=0;i<rainData.length;i++){
       const d=rainData[i];
       d.p.y-=d.v*dt;
@@ -772,7 +933,7 @@ export function createGameWorld(assets) {
     weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
-    bunkerLights,emergency,siloWorld,armory,garrison,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
   };
