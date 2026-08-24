@@ -70,6 +70,20 @@ function ensureGameReady() {
   return gameReady;
 }
 
+// Dev-only. The welcome menu is what starts asset loading, so a page opened by
+// a QA harness — with nobody to choose CONTINUE or NEW GAME — never builds the
+// world and never publishes the __ls handle the harnesses drive. This boots it
+// directly and leaves the menu path exactly as a player experiences it.
+if (import.meta.env.DEV) {
+  globalThis.__lsBoot = () => {
+    // Take the menu down first. Its globe animates every frame, and leaving
+    // it running through a headless asset load doubles the work a software
+    // renderer has to do for the whole of it.
+    opening.hide();
+    return ensureGameReady();
+  };
+}
+
 let renderer, composer, renderPass, bloomPass, gradePass, aoPass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
 let started = false;

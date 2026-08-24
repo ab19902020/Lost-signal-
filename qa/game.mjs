@@ -28,10 +28,14 @@ page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)));
 const stopPump = await pumpFrames(page);
 await page.goto(url, { waitUntil: 'load', timeout: 90000 });
-await page.waitForFunction(() => {
-  const b = document.getElementById('start');
-  return b && !b.disabled;
-}, null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for start button'));
+// Nobody is here to choose CONTINUE or NEW GAME, and the menu is what starts
+// the world loading, so boot it directly.
+await page.evaluate(() => globalThis.__lsBoot());
+// The welcome menu enables its own start control before the world has
+// finished loading, so waiting on the button alone can run ahead of the
+// game. The debug handle appears only once the world is ready.
+await page.waitForFunction(() => globalThis.__ls && !document.getElementById('start')?.disabled,
+  null, { timeout: 90000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for the game to come up'));
 console.error('boot:', await page.textContent('#engineState'));
 await page.evaluate(() => globalThis.__ls.start()).catch(e => errors.push('start failed ' + e.message));
 await page.waitForTimeout(1500);

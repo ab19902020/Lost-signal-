@@ -28,11 +28,18 @@ const errors = [];
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)));
 const stopPump = await pumpFrames(page);
 await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
-await page.waitForFunction(() => {
-  const b = document.getElementById('start');
-  return b && !b.disabled;
-}, null, { timeout: 60000, polling: 100 });
-await page.evaluate(() => document.getElementById('start').click());
+// Nobody is here to choose CONTINUE or NEW GAME, and the menu is what starts
+// the world loading, so boot it directly.
+await page.evaluate(() => globalThis.__lsBoot());
+// The welcome menu enables its own start control before the world has
+// finished loading, so waiting on the button alone can run ahead of the
+// game. The debug handle appears only once the world is ready.
+await page.waitForFunction(() => globalThis.__ls && !document.getElementById('start')?.disabled,
+  null, { timeout: 90000, polling: 100 });
+// The welcome menu sits over the boot screen, so a synthetic click on the
+// start button lands on the overlay and the game never begins. Start it
+// through the debug handle, as qa/game.mjs does.
+await page.evaluate(() => globalThis.__ls.start());
 await page.waitForTimeout(400);
 await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
   { timeout: 30000, polling: 100 });
