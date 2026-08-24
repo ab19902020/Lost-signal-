@@ -241,11 +241,22 @@ async function prepare() {
           key: weaponKey, name: weapon?.name, family: weapon?.family,
           kind: weapon?.kind, automatic: !!weapon?.automatic,
           magazine: weapon?.magazine ?? 0, ammo, reserve,
-          model: game.weaponAction?.children[0]?.name ?? null,
+          model: game.weaponAction?.children
+            .find((child) => child.name.startsWith('Equipped_'))?.name ?? null,
+          arms: game.weaponAction?.children
+            .find((child) => child.name.startsWith('Fps_'))?.name ?? null,
         }),
         decals: () => decals.count(),
         marks: () => decals.total(),
         reload: () => reload(),
+        // Take a wound, so the infirmary has something to treat.
+        hurt: (amount = 30) => {
+          health = Math.max(0, health - amount);
+          hurtFlash = 1;
+          recovery = 0;
+          updateHealth();
+          return health;
+        },
         // Hold the trigger, as a finger does. Only the automatics keep firing.
         hold: (value = true) => { triggerHeld = !!value; },
         aim: (value = true) => setAiming(value),
@@ -322,6 +333,39 @@ function wireGameEvents() {
     : 'ARMOURY UNLOCKED — WALK IN AND INSPECT THE WALL RACKS'));
   addEventListener('lostsignal:takegun', (event) => {
     equipWeapon(event.detail?.key || DEFAULT_WEAPON);
+  });
+  addEventListener('lostsignal:sentry', (event) => {
+    flash(event.detail?.line || '…', 5200);
+    clickSound(300, .07, .035);
+  });
+  addEventListener('lostsignal:dog', (event) => {
+    flash(event.detail?.line || '…', 4200);
+    clickSound(520, .05, .03);
+  });
+  // The infirmary on the secure gallery. Three courses of treatment, and then
+  // it is a bench with empty boxes on it.
+  addEventListener('lostsignal:medical', (event) => {
+    if (event.detail?.empty && health >= 100) {
+      flash('INFIRMARY STORES ARE EMPTY', 2200);
+      return;
+    }
+    if (event.detail?.empty) {
+      flash('INFIRMARY STORES ARE EMPTY — NOTHING LEFT TO TREAT WITH', 2600);
+      clickSound(140, .09, .045);
+      return;
+    }
+    if (health >= 100) {
+      flash('NO INJURIES TO TREAT', 1800);
+      return;
+    }
+    health = Math.min(100, health + 45);
+    recovery = 0;
+    updateHealth();
+    updateStats();
+    flash(`TREATED — CONDITION ${Math.round(health)}%, `
+      + `${event.detail.remaining} COURSE(S) LEFT`, 2800);
+    clickSound(660, .12, .05);
+    completeObjective('secure');
   });
   addEventListener('lostsignal:rackedlocked', (event) => {
     flash(`${event.detail?.name || 'THAT RACK'} IS BEHIND THE SECURITY DOOR`, 1800);

@@ -7,23 +7,28 @@ import { WEAPONS, isUsable } from './weapons.js';
 // routes clear.
 export const ARMORY_ORIGIN = new THREE.Vector3(3.80, 0, 2.60);
 
+// Three columns of long guns across the back rack, handguns and blades down
+// the left, precision rifles and bench kit down the right. The back wall went
+// from two columns to three and the side walls from four rows to five when the
+// FPS pack added a rifle, a pump gun, a sidearm and a knife: the racks are
+// 4.1 m by 2.6 m of pegboard and were only ever half used.
 const BACK_WALL = [
-  'armoryAssault01', 'armoryAssault02',
-  'armoryAssault03', 'armoryBullpup',
-  'armoryShotgunSawed', 'armoryShotgunShort',
-  'armoryShotgun01', 'armoryShotgun02',
-  'armorySniper01', 'armorySniper02',
+  'armoryAssault01', 'armoryAssault02', 'armoryAssault03',
+  'armoryBullpup', 'armoryAkm', 'armoryShotgunSawed',
+  'armoryShotgunShort', 'armoryShotgun01', 'armoryShotgun02',
+  'armoryMossberg', 'armorySniper01', 'armorySniper02',
 ];
 
 const LEFT_WALL = [
   'armoryPistol01', 'armoryPistol02', 'armoryPistol03', 'armoryPistol04',
-  'armoryRevolver01', 'armoryRevolver02', 'armoryRevolver03',
+  'armoryGlock', 'armoryRevolver01', 'armoryRevolver02', 'armoryRevolver03',
+  'armoryBayonet', 'armoryCombatKnife',
 ];
 
 const RIGHT_WALL = [
   'armorySniper03', 'armorySniper04',
   'armorySmg01', 'armorySmg02',
-  'armoryBayonet', 'armoryBipod', 'armoryScope', 'armoryTripod',
+  'armoryBipod', 'armoryScope', 'armoryTripod',
 ];
 
 export const ARMORY_WEAPON_KEYS = [...BACK_WALL, ...LEFT_WALL, ...RIGHT_WALL];
@@ -98,22 +103,24 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
 
   const displayWeapons = [];
   for (let i = 0; i < BACK_WALL.length; i++) {
-    const column = i % 2;
-    const row = Math.floor(i / 2);
+    const column = i % 3;
+    const row = Math.floor(i / 3);
     const key = BACK_WALL[i];
     const longGun = !/Sawed/.test(key);
     const root = mountModel({ assets, scene, place }, key,
-      [-1.12 + column * 2.24, .55 + row * .47, 1.75],
-      [0, 0, 0], longGun ? .175 : .19);
+      [-1.44 + column * 1.44, .58 + row * .55, 1.75],
+      [0, 0, 0], longGun ? .165 : .185);
     if (root) displayWeapons.push(root);
   }
 
   for (let i = 0; i < LEFT_WALL.length; i++) {
     const column = i % 2;
     const row = Math.floor(i / 2);
-    const root = mountModel({ assets, scene, place }, LEFT_WALL[i],
-      [-2.01, .65 + row * .69, -.84 + column * 1.68],
-      [0, -Math.PI / 2, 0], .18);
+    const key = LEFT_WALL[i];
+    const blade = /Bayonet|CombatKnife/.test(key);
+    const root = mountModel({ assets, scene, place }, key,
+      [-2.01, .55 + row * .55, -.84 + column * 1.68],
+      [0, -Math.PI / 2, 0], blade ? .25 : .18);
     if (root) displayWeapons.push(root);
   }
 
@@ -121,7 +128,7 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     const column = i % 2;
     const row = Math.floor(i / 2);
     const key = RIGHT_WALL[i];
-    const compact = /Bayonet|Bipod|Scope|Tripod/.test(key);
+    const compact = /Bipod|Scope|Tripod/.test(key);
     const root = mountModel({ assets, scene, place }, key,
       [2.01, .65 + row * .69, .84 - column * 1.68],
       [0, Math.PI / 2, 0], compact ? .25 : .17);

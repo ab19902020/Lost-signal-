@@ -38,8 +38,8 @@ check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes')
 
 check(physics.armory?.present, 'the walk-in armoury did not load');
 if (physics.armory?.present) {
-  check(physics.armory.weapons === 25,
-    `the armoury displays ${physics.armory.weapons} of the 25 supplied models`);
+  check(physics.armory.weapons === 29,
+    `the armoury displays ${physics.armory.weapons} of the 29 racked models`);
   check(physics.armory.shutDoorZ < 0.25,
     `the shut armoury door let the player reach z=${physics.armory.shutDoorZ}`);
   check(physics.armory.doorOffset < -1.65,
@@ -128,6 +128,7 @@ if (physics.silo.present) {
     `rifle is still sideways (${physics.silo.aim.rifleYaw} rad yaw)`);
   check(/^Equipped_armory/.test(physics.silo.aim.rifleName || ''),
     `the held model is ${physics.silo.aim.rifleName}, not a weapon off the armoury wall`);
+  check(physics.silo.aim.armsPresent, 'the first-person weapon is held by no arms');
   check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
   check(physics.silo.tunnelEntry.doorMesh, 'the animated arched bulkhead asset did not load');
   check(physics.silo.tunnelEntry.radius > 24.0,
@@ -171,6 +172,29 @@ check(combat.residentCollision?.distance >= combat.residentCollision?.minimum - 
 check(combat.residentsOffGallery === 0,
   `${combat.residentsOffGallery} residents walked through a gallery wall or balustrade`);
 
+// The top of the silo is a secure unit with people posted on it: a sentry on
+// the door, a dog on a beat, and the infirmary the shelter's CONDITION readout
+// has always implied existed.
+if (combat.garrison) {
+  check(combat.garrison.sentry, 'no sentry is posted on the secure gallery');
+  check(combat.garrison.sentryY > 27, `the sentry stands at y=${combat.garrison.sentryY}, not the top level`);
+  check(combat.garrison.dog, 'the patrol dog is missing');
+  check(combat.garrison.dogWalked > 1,
+    `the patrol dog moved ${combat.garrison.dogWalked} m in five seconds`);
+  check(combat.garrison.dogRadius > 13.5 && combat.garrison.dogRadius < 19.5,
+    `the patrol dog walked off the gallery to radius ${combat.garrison.dogRadius}`);
+  check(combat.garrison.kit >= 10,
+    `the infirmary is stocked with only ${combat.garrison.kit} items`);
+  const treatment = combat.garrison.treatment || {};
+  check(treatment.offered, 'the infirmary offers no way to treat an injury');
+  check(treatment.after > treatment.hurt,
+    `treatment left condition at ${treatment.after}% after a wound took it to ${treatment.hurt}%`);
+  check(treatment.dosesLeft === 2,
+    `the infirmary has ${treatment.dosesLeft} courses left after one treatment, expected 2`);
+} else {
+  console.error('note: the silo garrison did not build, skipping its checks');
+}
+
 // The armoury shipped for three releases with twenty-five weapons on the walls
 // and one of them working. Every usable weapon has to come off its rack, hang
 // in the player's hands as its own model, put a round downrange, mark what it
@@ -183,6 +207,8 @@ check(!weapons.issuedThroughShutDoor, 'a weapon was issued through the shut armo
 check(weapons.racked.length === 0, `rack handover failed: ${weapons.racked.join('; ')}`);
 check(weapons.sameModel.length === 0,
   `the viewmodel did not swap: ${weapons.sameModel.join('; ')}`);
+check(weapons.noArms.length === 0,
+  `these weapons are held by nobody: ${weapons.noArms.join(', ')}`);
 check(weapons.fired.length === 0, `a weapon fired blanks: ${weapons.fired.join('; ')}`);
 check(weapons.noDecal.length === 0,
   `these weapons left no mark on the wall they hit: ${weapons.noDecal.join(', ')}`);

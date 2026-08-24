@@ -108,6 +108,35 @@ const results = await page.evaluate(async () => {
     };
   }
   out.ammoAfter = ls.state().ammo;
+
+  // The secure gallery at the top of the silo: a sentry on the door, a working
+  // dog walking the ring, and an infirmary that actually treats injuries.
+  const garrison = ls.game.garrison;
+  if (garrison) {
+    const dogStart = garrison.dog ? { x: garrison.dog.position.x, z: garrison.dog.position.z } : null;
+    ls.simulate(300);
+    out.garrison = {
+      sentry: !!garrison.sentry,
+      sentryY: garrison.sentry ? +garrison.sentry.position.y.toFixed(2) : null,
+      dog: !!garrison.dog,
+      dogWalked: dogStart ? +Math.hypot(garrison.dog.position.x - dogStart.x,
+        garrison.dog.position.z - dogStart.z).toFixed(2) : 0,
+      dogRadius: garrison.dog ? +Math.hypot(garrison.dog.position.x, garrison.dog.position.z).toFixed(2) : 0,
+      kit: garrison.kitRoots.length,
+      doses: garrison.dosesRemaining(),
+    };
+
+    // Take a hit, then use the bay.
+    const before = ls.state().health;
+    ls.hurt(40);
+    ls.simulate(2);
+    const hurt = ls.state().health;
+    const bay = ls.game.interactions.find((o) => o.userData.interaction?.name?.startsWith('INFIRMARY'));
+    bay?.userData.interaction.onUse();
+    ls.simulate(2);
+    out.garrison.treatment = { before, hurt, after: ls.state().health,
+      dosesLeft: garrison.dosesRemaining(), offered: !!bay };
+  }
   return out;
 });
 

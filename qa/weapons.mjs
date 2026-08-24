@@ -39,7 +39,7 @@ await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, nu
 
 const results = await page.evaluate(async ({ keys, catalogue }) => {
   const ls = globalThis.__ls;
-  const out = { racked: [], fired: [], sameModel: [], noDecal: [], badReload: [], names: [] };
+  const out = { racked: [], fired: [], sameModel: [], noArms: [], noDecal: [], badReload: [], names: [] };
 
   // --- the racks: every usable model has to be a real interaction ----------
   const armory = ls.game.armory;
@@ -70,6 +70,7 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
     if (!state.model || !state.model.includes(key)) {
       out.sameModel.push(`${key}: viewmodel is ${state.model}`);
     }
+    if (!state.arms) out.noArms.push(key);
 
     // Point at the shelter's back wall and pull the trigger.
     ls.moveTo(0, 0);

@@ -123,9 +123,11 @@ const BLADE_VOICE = () => voice({
 });
 
 // `view` is how the model hangs off the camera: scale, then a small local
-// offset. Every supplied model points down local +X, so the shared +Y rotation
-// that turns that into camera -Z lives in the scene code rather than here.
-const view = (scale, x = 0, y = 0, z = 0) => ({ scale, offset: [x, y, z] });
+// offset. The scene code measures which way each model lies and turns its long
+// axis onto the firing line; `flip` is for the handful that then point the
+// wrong way down it.
+const view = (scale, x = 0, y = 0, z = 0, flip = false) =>
+  ({ scale, offset: [x, y, z], flip });
 
 /**
  * The catalogue. `key` matches the asset key in assets.js and the rack slot in
@@ -163,6 +165,14 @@ export const WEAPONS = {
     audio: { fire: RIFLE_VOICE(1.07, 0.48), reload: magazineReload(1.22, 1.85) },
   },
 
+  armoryAkm: {
+    name: 'AKM', family: 'rifle', kind: 'firearm', automatic: true,
+    magazine: 30, reserve: 120, damage: 38, headshot: 2.5, rpm: 600,
+    reloadTime: 2.3, spread: 0.016, adsSpread: 0.0055, range: 85, recoil: 0.24,
+    view: view(0.155, -0.03, -0.08, 0),
+    audio: { fire: RIFLE_VOICE(0.90, 0.56), reload: magazineReload(0.94, 2.3) },
+  },
+
   // --- Shotguns ------------------------------------------------------------
   armoryShotgun01: {
     name: 'COMBAT SHOTGUN', family: 'shotgun', kind: 'firearm', automatic: false,
@@ -191,6 +201,14 @@ export const WEAPONS = {
     reloadTime: 2.2, spread: 0.098, adsSpread: 0.080, range: 18, recoil: 0.55,
     view: view(0.20, 0.02, -0.07, 0),
     audio: { fire: SHOTGUN_VOICE(1.22, 0.68), reload: pumpReload(1.3, 2, 2.2) },
+  },
+
+  armoryMossberg: {
+    name: 'MOSSBERG 590A1', family: 'shotgun', kind: 'firearm', automatic: false,
+    magazine: 9, reserve: 36, damage: 17, headshot: 1.5, rpm: 88, pellets: 8,
+    reloadTime: 3.2, spread: 0.058, adsSpread: 0.040, range: 32, recoil: 0.44,
+    view: view(0.15, -0.03, -0.08, 0),
+    audio: { fire: SHOTGUN_VOICE(0.86, 0.70), reload: pumpReload(0.82, 5, 3.2) },
   },
 
   // --- Precision rifles ----------------------------------------------------
@@ -279,6 +297,14 @@ export const WEAPONS = {
     audio: { fire: PISTOL_VOICE(0.74, 0.56), reload: magazineReload(1.1, 1.8) },
   },
 
+  armoryGlock: {
+    name: 'GLOCK 19', family: 'pistol', kind: 'firearm', automatic: false,
+    magazine: 15, reserve: 75, damage: 25, headshot: 2.4, rpm: 440,
+    reloadTime: 1.4, spread: 0.017, adsSpread: 0.0058, range: 42, recoil: 0.12,
+    view: view(0.205, 0.02, -0.05, 0),
+    audio: { fire: PISTOL_VOICE(1.08, 0.42), reload: magazineReload(1.46, 1.4) },
+  },
+
   // --- Revolvers -----------------------------------------------------------
   armoryRevolver01: {
     name: '.357 REVOLVER', family: 'revolver', kind: 'firearm', automatic: false,
@@ -309,6 +335,22 @@ export const WEAPONS = {
     rpm: 140, reloadTime: 0.45, reach: 2.05, recoil: 0.12,
     view: view(0.30, 0.06, -0.10, 0.06),
     audio: { fire: BLADE_VOICE(), reload: sheathReload() },
+  },
+
+  armoryCombatKnife: {
+    name: 'COMBAT KNIFE', family: 'blade', kind: 'melee',
+    automatic: false, magazine: 0, reserve: 0, damage: 74, headshot: 1.9,
+    rpm: 165, reloadTime: 0.4, reach: 2.2, recoil: 0.14,
+    view: view(0.30, 0.05, -0.09, 0.05),
+    audio: {
+      fire: voice({
+        level: 0.32,
+        bodyHz: 460, bodyEndHz: 150, bodyDecay: 0.055,
+        crackHz: 3700, crackQ: 2.2, crackDecay: 0.10,
+        tailHz: 2300, tailDecay: 0.19, tailLevel: 0.16,
+      }),
+      reload: [step(0.00, 2900, 0.28, 0.15, 1.2), step(0.26, 2100, 0.24, 0.11, 1.4)],
+    },
   },
 
   // --- Bench attachments ---------------------------------------------------

@@ -367,8 +367,8 @@ assert.ok(mainSource.includes('jump: wantsJump'), 'jump input is not reaching th
 // The supplied pack is intentionally complete: dropping near-duplicate weapon
 // files makes the new room look dressed in a screenshot while silently failing
 // the user's request to see the whole collection on its walls.
-assert.equal(ARMORY_WEAPON_KEYS.length, 25, 'the armoury does not enumerate all 25 supplied models');
-assert.equal(new Set(ARMORY_WEAPON_KEYS).size, 25, 'an armoury wall slot repeats a weapon model');
+assert.equal(ARMORY_WEAPON_KEYS.length, 29, 'the armoury does not enumerate every racked model');
+assert.equal(new Set(ARMORY_WEAPON_KEYS).size, 29, 'an armoury wall slot repeats a weapon model');
 const assetsSource = await readFile(new URL('../src/assets.js', import.meta.url), 'utf8');
 for (const key of ARMORY_WEAPON_KEYS) {
   assert.ok(assetsSource.includes(`${key}:`), `the asset loader does not publish ${key}`);
@@ -386,8 +386,8 @@ for (const key of ARMORY_WEAPON_KEYS) {
 for (const key of Object.keys(WEAPONS)) {
   assert.ok(ARMORY_WEAPON_KEYS.includes(key), `${key} is in the catalogue but on no rack`);
 }
-assert.equal(USABLE_WEAPON_KEYS.length, 22,
-  'the armoury does not offer all twenty-two usable weapons');
+assert.equal(USABLE_WEAPON_KEYS.length, 26,
+  'the armoury does not offer every usable weapon');
 assert.ok(USABLE_WEAPON_KEYS.includes(DEFAULT_WEAPON), 'the default weapon is not usable');
 assert.ok(USABLE_WEAPON_KEYS.some((key) => WEAPONS[key].kind === 'melee'),
   'there is no blade in the collection');

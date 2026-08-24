@@ -484,8 +484,24 @@ def build_camera():
 
 def build_exterior_ground():
     clear_scene()
-    cube('ExteriorSoil',(0,-.32,0),(28,.30,32),mat('Soil',(.075,.085,.065),0,.98),edge=.10)
-    cube('Apron',(0,.01,-3),(10,.06,17),mat('Asphalt',(.08,.085,.08),0,.95),edge=.05)
+    # The compound used to sit on a near-black plane: at .075 albedo under a
+    # moon there is nothing for the light to come back off, so the surface read
+    # as a hole with props floating on it. Dry ground at night is dark, not
+    # absent, and the apron is worn asphalt rather than tar.
+    soil = mat('Soil', (.185, .175, .142), 0, .97)
+    dust = mat('Dust', (.245, .232, .196), 0, .99)
+    gravel = mat('Gravel', (.155, .152, .142), 0, .95)
+    cube('ExteriorSoil', (0, -.32, 0), (28, .30, 32), soil, edge=.10)
+    # A wider skirt behind the fence, so the ground runs out past the wire
+    # instead of ending on a black horizon two metres beyond it.
+    cube('ExteriorSkirt', (0, -.40, 0), (72, .30, 78), soil, edge=.20)
+    cube('Apron', (0, .01, -3), (10, .06, 17), mat('Asphalt', (.155, .158, .152), 0, .94), edge=.05)
+    # Wind-drifted dust and gravel, so the ground is not one flat tone.
+    drifts = [(-14.5, -19, 7.5, 5.0), (16.5, -12.5, 6.0, 7.5), (-17.5, 6, 5.5, 9.0),
+              (13.5, 13.5, 8.0, 5.5), (-4.5, -24.5, 9.0, 4.0), (7.5, 22.5, 7.0, 4.5)]
+    for index, (x, z, sx, sz) in enumerate(drifts):
+        cube(f'ExteriorDrift_{index}', (x, -.015, z), (sx, .022, sz),
+             dust if index % 2 == 0 else gravel, rotation=(0, index * .21, 0), edge=.30)
     # cracked concrete slabs
     for i in range(-4,5):
         for j in range(-5,6):

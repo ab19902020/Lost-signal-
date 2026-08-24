@@ -4,6 +4,7 @@ import { ColliderSet } from './physics.js';
 import { createCreatureSystem, populateSilo } from './creatures.js';
 import { buildSilo } from './silo.js';
 import { buildArmory } from './armory.js';
+import { buildGarrison } from './garrison.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -171,6 +172,16 @@ export function createGameWorld(assets) {
     count: 20,
   }) : null;
 
+  // Who is posted on the secure gallery, and the infirmary they keep there.
+  const garrison = siloWorld ? buildGarrison({
+    scene: silo,
+    colliders: colliders.silo,
+    assets,
+    place,
+    addInteraction,
+    silo: siloWorld,
+  }) : null;
+
   if (siloWorld) {
     const hatch = place(assets.accessHatch, bunker, [-1.75,0,3.35], [0,0,0], 1, { climbable: true });
     const hatchWheel = findNamed(hatch,'Hatch_Wheel') || hatch;
@@ -232,8 +243,11 @@ export function createGameWorld(assets) {
   place(assets.exteriorGround, outside, [0,0,0], [0,0,0], 1, { collide: false });
   place(assets.exteriorEntrance, outside, [0,0,-17], [0,0,0], 1, { shrink: 0.12 });
 
-  outside.add(new THREE.HemisphereLight(0x405155,0x050706,.52));
-  const moon = new THREE.DirectionalLight(0xa6bdc9,2.65);
+  // The compound reads as night, not as a void. The old sky term was almost
+  // black against an almost-black ground, so the surface had no shape at all
+  // until you walked into a floodlight.
+  outside.add(new THREE.HemisphereLight(0x4b6068,0x14120e,.86));
+  const moon = new THREE.DirectionalLight(0xa6bdc9,3.1);
   moon.position.set(-25,28,12);
   moon.castShadow = true;
   moon.shadow.mapSize.set(1024,1024);
@@ -265,10 +279,104 @@ export function createGameWorld(assets) {
     outside.add(l,l.target);
   });
 
-  // Exterior Blender dressing
-  [[-16,0,-6,0],[16,0,1,1.1],[-12,0,13,-.5],[11,0,-22,.7]].forEach(([x,y,z,r])=>place(assets.deadTree,outside,[x,y,z],[0,r,0],.9));
+  // --- Surface dressing ----------------------------------------------------
+  // What used to stand inside the wire was four copies of one bare Blender
+  // trunk, scattered across the yard. From eye level they read as loose planks
+  // lying about rather than as anything that had ever grown, so the trees are
+  // now a real treeline of five dead forms standing OUTSIDE the fence, where a
+  // treeline belongs, and the yard is dressed with what a shelter compound
+  // would actually have in it.
+  const deadTrees = [assets.deadTree01, assets.deadTree02, assets.deadTree03,
+    assets.deadTree04, assets.deadTree05].filter(Boolean);
+  if (deadTrees.length) {
+    const treeLine = [
+      [-30, -34, .4, .95], [-14, -35, 2.1, .8], [4, -37, 1.2, 1.05], [22, -34, 3.4, .85],
+      [-34, -18, .9, .9], [-36, 2, 2.6, 1.0], [-33, 20, 1.7, .8], [-28, 32, 4.2, .95],
+      [30, -20, 5.1, .85], [34, -2, .3, 1.0], [32, 17, 2.9, .9], [26, 30, 1.4, .8],
+      [-10, 33, 3.7, .95], [10, 35, .6, .9],
+    ];
+    treeLine.forEach(([x, z, r, scale], i) =>
+      place(deadTrees[i % deadTrees.length], outside, [x, 0, z], [0, r, 0], scale,
+        { collide: false }));
+  } else {
+    [[-16,0,-6,0],[16,0,1,1.1],[-12,0,13,-.5],[11,0,-22,.7]].forEach(([x,y,z,r])=>place(assets.deadTree,outside,[x,y,z],[0,r,0],.9));
+  }
   [[-8,0,-9,0],[8,0,-8,.2],[-7,0,8,-.1],[7,0,7,.1]].forEach(([x,y,z,r])=>place(assets.barrier,outside,[x,y,z],[0,r,0],.9));
-  [[-11,0,-14,0],[11,0,-14,.7],[-15,0,5,.2],[13,0,12,-.5],[4,0,2,.4]].forEach(([x,y,z,r])=>place(assets.rubble,outside,[x,y,z],[0,r,0],1,{ climbable: true }));
+  [[-11,0,-14,0],[11,0,-14,.7],[-15,0,5,.2],[13,0,12,-.5]].forEach(([x,y,z,r])=>place(assets.rubble,outside,[x,y,z],[0,r,0],1,{ climbable: true }));
+
+  // The compound runs on its own power. A field of eight arrays fills the east
+  // side of the yard, angled off the fence line, which is what the shelter's
+  // POWER reading has been quietly claiming all along.
+  const solarArrays = [];
+  if (assets.solarArray) {
+    // The array ships with a pale cast plinth, which at night was the brightest
+    // thing in the compound. Weather it down once and share the result.
+    const weathered = new Map();
+    const weather = (material) => {
+      if (!material) return material;
+      if (weathered.has(material)) return weathered.get(material);
+      const copy = material.clone();
+      // Leave the cells alone: dark glass is what a panel is supposed to be.
+      if (copy.color && copy.color.getHex() > 0x333333) copy.color.multiplyScalar(0.42);
+      copy.roughness = Math.max(copy.roughness ?? .7, .82);
+      weathered.set(material, copy);
+      return copy;
+    };
+    for (let row = 0; row < 3; row++) {
+      for (let column = 0; column < 2; column++) {
+        const array = place(assets.solarArray, outside,
+          [11.4 + column * 5.7, 0, -17.4 + row * 6.6], [0, -0.18 + row * 0.05, 0], 1,
+          { shrink: 0.1 });
+        array.traverse((part) => {
+          if (!part.isMesh) return;
+          part.material = Array.isArray(part.material)
+            ? part.material.map(weather) : weather(part.material);
+        });
+        solarArrays.push(array);
+      }
+    }
+    // One low spill under the field so it reads at night without adding a
+    // second floodlight rig.
+    const glow = new THREE.PointLight(0x8fb3c4, 4.5, 24, 2.0);
+    glow.position.set(14.2, 3.6, -8.4);
+    outside.add(glow);
+  }
+
+  // Yard clutter. Everything here is collided, so the compound is somewhere you
+  // pick your way through rather than an empty slab with scenery painted on it.
+  const dress = (asset, entries, options = {}) => {
+    if (!asset) return;
+    for (const [x, z, r, scale = 1] of entries) {
+      place(asset, outside, [x, 0, z], [0, r, 0], scale, options);
+    }
+  };
+  dress(assets.propContainer, [[-15.4, -17.2, .12], [-15.8, 8.4, -.06]]);
+  dress(assets.propContainerRed, [[-15.2, -4.6, .04]]);
+  dress(assets.propTruck, [[7.4, 12.6, 2.62], [-9.2, -21.4, .38]]);
+  dress(assets.propWaterTower, [[-17.6, -25.4, .5]], { shrink: 0.35 });
+  dress(assets.propBarrel, [
+    [-6.2, -16.4, .3], [-5.4, -17.1, 1.2], [-6.9, -17.6, 2.4],
+    [9.6, -3.2, .8], [10.3, -3.9, 2.1], [-12.4, 14.6, .4], [12.8, 6.4, 1.7],
+  ]);
+  dress(assets.propPallet, [[-4.4, 9.2, .2], [-3.6, 9.9, 1.1], [8.2, -10.4, 2.7]]);
+  dress(assets.propPalletBroken, [[-4.9, 10.8, 2.2], [13.4, 15.2, .6]]);
+  dress(assets.propPipes, [[-13.2, -10.6, 1.55], [-12.4, -9.4, 1.62]]);
+  dress(assets.propCinderBlock, [
+    [3.4, -13.6, .4], [3.9, -13.2, 1.9], [3.6, -13.9, 2.8], [-9.8, 4.2, .7],
+  ], { collide: false });
+  dress(assets.propWheels, [[6.2, 15.4, .3], [-11.6, -6.2, 1.4]]);
+  dress(assets.propTrashBags, [[-2.6, 13.8, .9], [2.2, 14.4, 2.6], [-14.6, 17.2, .2]],
+    { collide: false });
+  dress(assets.propBarrier, [
+    [-2.4, -8.6, 0], [-1.2, -8.6, 0], [1.2, -8.6, 0], [2.4, -8.6, 0],
+    [-2.4, 16.2, 0], [2.4, 16.2, 0],
+  ]);
+  dress(assets.propCone, [
+    [-3.6, -7.4, 0], [3.6, -7.4, 0], [0, 16.9, 0], [-6.2, 4.8, 0], [6.4, 1.2, 0],
+  ], { collide: false });
+  dress(assets.propStreetLight, [[-9.4, 16.8, 1.6], [9.4, -16.8, -1.5]], { shrink: 0.2 });
+  dress(assets.propTownSign, [[0, 21.6, 0]], { shrink: 0.2 });
+  dress(assets.propChest, [[4.6, -4.2, .6], [-7.8, 11.4, 2.3]]);
 
   // The people who did not get inside. Nothing graphic: shapes under weighted
   // tarpaulins, and one who sat down against the compound wall in a hooded
@@ -333,6 +441,105 @@ export function createGameWorld(assets) {
   let heldModel = null;
   let heldKey = null;
 
+  // A pair of hands behind the weapon. The supplied FPS rigs ship one arm mesh
+  // posed twice — once around a rifle, once around a handgun — with idle, shoot
+  // and reload takes on a real skeleton, so the player's hands move with the
+  // action rather than a floating gun drifting in front of the camera.
+  const ARM_RIGS = {
+    rifle: 'fpsArmsRifle', smg: 'fpsArmsRifle', shotgun: 'fpsArmsRifle',
+    sniper: 'fpsArmsRifle', pistol: 'fpsArmsPistol', revolver: 'fpsArmsPistol',
+    blade: 'fpsArmsPistol',
+  };
+  // The rigs are authored at their own scale and are not centred on anything.
+  // A bounding box is no help either — these are skinned meshes whose bind pose
+  // is nothing like the pose they are drawn in — so each rig is scaled
+  // explicitly and then slid until a named bone lands on the weapon's grip.
+  const ARM_VIEW = {
+    fpsArmsRifle: { scale: 0.030, grip: 'HandL', at: [0.02, -0.01, 0.04], rotation: [0, 0, 0] },
+    fpsArmsPistol: { scale: 0.028, grip: 'HandL', at: [0.02, 0.00, 0.02], rotation: [0, 0, 0] },
+  };
+  const _gripWorld = new THREE.Vector3();
+  const _gripLocal = new THREE.Vector3();
+  const _weaponBox = new THREE.Box3();
+  const _weaponSize = new THREE.Vector3();
+  const armRigs = new Map();
+  let arms = null;
+  let armMixer = null;
+  let armClips = null;
+  let armIdle = null;
+
+  function armRigFor(assetKey) {
+    if (armRigs.has(assetKey)) return armRigs.get(assetKey);
+    const gltf = assets[assetKey];
+    if (!gltf) {
+      armRigs.set(assetKey, null);
+      return null;
+    }
+    const view = ARM_VIEW[assetKey];
+    const root = cloneGLTF(gltf);
+    root.name = `Fps_${assetKey}`;
+    root.rotation.set(...view.rotation);
+    root.scale.setScalar(view.scale);
+    root.visible = false;
+    // Skinned arms move a long way from their bind pose, so nothing about them
+    // can be culled against it.
+    root.traverse((part) => { if (part.isMesh) part.frustumCulled = false; });
+    weaponAction.add(root);
+    weaponAction.updateWorldMatrix(true, true);
+    const grip = findNamed(root, view.grip);
+    if (grip) {
+      grip.getWorldPosition(_gripWorld);
+      weaponAction.worldToLocal(_gripLocal.copy(_gripWorld));
+      root.position.set(view.at[0] - _gripLocal.x, view.at[1] - _gripLocal.y,
+        view.at[2] - _gripLocal.z);
+    }
+    const mixer = new THREE.AnimationMixer(root);
+    const clips = {};
+    for (const clip of gltf.animations || []) {
+      const action = mixer.clipAction(clip);
+      clips[clip.name.toLowerCase()] = action;
+    }
+    const rig = { root, mixer, clips };
+    mixer.addEventListener('finished', (event) => {
+      if (rig !== arms || !armIdle || event.action === armIdle) return;
+      event.action.fadeOut(.14);
+      armIdle.reset().fadeIn(.14).play();
+    });
+    armRigs.set(assetKey, rig);
+    return rig;
+  }
+
+  function setArms(family) {
+    const rig = armRigFor(ARM_RIGS[family] || 'fpsArmsRifle');
+    if (arms === rig) return;
+    if (arms) {
+      arms.root.visible = false;
+      arms.mixer.stopAllAction();
+    }
+    arms = rig;
+    armMixer = rig?.mixer || null;
+    armClips = rig?.clips || null;
+    armIdle = armClips?.idle || null;
+    if (!rig) return;
+    rig.root.visible = true;
+    armIdle?.reset().play();
+  }
+
+  /** Play one of the rig's takes once, then settle back to idle. */
+  function playArms(name, seconds) {
+    const action = armClips?.[name];
+    if (!action) return;
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    // Stretch or squeeze the take to the length the game gives the action, so a
+    // three-second pump reload is not a half-second mime repeated six times.
+    const clipLength = action.getClip().duration || 1;
+    action.timeScale = seconds > 0 ? clipLength / seconds : 1;
+    armIdle?.fadeOut(.12);
+    action.fadeIn(.10).play();
+  }
+
   function setWeapon(key) {
     if (heldKey === key && heldModel) return heldModel;
     if (heldModel) {
@@ -343,17 +550,25 @@ export function createGameWorld(assets) {
     if (!source) { heldKey = null; return null; }
     heldKey = key && assets[key] ? key : null;
     const model = cloneGLTF(source);
-    // Every supplied model and the fallback hunting rifle point down local +X.
-    // Rotate that axis into camera -Z so the muzzle points where the crosshair
-    // points instead of lying sideways across the lower third of the screen.
-    model.rotation.set(0,Math.PI / 2,0);
     const view = WEAPONS[heldKey]?.view
       || { scale: armory?.weaponAsset ? .16 : .78, offset: [armory?.weaponAsset ? -.04 : 0, armory?.weaponAsset ? -.08 : -.02, 0] };
+    // Point the barrel where the crosshair points. Most of the packs lay a
+    // weapon along +X, but not all of them, and a converted model can carry a
+    // residual node rotation of its own — so measure the model's longest
+    // horizontal axis in its own root space rather than assuming one. `flip`
+    // is the one thing measurement cannot settle: which end is the muzzle.
+    model.rotation.set(0, 0, 0);
+    model.updateWorldMatrix(true, true);
+    _weaponBox.setFromObject(model).getSize(_weaponSize);
+    const alongX = _weaponSize.x >= _weaponSize.z;
+    const yaw = (alongX ? Math.PI / 2 : Math.PI) + (view.flip ? Math.PI : 0);
+    model.rotation.set(0, yaw, 0);
     model.scale.setScalar(view.scale);
     model.position.set(...view.offset);
     model.name = `Equipped_${heldKey || 'Rifle'}`;
     weaponAction.add(model);
     heldModel = model;
+    setArms(WEAPONS[heldKey]?.family);
     return model;
   }
   setWeapon(DEFAULT_WEAPON);
@@ -439,6 +654,7 @@ export function createGameWorld(assets) {
     const key = value === true ? DEFAULT_WEAPON : (value || null);
     weaponView.visible = !!key;
     if (key) setWeapon(key);
+    if (arms) arms.root.visible = !!key;
     armory?.setEquipped(key);
     return key;
   }
@@ -456,6 +672,10 @@ export function createGameWorld(assets) {
   };
 
   function playGun(kind, seconds = 0) {
+    if (kind === 'shoot') {
+      playArms('shoot', 0.16);
+      return;
+    }
     if (kind !== 'reload') return;
     const weapon = WEAPONS[heldKey];
     actionStyle = weapon?.family === 'sniper' && /bolt|materiel/i.test(weapon.name)
@@ -463,9 +683,11 @@ export function createGameWorld(assets) {
       : (ACTION_STYLE[weapon?.family] || 'magazine');
     actionLength = Math.max(.25, seconds || weapon?.reloadTime || 1.2);
     actionTimer = actionLength;
+    playArms('reload', actionLength);
   }
 
   function updateAction(dt) {
+    armMixer?.update(dt);
     let x = 0, y = 0, z = 0, pitch = 0, roll = 0;
     if (actionTimer > 0) {
       actionTimer = Math.max(0, actionTimer - dt);
@@ -514,7 +736,10 @@ export function createGameWorld(assets) {
     // Cull the silo's lights around the camera rather than the body. In play
     // they are the same place; with the debug free camera they are not, and a
     // room the camera is standing in went dark because the body was elsewhere.
-    if (world === 'silo') siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
+    if (world === 'silo') {
+      siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
+      garrison?.update(dt);
+    }
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     armory?.update(dt);
@@ -542,11 +767,12 @@ export function createGameWorld(assets) {
   }
 
   return {
+    assets,
     bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
     weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
-    bunkerLights,emergency,siloWorld,armory,
+    bunkerLights,emergency,siloWorld,armory,garrison,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
   };

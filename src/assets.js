@@ -65,6 +65,64 @@ const suppliedUrls = {
   armoryTripod: `${BASE}assets/supplied/tripod.glb`,
 };
 
+// The supplied model packs, converted from their FBX/OBJ sources by
+// tools/convert-supplied-packs.sh. Loaded best-effort like the silo: a
+// checkout without them still boots, it just runs a barer compound.
+const packUrls = {
+  // Weapons the FPS pack adds to the armoury wall.
+  armoryAkm: `${BASE}assets/supplied/akm.glb`,
+  armoryMossberg: `${BASE}assets/supplied/mossberg_590a1.glb`,
+  armoryGlock: `${BASE}assets/supplied/glock_19.glb`,
+  armoryCombatKnife: `${BASE}assets/supplied/combat_knife.glb`,
+  // Rigged first-person arms with idle/shoot/reload takes, posed once around a
+  // rifle and once around a handgun.
+  fpsArmsRifle: `${BASE}assets/supplied/fps_arms_rifle.glb`,
+  fpsArmsPistol: `${BASE}assets/supplied/fps_arms_pistol.glb`,
+  // The surface.
+  solarArray: `${BASE}assets/supplied/solar_array.glb`,
+  deadTree01: `${BASE}assets/supplied/dead_tree_01.glb`,
+  deadTree02: `${BASE}assets/supplied/dead_tree_02.glb`,
+  deadTree03: `${BASE}assets/supplied/dead_tree_03.glb`,
+  deadTree04: `${BASE}assets/supplied/dead_tree_04.glb`,
+  deadTree05: `${BASE}assets/supplied/dead_tree_05.glb`,
+  propBarrel: `${BASE}assets/supplied/prop_barrel.glb`,
+  propContainer: `${BASE}assets/supplied/prop_container.glb`,
+  propContainerRed: `${BASE}assets/supplied/prop_container_red.glb`,
+  propPallet: `${BASE}assets/supplied/prop_pallet.glb`,
+  propPalletBroken: `${BASE}assets/supplied/prop_pallet_broken.glb`,
+  propCinderBlock: `${BASE}assets/supplied/prop_cinder_block.glb`,
+  propPipes: `${BASE}assets/supplied/prop_pipes.glb`,
+  propBarrier: `${BASE}assets/supplied/prop_barrier.glb`,
+  propCone: `${BASE}assets/supplied/prop_cone.glb`,
+  propStreetLight: `${BASE}assets/supplied/prop_street_light.glb`,
+  propTownSign: `${BASE}assets/supplied/prop_town_sign.glb`,
+  propWaterTower: `${BASE}assets/supplied/prop_water_tower.glb`,
+  propWheels: `${BASE}assets/supplied/prop_wheels.glb`,
+  propTrashBags: `${BASE}assets/supplied/prop_trash_bags.glb`,
+  propChest: `${BASE}assets/supplied/prop_chest.glb`,
+  propTruck: `${BASE}assets/supplied/prop_truck.glb`,
+  // The two people left on the surface roster.
+  soldier: `${BASE}assets/supplied/soldier.glb`,
+  germanShepherd: `${BASE}assets/supplied/german_shepherd.glb`,
+  // The medical bay and its stores.
+  survivalFirstAid: `${BASE}assets/supplied/survival_first_aid_kit.glb`,
+  survivalWaterBottle: `${BASE}assets/supplied/survival_water_bottle.glb`,
+  survivalGasCan: `${BASE}assets/supplied/survival_gas_can.glb`,
+  survivalBattery: `${BASE}assets/supplied/survival_battery.glb`,
+  survivalCan: `${BASE}assets/supplied/survival_can.glb`,
+  survivalPot: `${BASE}assets/supplied/survival_pot.glb`,
+  survivalPan: `${BASE}assets/supplied/survival_pan.glb`,
+  survivalBackpack: `${BASE}assets/supplied/survival_backpack.glb`,
+  survivalTorch: `${BASE}assets/supplied/survival_torch.glb`,
+  survivalMatchbox: `${BASE}assets/supplied/survival_matchbox.glb`,
+  survivalPropaneTank: `${BASE}assets/supplied/survival_propane_tank.glb`,
+  survivalShovel: `${BASE}assets/supplied/survival_shovel.glb`,
+  survivalAxe: `${BASE}assets/supplied/survival_axe.glb`,
+  survivalRadio: `${BASE}assets/supplied/survival_radio.glb`,
+};
+
+export const PACK_ASSET_KEYS = Object.keys(packUrls);
+
 // Creatures are loaded best-effort: the game still boots if the asset workflow
 // has not published them yet, it just runs with an empty surface.
 const creatureUrls = {
@@ -191,7 +249,7 @@ function retileUVs(mesh) {
   uv.needsUpdate = true;
 }
 
-function prepare(root) {
+function prepare(root, options = {}) {
   root.traverse((o) => {
     if (!o.isMesh && !o.isSkinnedMesh) return;
     o.castShadow = true;
@@ -211,7 +269,11 @@ function prepare(root) {
       }
       if ('roughness' in m && m.roughness == null) m.roughness = .65;
     }
-    if (textured) retileUVs(o);
+    // Retiling is for Blender's world-scale box unwraps. A model that shares
+    // one palette atlas across its whole mesh has no repeating surface to
+    // retile: scaling its UVs walks every face onto a neighbouring swatch,
+    // which is how a solar array came out white and a dead tree came out grey.
+    if (textured && options.retile !== false) retileUVs(o);
   });
   return root;
 }
@@ -219,7 +281,7 @@ function prepare(root) {
 async function loadModel(url, options = {}) {
   const gltf = await loader.loadAsync(url);
   gltf.scene = options.legacyOrientation === false ? gltf.scene : orientToYUp(gltf.scene);
-  prepare(gltf.scene);
+  prepare(gltf.scene, options);
   return gltf;
 }
 
@@ -248,16 +310,26 @@ export async function loadGameAssets(onProgress = () => {}) {
   await Promise.all([
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
-    loadSet(suppliedEntries, assets, tick, { legacyOrientation: false }),
+    loadSet(suppliedEntries, assets, tick, { legacyOrientation: false, retile: false }),
   ]);
 
-  await Promise.all(Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {
-    try {
-      assets[key] = await loadModel(url);
-    } catch (error) {
-      console.warn(`Optional asset unavailable (${key}); that part of the world stays sealed until the Blender workflow publishes it.`, error);
-    }
-  }));
+  await Promise.all([
+    ...Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {
+      try {
+        assets[key] = await loadModel(url);
+      } catch (error) {
+        console.warn(`Optional asset unavailable (${key}); that part of the world stays sealed until the Blender workflow publishes it.`, error);
+      }
+    }),
+    // The converted packs are Y-up glTF like the rest of assets/supplied.
+    ...Object.entries(packUrls).map(async ([key, url]) => {
+      try {
+        assets[key] = await loadModel(url, { legacyOrientation: false, retile: false });
+      } catch (error) {
+        console.warn(`Supplied pack asset unavailable (${key}); the compound runs without it.`, error);
+      }
+    }),
+  ]);
 
   onProgress('Complete Blender world ready', total, total);
   return assets;
