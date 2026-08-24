@@ -669,40 +669,187 @@ def build_entrance():
     export('exterior_entrance_v3.glb')
 
 
+def fence_bay(prefix, lean=0.0, torn=False, missing=False):
+    """One 4 m bay of welded security mesh, built the way a real one is.
+
+    Not chain link. This is 358 mesh — the close-mesh welded panel every UK
+    military and utility site is fenced with — because it is what actually
+    reads at every distance: a sharp rectangular grid of real bars in a real
+    frame, rather than a masked texture that thins out to nothing in its lower
+    mips, or a thicket of hairline cylinders that renders as scribble.
+
+    `lean` tilts a bay something has shoved, `torn` cuts the mesh short and
+    curls the cut ends back, `missing` leaves the frame standing empty.
+    """
+    tilt = (lean, 0, 0)
+    drift = lean * .10
+
+    # Concrete footings and a kerb, which is what stops anything being dug under.
+    cube(f'{prefix}Kerb', (0, .09, 0), (2.0, .09, .13), CONCRETE, edge=.02)
+    for x in (-2, 2):
+        cube(f'{prefix}Footing{x}', (x, .13, 0), (.22, .13, .22), CONCRETE, edge=.03)
+        # Square section posts. A round hairline post reads as a stick; 80 mm
+        # RHS with a cap reads as a fence post.
+        cube(f'{prefix}Post{x}', (x, 1.48, drift * .5), (.055, 1.36, .055),
+             STEEL, rotation=tilt, edge=.012)
+        cube(f'{prefix}Cap{x}', (x, 2.86, drift), (.075, .022, .075), BRUSHED,
+             rotation=tilt, edge=.006)
+        # Cleats: the panel bolts to the post through these.
+        for y in (.62, 1.48, 2.34):
+            cube(f'{prefix}Cleat{x}_{y:.2f}', (x - .06 * (1 if x > 0 else -1), y, drift),
+                 (.035, .06, .022), DARK, rotation=tilt, edge=.006)
+
+    if not missing:
+        # The panel: a welded frame with a close rectangular mesh in it.
+        left = -1.86
+        right = .52 if torn else 1.86
+        top = 2.62
+        bottom = .26
+        mid_x = (left + right) / 2
+        half_x = (right - left) / 2
+        mid_y = (top + bottom) / 2
+        half_y = (top - bottom) / 2
+
+        for y in (bottom, top):
+            cube(f'{prefix}Frame_{y:.2f}', (mid_x, y, drift), (half_x, .028, .026),
+                 STEEL, rotation=tilt, edge=.006)
+        for x in (left, right):
+            cube(f'{prefix}Stile_{x:.2f}', (x, mid_y, drift), (.028, half_y, .026),
+                 STEEL, rotation=tilt, edge=.006)
+
+        # Vertical wires at a close pitch — this is what makes it unclimbable
+        # and what makes it read as mesh rather than as bars.
+        count = max(2, int((right - left) / .118))
+        step = (right - left) / count
+        for i in range(1, count):
+            x = left + i * step
+            cube(f'{prefix}Wire_{i}', (x, mid_y, drift), (.0095, half_y, .0095),
+                 BRUSHED, rotation=tilt, edge=.003)
+        # Horizontals, welded behind them.
+        rows = 8
+        for j in range(1, rows):
+            y = bottom + (top - bottom) * j / rows
+            cube(f'{prefix}Rail_{j}', (mid_x, y, drift - .014), (half_x, .0095, .0095),
+                 BRUSHED, rotation=tilt, edge=.003)
+
+        if torn:
+            # Where it has been cut, the mesh is peeled back on itself.
+            for k in range(6):
+                cube(f'{prefix}Peel_{k}', (.62 + k * .05, .62 + k * .18, .16 + k * .05),
+                     (.012, .30, .010), BRUSHED,
+                     rotation=(.5 + k * .06, .3, .22 + k * .05), edge=.003)
+
+    # Barbed outriggers: three strands on a 45-degree arm, leaning outward.
+    for x in (-2, 2):
+        between(f'{prefix}Arm{x}', (x, 2.82, drift), (x, 3.22, drift - .40), .024, STEEL, 8)
+    for k, (y, z) in enumerate(((2.94, -.12), (3.07, -.24), (3.20, -.37))):
+        between(f'{prefix}Barb{k}', (-2, y, z + drift), (2, y, z + drift), .010, BRUSHED, 8)
+        for i in range(9):
+            bx = -1.78 + i * .445
+            cube(f'{prefix}BarbKnot_{k}_{i}', (bx, y, z + drift), (.013, .034, .034),
+                 BRUSHED, rotation=(0, 0, .8), edge=.004)
+
+
 def build_fence():
     clear_scene()
-    # one 4m modular section with frame + diamond wire
-    for x in (-2,2):
-        cyl('FencePost'+str(x),(x,1.35,0),.075,2.70,STEEL,verts=18)
-    between('FenceTop',(-2,2.62,0),(2,2.62,0),.035,STEEL,12)
-    between('FenceBottom',(-2,.18,0),(2,.18,0),.035,STEEL,12)
-    for i in range(-12,13):
-        x=i*.17
-        between('WireA'+str(i),(max(-2,x-1.0),.20,0),(min(2,x+1.0),2.60,0),.007,BRUSHED,6)
-        between('WireB'+str(i),(max(-2,x-1.0),2.60,0),(min(2,x+1.0),.20,0),.007,BRUSHED,6)
-    for x in (-2,2):
-        between('BarbStem'+str(x),(x,2.68,0),(x,3.05,-.12),.025,STEEL,10)
-    for k,z in enumerate((-.18,0,.18)):
-        between('BarbWire'+str(k),(-2,3.02,z),(2,3.02,z),.008,STEEL,8)
+    fence_bay('Fence_')
+    join_all('PerimeterFence')
     export('perimeter_fence_v3.glb')
 
 
-def build_gate():
+def build_fence_signed():
+    """A bay carrying the warning plate. One in five, as a real run does."""
     clear_scene()
-    for side in (-1,1):
-        x=side*2.3
-        cyl('GatePost'+str(side),(x,1.50,0),.12,3.0,DARK,verts=22)
-    for side in (-1,1):
-        cx=side*1.15
-        cube('GateFrame'+str(side),(cx,1.38,0),(1.08,1.23,.055),STEEL,edge=.035)
-        for i in range(9):
-            x=cx-0.88+i*.22
-            between(f'GateWire_{side}_{i}',(x,.24,-.06),(x,2.52,-.06),.008,BRUSHED,6)
-        for j in range(7):
-            y=.36+j*.32
-            between(f'GateHoriz_{side}_{j}',(cx-1.0,y,-.06),(cx+1.0,y,-.06),.008,BRUSHED,6)
-    cube('GateMotor',(2.75,.52,.25),(.38,.52,.35),GREEN,edge=.07)
-    cyl('GateBeacon',(2.75,1.18,.25),.08,.16,RED_GLOW,verts=24)
+    fence_bay('FenceSign_')
+    cube('FenceSign_Plate', (0, 1.86, -.06), (.40, .28, .012), YELLOW, edge=.008)
+    cube('FenceSign_Band', (0, 2.06, -.075), (.36, .05, .006), DARK, edge=.004)
+    text_obj('FenceSign_Text', 'MOD PROPERTY', (0, 1.78, -.078), .062, DARK, extrude=.004)
+    join_all('PerimeterFenceSigned')
+    export('perimeter_fence_signed_v1.glb')
+
+
+def build_fence_damaged():
+    """The same bay after fifteen years and something heavy going through it."""
+    clear_scene()
+    fence_bay('FenceTorn_', lean=.12, torn=True)
+    join_all('PerimeterFenceTorn')
+    export('perimeter_fence_damaged_v1.glb')
+
+
+def build_fence_down():
+    """A bay flattened outward, panel and all: this is how anything gets in."""
+    clear_scene()
+    for x in (-2, 2):
+        cube(f'FenceDown_Footing{x}', (x, .13, 0), (.22, .13, .22), CONCRETE, edge=.03)
+        cube(f'FenceDown_Stub{x}', (x, .22, .10), (.055, .26, .055), STEEL,
+             rotation=(.9, 0, 0), edge=.012)
+    cube('FenceDown_Kerb', (0, .09, 0), (2.0, .09, .13), CONCRETE, edge=.02)
+    # The panel lying over, still on its posts, half sunk into the grass.
+    for x in (-2, 2):
+        cube(f'FenceDown_Post{x}', (x, .32, 1.36), (.055, 1.36, .055), STEEL,
+             rotation=(1.36, 0, 0), edge=.012)
+    for y in (.26, 2.62):
+        cube(f'FenceDown_Frame_{y:.2f}', (0, .30 - (y - 1.44) * .19, 1.44 + (y - 1.44) * .96),
+             (1.86, .028, .026), STEEL, rotation=(1.40, 0, 0), edge=.006)
+    for i in range(1, 32):
+        x = -1.86 + i * (3.72 / 32)
+        cube(f'FenceDown_Wire_{i}', (x, .28, 1.44), (.0095, 1.18, .0095), BRUSHED,
+             rotation=(1.40, 0, 0), edge=.003)
+    for j in range(1, 8):
+        offset = (j / 8 - .5) * 2.36
+        cube(f'FenceDown_Rail_{j}', (0, .28 - offset * .17, 1.44 + offset * .97),
+             (1.86, .0095, .0095), BRUSHED, rotation=(1.40, 0, 0), edge=.003)
+    join_all('PerimeterFenceDown')
+    export('perimeter_fence_down_v1.glb')
+
+
+def build_gate():
+    """A pair of chain-link leaves in a proper gate frame.
+
+    Built to match the fence it hangs in: concrete-set gate posts with caps, a
+    welded tube frame per leaf, the same masked mesh, a top rail carrying the
+    barbed run across, and the motor and beacon on the drive side.
+    """
+    clear_scene()
+    for side in (-1, 1):
+        x = side * 2.3
+        cube(f'GateFooting{side}', (x, .16, 0), (.30, .18, .30), CONCRETE, edge=.04)
+        cyl(f'GatePost{side}', (x, 1.72, 0), .095, 3.10, STEEL, verts=18, edge=.012)
+        cyl(f'GatePostCap{side}', (x, 3.32, 0), .11, .09, BRUSHED, verts=18)
+        # The outriggers carry the barbed run straight over the opening.
+        between(f'GateArm{side}', (x, 3.26, 0), (x, 3.62, -.34), .026, STEEL, 8)
+    for k, (y, z) in enumerate(((3.34, -.10), (3.47, -.21), (3.60, -.33))):
+        between(f'GateBarb{k}', (-2.3, y, z), (2.3, y, z), .009, BRUSHED, 8)
+
+    for side in (-1, 1):
+        cx = side * 1.15
+        # Welded tube frame: stiles, rails and a diagonal brace, as a real
+        # cantilever leaf has.
+        for sx in (-1.10, 1.10):
+            cyl(f'GateStile_{side}_{sx:.2f}', (cx + sx, 1.38, 0), .042, 2.46,
+                STEEL, verts=12, edge=.008)
+        for y in (.18, 1.38, 2.58):
+            between(f'GateRail_{side}_{y:.2f}', (cx - 1.10, y, 0), (cx + 1.10, y, 0),
+                    .038, STEEL, 10)
+        between(f'GateBrace_{side}', (cx - 1.06, .24, .03), (cx + 1.06, 2.52, .03),
+                .026, STEEL, 8)
+        # The same welded mesh as the panels either side of it.
+        for i in range(1, 19):
+            x = cx - 1.06 + i * (2.12 / 19)
+            cube(f'GateWire_{side}_{i}', (x, 1.38, -.05), (.0095, 1.16, .0095),
+                 BRUSHED, edge=.003)
+        for j in range(1, 8):
+            y = .22 + j * (2.32 / 8)
+            cube(f'GateMeshRail_{side}_{j}', (cx, y, -.065), (1.06, .0095, .0095),
+                 BRUSHED, edge=.003)
+        cube(f'GateHazard_{side}', (cx, .42, -.09), (1.02, .16, .015), YELLOW, edge=.006)
+
+    cube('GateMotor', (2.78, .54, .34), (.36, .54, .34), GREEN, edge=.07)
+    cube('GateMotorPlate', (2.78, .96, .00), (.30, .12, .04), BRUSHED, edge=.01)
+    cyl('GateBeacon', (2.78, 1.22, .34), .08, .16, RED_GLOW, verts=24)
+    cube('GateSign', (-2.30, 2.10, -.14), (.46, .30, .015), YELLOW,
+         rotation=(0, 0, 0), edge=.008)
+    text_obj('GateSignText', 'RESTRICTED', (-2.30, 2.10, -.17), .085, DARK, extrude=.004)
     export('perimeter_gate.glb')
 
 
@@ -888,6 +1035,7 @@ for fn in (
     build_bench, build_clutter, build_status, build_access, build_camera,
     build_exterior_ground, build_entrance, build_fence, build_gate,
     build_floodlight, build_tree, build_barrier, build_rubble,
+    build_fence_signed, build_fence_damaged, build_fence_down,
     build_range_target, build_distant_town, build_estate_car,
     build_remains_covered, build_remains_slumped
 ):

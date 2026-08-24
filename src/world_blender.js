@@ -257,16 +257,31 @@ export function createGameWorld(assets) {
   // surface used to be one fixed night with a single hard moonlight in it.
   const sky = createSky({ scene: outside, dayLength: 240, startAt: 0.30 });
 
-  // Reusable 4m Blender fence modules form the perimeter.
-  for (let x=-18; x<=18; x+=4) {
-    place(assets.fence,outside,[x,0,-27],[0,0,0]);
+  // The perimeter. Four-metre bays of security fence: footings, line posts,
+  // top rail, tension wire, chain link and three strands of barbed wire on
+  // angled outriggers. It is not a new fence — fifteen years of weather and
+  // whatever came through it have left bays leaning, torn and flat, and where
+  // it is down is where anything gets in.
+  const BREACH = new Set(['N:-2', 'W:3', 'S:-4']);
+  const LEANING = new Set(['N:2', 'E:-3', 'E:2', 'W:-2', 'S:3']);
+  // One bay in five carries the warning plate, as a real run does.
+  const SIGNED = new Set(['N:-4', 'N:1', 'E:-1', 'E:4', 'W:-5', 'W:1', 'S:4']);
+  const fenceBay = (run, index, position, rotation) => {
+    const key = `${run}:${index}`;
+    const asset = BREACH.has(key) ? (assets.fenceDown || assets.fence)
+      : LEANING.has(key) ? (assets.fenceTorn || assets.fence)
+        : SIGNED.has(key) ? (assets.fenceSigned || assets.fence)
+          : assets.fence;
+    // A flattened bay is not a wall: leave the gap in the collision too.
+    place(asset, outside, position, rotation, 1, { collide: !BREACH.has(key) });
+  };
+  for (let i = -4; i <= 4; i++) fenceBay('N', i, [i * 4, 0, -27], [0, 0, 0]);
+  for (let i = -5; i <= 4; i++) {
+    fenceBay('W', i, [-20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
+    fenceBay('E', i, [20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
   }
-  for (let z=-23; z<=15; z+=4) {
-    place(assets.fence,outside,[-20,0,z],[0,Math.PI/2,0]);
-    place(assets.fence,outside,[20,0,z],[0,Math.PI/2,0]);
-  }
-  for (let x=-18; x<=-6; x+=4) place(assets.fence,outside,[x,0,18],[0,0,0]);
-  for (let x=6; x<=18; x+=4) place(assets.fence,outside,[x,0,18],[0,0,0]);
+  for (let i = -4; i <= -2; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
+  for (let i = 2; i <= 4; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
   place(assets.gate,outside,[0,0,18],[0,0,0]);
 
   // Exterior lighting fixtures are Blender models; only emitted light is runtime.
