@@ -14,6 +14,7 @@ import { Survival, loadRun, saveRun, clearRun } from './survival.js';
 import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose, hipPose }
   from './weapons.js';
 import { createDecalField } from './decals.js';
+import { createOpeningExperience } from './opening.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -37,6 +38,37 @@ const skyEl = document.getElementById('skyStat');
 const powerEl = document.getElementById('powerStat');
 const waterEl = document.getElementById('waterStat');
 const airEl = document.getElementById('airStat');
+
+let resolveGameReady;
+const gameReady = new Promise((resolve) => { resolveGameReady = resolve; });
+let preparationStarted = false;
+const opening = createOpeningExperience({
+  hasSave: Boolean(loadRun()),
+  onSequenceStart: ({ settings }) => {
+    startAudio();
+    if (master && ac) master.gain.setValueAtTime(0, ac.currentTime);
+    if (settings.master <= 0) ac?.suspend?.();
+  },
+  onEnter: async ({ restore, settings }) => {
+    opening.setLoadStatus('PREPARING SHELTER 47…');
+    await ensureGameReady();
+    if (!restore) clearRun();
+    startAudio();
+    if (master && ac) {
+      master.gain.setTargetAtTime(.3 * settings.master / 100, ac.currentTime, .04);
+    }
+    beginGame({ restore });
+  },
+});
+boot.style.display = 'none';
+
+function ensureGameReady() {
+  if (!preparationStarted) {
+    preparationStarted = true;
+    void prepare().catch(fail);
+  }
+  return gameReady;
+}
 
 let renderer, composer, renderPass, bloomPass, gradePass, aoPass, feedComposer, feedPass, game;
 let currentWorld = 'bunker';
@@ -109,6 +141,7 @@ function flash(text, duration = 1800) {
 
 function fail(error) {
   console.error(error);
+  opening.fail(error);
   fatal.style.display = 'flex';
   fatalText.textContent = `Game startup failed: ${error?.message || error}`;
   boot.style.display = 'none';
@@ -200,6 +233,7 @@ async function prepare() {
     engineState.textContent = 'Restoring Shelter 47 lighting, controls and life-support displays…';
     const assets = await loadGameAssets((label, step, total) => {
       engineState.textContent = `Bringing site systems online — ${step}/${total}`;
+      opening.setLoadStatus(`BRINGING SITE SYSTEMS ONLINE — ${step}/${total}`);
     });
 
     game = createGameWorld(assets);
@@ -219,7 +253,7 @@ async function prepare() {
         // Visual QA starts the simulation directly. The real button path still
         // exercises audio, fullscreen, orientation and pointer lock in the
         // interaction tests, without making screenshots depend on browser UI.
-        start: () => beginGame({ restore: false }),
+        start: () => { opening.hide(); beginGame({ restore: false }); },
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
         world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); },
@@ -318,9 +352,12 @@ async function prepare() {
     backendEl.textContent = `S47 INTERNAL // EXTERNAL LINK LOST // ${quality.name.toUpperCase()} DISPLAY`;
     startButton.disabled = false;
     startButton.textContent = 'ENTER SHELTER';
+    opening.setReady();
+    resolveGameReady();
     renderer.setAnimationLoop(loop);
   } catch (err) {
     console.error(err);
+    opening.fail(err);
     engineState.innerHTML = `<span style="color:#ff9b88">ASSET LOAD FAILED: ${String(err?.message || err)}</span><br>The project will not substitute primitive animals. Reload after the asset workflow finishes.`;
     startButton.disabled = false;
     startButton.textContent = 'RETRY ASSET LOAD';
@@ -1417,7 +1454,7 @@ let ac=null,master=null,radioGain=null,outdoorGain=null;
 function noiseBuffer(seconds=2){const b=ac.createBuffer(1,ac.sampleRate*seconds,ac.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b}
 function startAudio(){
   if(ac){ac.resume?.();return}
-  ac=new(window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.gain.value=.3;master.connect(ac.destination);
+  ac=new(window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.gain.value=.3*(opening.settings.master/100);master.connect(ac.destination);
   [47,94,141].forEach((freq,i)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=i?'sine':'triangle';o.frequency.value=freq;g.gain.value=[.09,.03,.01][i];o.connect(g);g.connect(master);o.start()});
   const rn=ac.createBufferSource();rn.buffer=noiseBuffer();rn.loop=true;const rf=ac.createBiquadFilter();rf.type='bandpass';rf.frequency.value=1800;radioGain=ac.createGain();radioGain.gain.value=0;rn.connect(rf);rf.connect(radioGain);radioGain.connect(master);rn.start();
   const on=ac.createBufferSource();on.buffer=noiseBuffer(3);on.loop=true;const of=ac.createBiquadFilter();of.type='lowpass';of.frequency.value=900;outdoorGain=ac.createGain();outdoorGain.gain.value=0;on.connect(of);of.connect(outdoorGain);outdoorGain.connect(master);on.start();
@@ -1684,6 +1721,7 @@ function bloodBurst(point){const g=new THREE.SphereGeometry(.05,8,6),m=new THREE
 
 function beginGame({ restore = true } = {}) {
   if (!game || started) return;
+  opening.hide();
   started = true;
   const resumed = restore && restoreRun();
   updateStats();updateAmmo();updateHealth();renderObjectives();
@@ -1694,6 +1732,7 @@ function beginGame({ restore = true } = {}) {
 
 startButton.onclick=async()=>{
   if(!game){location.reload();return}
+  opening.hide();
   startAudio();
   try{if(document.documentElement.requestFullscreen&&!document.fullscreenElement)await document.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{});if(screen.orientation?.lock)await screen.orientation.lock('landscape').catch(()=>{})}catch{}
   beginGame();
@@ -1879,4 +1918,4 @@ addEventListener('resize', () => {
   game.camera.aspect = innerWidth / innerHeight;
   game.camera.updateProjectionMatrix();
 });
-prepare().catch(fail);
+if (import.meta.env.DEV) void ensureGameReady();

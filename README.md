@@ -2,6 +2,20 @@
 
 Mobile-first Three.js survival prototype set in Shelter 47.
 
+## Opening protocol
+
+Every launch begins at the Lost Signal welcome menu. **Continue** is enabled
+only when `lost-signal-run-v1` exists, **New Game** starts a clean run, and both
+choices play the 62.2-second *Take Shelter Now* globe sequence before handing
+off to Shelter 47. The cutscene can be skipped immediately. Audio, subtitles,
+film grain and impact detail are stored separately from the game save.
+
+The opening globe is deliberately rendered with Canvas2D in `src/opening.js`.
+On production builds the Three.js game renderer is not created until the
+cutscene finishes or is skipped; this keeps the Android-safe opening isolated
+from the heavier WebGL scene. The emergency track lives at
+`public/assets/audio/take-shelter-now.mp3`.
+
 ## Architecture
 
 - Vite bundles Three.js and the loader stack.

@@ -33,7 +33,7 @@ await page.waitForFunction(() => {
   return b && !b.disabled;
 }, null, { timeout: 60000, polling: 100 }).catch(() => errors.push('TIMEOUT waiting for start button'));
 console.error('boot:', await page.textContent('#engineState'));
-await page.click('#start').catch(e => errors.push('click failed ' + e.message));
+await page.evaluate(() => globalThis.__ls.start()).catch(e => errors.push('start failed ' + e.message));
 await page.waitForTimeout(1500);
 await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, null,
   { timeout: 30000, polling: 100 });
