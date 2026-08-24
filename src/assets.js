@@ -56,8 +56,9 @@ const siloUrls = {
   habSump: `${BASE}assets/blender/hab_sump_v5.glb`,
   habTunnel: `${BASE}assets/blender/hab_tunnel_v6.glb`,
   habBulkheadDoor: `${BASE}assets/blender/hab_bulkhead_door_v6.glb`,
-  // Six builds of person. Twenty residents drawn from six bodies and a
-  // palette of cloth, hair and skin read as twenty people.
+  // Six revision-six people: denser silhouettes, readable faces, hands and
+  // footwear. Twenty residents still rotate through all six builds and the
+  // runtime palette, so the added detail never turns into clone repetition.
   residentA: `${BASE}assets/blender/resident_a_v6.glb`,
   residentB: `${BASE}assets/blender/resident_b_v6.glb`,
   residentC: `${BASE}assets/blender/resident_c_v6.glb`,
