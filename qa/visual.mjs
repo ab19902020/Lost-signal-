@@ -9,6 +9,20 @@ const outDir = process.argv[3] || 'qa/out/visual';
 // valid visual approval of the stair-to-floor join.
 await mkdir(outDir, { recursive: true });
 
+// Pull-request CI can request the focused revision gate. The full suite stays
+// the default for broad/manual regression runs, while this pass renders only
+// the views capable of approving the current landing, quarters, resident and
+// mobile changes. Scene setup still runs between them, so each focused frame
+// is produced from the same state as its full-suite counterpart.
+const focused = process.env.LS_VISUAL_FOCUS === '1';
+const focusedViews = new Set([
+  '05a-silo-landing-guard-closeup',
+  '05aa-secure-top-stair-transition',
+  '06-silo-home',
+  '06a-resident-conversation-closeup',
+  '09-mobile-secure-top-transition',
+]);
+
 const withQuality = (url, tier) => {
   const parsed = new URL(url);
   parsed.searchParams.set('quality', tier);
@@ -79,6 +93,10 @@ async function imageMetrics(page, shot) {
 
 const visualErrors = [];
 async function saveChecked(page, name, limits = {}) {
+  if (focused && !focusedViews.has(name)) {
+    console.log(`visual: skipped unchanged view ${name}`);
+    return;
+  }
   const shot = await save(page, name);
   const metrics = await imageMetrics(page, shot);
   const report = Object.entries(metrics).map(([key, value]) => `${key}=${value.toFixed(3)}`).join(' ');
