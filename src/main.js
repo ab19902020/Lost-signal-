@@ -1179,7 +1179,10 @@ startButton.onclick=async()=>{
 
 // Weapon sway is driven by the body, so the rifle settles when the player does.
 const weaponHip = new THREE.Vector3(.32, -.38, -.72);
-const weaponAim = new THREE.Vector3(0, -.22, -.64);
+// Bring the rear sight onto the crosshair in ADS. The supplied rifle's stock
+// and sight line sit higher than the old placeholder model, so the former
+// -0.22 offset pointed visibly below the ray even though shots were accurate.
+const weaponAim = new THREE.Vector3(0, -.13, -.64);
 const weaponTarget = new THREE.Vector3();
 
 function updateWeapon(dt) {
