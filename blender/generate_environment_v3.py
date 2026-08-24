@@ -2,6 +2,7 @@ import bpy
 import bmesh
 import math
 import os
+import random
 from mathutils import Vector
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -502,7 +503,23 @@ def build_exterior_ground():
     # The field, and a wider skirt of it behind the fence so the ground runs
     # out past the wire instead of ending two metres beyond it.
     cube('ExteriorGrass', (0, -.30, 0), (30, .30, 34), grass, edge=.10)
-    cube('ExteriorSkirt', (0, -.38, 0), (150, .30, 160), grass, edge=.20)
+    # The skirt has to reach the town now, because there is a road running out
+    # to it. One quad: at this range the fog and the haze do the work, and the
+    # alternative is a horizon that stops five hundred metres short of where
+    # the player can see.
+    cube('ExteriorSkirt', (0, -.38, 0), (460, .30, 560), grass, edge=.20)
+    # Field boundaries out along the road, so the far country is not one flat
+    # green. Berkshire is hedged fields, not prairie.
+    random.seed(23)
+    for i in range(26):
+        fx = random.uniform(-380, 300)
+        fz = random.uniform(-260, 500)
+        if abs(fx) < 34 and abs(fz) < 34:
+            continue
+        cube(f'FarField_{i}', (fx, -.012, fz),
+             (random.uniform(28, 74), .018, random.uniform(28, 74)),
+             grass_dry if i % 2 else grass_dark,
+             rotation=(0, random.uniform(0, 3.1), 0), edge=1.2)
 
     # Patchwork: rough pasture is never one tone. Big soft overlapping mats of
     # dry, rank and bare ground, all a couple of centimetres proud of the field.
@@ -538,6 +555,125 @@ def build_exterior_ground():
         cube(f'ApronSlab_{i}', (i * 1.75, .105, -11.4), (.82, .05, 3.3), CONCRETE,
              rotation=(0, i * .004, 0), edge=.03)
     export('exterior_ground_v3.glb')
+
+
+def build_road():
+    """A section of the B-road that runs from the gate toward the town.
+
+    One 40 m length, laid end to end by the scene code. Worn tarmac with a
+    dashed centre line and edge markings from the generated map, a soft verge
+    either side, and a kerb where the camber ends — an unmarked grey ribbon
+    across a field reads as a mistake, not a road.
+    """
+    clear_scene()
+    tarmac = image_pbr('RoadTarmac', 'road__Color.jpg',
+                       'concrete__Concrete034_1K_NormalGL.jpg',
+                       'concrete__Concrete034_1K_Roughness.jpg')
+    verge = mat('RoadVerge', (.128, .116, .086), 0, .98)
+    kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
+
+    length = 20.0                       # half length: a 40 m section
+    cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04)
+    # A little camber, so the surface is not a perfectly flat plane.
+    cube('Road_Crown', (0, .075, 0), (2.1, .022, length), tarmac, edge=.06)
+    for side in (-1, 1):
+        cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
+        cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
+        # Marker posts every eight metres, as a rural B-road has.
+        for i in range(-2, 3):
+            cube(f'Road_Post_{side}_{i}', (side * 4.5, .48, i * 8.0), (.055, .48, .045),
+                 WHITE, edge=.012)
+            cube(f'Road_PostBand_{side}_{i}', (side * 4.5, .78, i * 8.0 - .048),
+                 (.05, .09, .008), RED, edge=.004)
+    export('road_section_v1.glb')
+
+
+def build_road_damaged():
+    """The same section, cratered and shoved. Nothing has maintained it."""
+    clear_scene()
+    tarmac = image_pbr('RoadTarmac', 'road__Color.jpg',
+                       'concrete__Concrete034_1K_NormalGL.jpg',
+                       'concrete__Concrete034_1K_Roughness.jpg')
+    rubble = mat('RoadRubble', (.152, .146, .134), 0, .96)
+    verge = mat('RoadVerge', (.128, .116, .086), 0, .98)
+    kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
+
+    length = 20.0
+    cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04)
+    for side in (-1, 1):
+        cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
+        cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
+    # A crater through one carriageway, with the spoil thrown out around it.
+    cyl('Road_Crater', (-1.1, .01, -4.0), 2.3, .10, rubble, verts=18, edge=.06)
+    for i in range(9):
+        a = i * 0.7
+        cube(f'Road_Spoil_{i}', (-1.1 + math.cos(a) * 2.7, .10, -4.0 + math.sin(a) * 2.7),
+             (.34, .10, .28), rubble, rotation=(0, a, 0), edge=.05)
+    # Slabs of the surface lifted and tipped.
+    for i, (x, z, r) in enumerate(((1.9, 3.2, .34), (2.6, 6.4, -.5), (-2.4, 9.1, .22))):
+        cube(f'Road_Slab_{i}', (x, .16, z), (1.05, .06, .85), tarmac,
+             rotation=(r * .5, r, 0), edge=.04)
+    export('road_section_damaged_v1.glb')
+
+
+def build_wreck_car():
+    """A burnt-out estate, the shape of the one at the gate.
+
+    Every road out of anywhere has these on it. No glass, no wheels worth the
+    name, the shell gone to oxide and the roof caved.
+    """
+    clear_scene()
+    burnt = mat('WreckShell', (.062, .052, .046), .18, .88)
+    rust = mat('WreckRust', (.128, .062, .032), .12, .94)
+    ash = mat('WreckAsh', (.040, .038, .036), 0, .96)
+
+    cube('Wreck_Body', (0, .68, 0), (.84, .30, 2.16), rust, edge=.10)
+    cube('Wreck_Bonnet', (0, .88, -1.50), (.80, .10, .68), burnt,
+         rotation=(-.06, 0, .04), edge=.07)
+    # The cabin has gone in on itself.
+    cube('Wreck_Cabin', (0, 1.12, .16), (.74, .22, 1.16), burnt,
+         rotation=(.05, .03, -.06), edge=.09)
+    cube('Wreck_Pillar_A', (-.72, 1.16, -.94), (.05, .26, .05), burnt,
+         rotation=(-.34, 0, .18), edge=.02)
+    cube('Wreck_Pillar_B', (.70, 1.10, -.94), (.05, .20, .05), burnt,
+         rotation=(-.5, 0, -.3), edge=.02)
+    cube('Wreck_Grille', (0, .80, -2.14), (.68, .14, .07), ash, edge=.03)
+    for side in (-1, 1):
+        cube(f'Wreck_Door_{side}', (side * .86, .74, .10), (.05, .26, .92), rust,
+             rotation=(0, side * .12, 0), edge=.04)
+    # Three wheels on the rims, one missing entirely.
+    for sx, sz in ((-1, -1), (1, -1), (-1, 1)):
+        cyl(f'Wreck_Rim_{sx}_{sz}', (sx * .82, .26, sz * 1.42), .26, .17, ash,
+            rotation=(0, 0, math.pi / 2), verts=14, edge=.02)
+    cube('Wreck_Axle', (.82, .22, 1.42), (.10, .07, .10), ash, edge=.02)
+    # Scorch on the ground under it.
+    cube('Wreck_Scorch', (0, .006, .2), (1.5, .008, 2.6), ash, edge=.6)
+    join_all('WreckCar')
+    export('wreck_car_v1.glb')
+
+
+def build_debris_field():
+    """A scatter of what is left lying about: masonry, twisted steel, ash."""
+    clear_scene()
+    rubble = mat('DebrisRubble', (.148, .142, .130), 0, .96)
+    steel = mat('DebrisSteel', (.108, .098, .086), .40, .84)
+    charred = mat('DebrisCharred', (.048, .044, .040), 0, .95)
+    random.seed(11)
+    for i in range(16):
+        a = random.uniform(0, math.tau)
+        r = random.uniform(.4, 3.4)
+        cube(f'Debris_Block_{i}', (math.cos(a) * r, random.uniform(.06, .22),
+             math.sin(a) * r), (random.uniform(.16, .48), random.uniform(.06, .22),
+             random.uniform(.14, .40)), rubble if i % 3 else charred,
+             rotation=(random.uniform(-.3, .3), a, random.uniform(-.2, .2)), edge=.05)
+    for i in range(7):
+        a = random.uniform(0, math.tau)
+        r = random.uniform(.6, 3.2)
+        between(f'Debris_Rebar_{i}', (math.cos(a) * r, .04, math.sin(a) * r),
+                (math.cos(a) * r + random.uniform(-1.4, 1.4), random.uniform(.1, .8),
+                 math.sin(a) * r + random.uniform(-1.4, 1.4)), .028, steel, 8)
+    join_all('DebrisField')
+    export('debris_field_v1.glb')
 
 
 def build_distant_town():
@@ -1036,6 +1172,7 @@ for fn in (
     build_exterior_ground, build_entrance, build_fence, build_gate,
     build_floodlight, build_tree, build_barrier, build_rubble,
     build_fence_signed, build_fence_damaged, build_fence_down,
+    build_road, build_road_damaged, build_wreck_car, build_debris_field,
     build_range_target, build_distant_town, build_estate_car,
     build_remains_covered, build_remains_slumped
 ):

@@ -47,7 +47,12 @@ export function createGameWorld(assets) {
   const interactions = [];
   const colliders = {
     bunker: new ColliderSet({ minX: -6.55, maxX: 6.55, minZ: -6.85, maxZ: 6.85 }),
-    outside: new ColliderSet({ minX: -19.2, maxX: 19.2, minZ: -26.0, maxZ: 17.2 }),
+    // The surface used to be a hard box the size of the compound, which is why
+    // walking out of the gate put you straight back inside it. The world now
+    // runs from the compound to the town, so the bound is the edge of the
+    // ground itself; what actually stops the player is the fence, and where
+    // the fence is down, nothing does.
+    outside: new ColliderSet({ minX: -320, maxX: 140, minZ: -70, maxZ: 540 }),
     // The silo's enclosure is its ring of wall panels, not a rectangle.
     silo: new ColliderSet(null),
   };
@@ -402,6 +407,70 @@ export function createGameWorld(assets) {
     gateCar.name = 'Gate_Estate_Car';
     addInteraction(gateCar, 'ESTATE CAR — NOT RUNNING', 'outside',
       () => window.dispatchEvent(new CustomEvent('lostsignal:car')));
+  }
+
+  // --- The road out -------------------------------------------------------
+  // A B-road running from the gate to the town, half a kilometre of it, laid as
+  // forty-metre sections. Nothing has maintained it for fifteen years: about
+  // one length in four is cratered or lifted, and what was on it when it
+  // happened is still on it.
+  const TOWN_BEARING = -0.42;
+  const roadDirection = new THREE.Vector3(Math.sin(TOWN_BEARING), 0, Math.cos(TOWN_BEARING));
+  const roadPoint = (distance, across = 0) => [
+    roadDirection.x * distance + Math.cos(TOWN_BEARING) * across,
+    0,
+    18 + roadDirection.z * distance - Math.sin(TOWN_BEARING) * across,
+  ];
+  if (assets.road) {
+    const DAMAGED = new Set([2, 5, 6, 9, 11]);
+    for (let section = 0; section < 12; section++) {
+      const asset = DAMAGED.has(section) ? (assets.roadDamaged || assets.road) : assets.road;
+      place(asset, outside, roadPoint(20 + section * 40), [0, TOWN_BEARING, 0], 1,
+        { collide: false });
+    }
+  }
+
+  // What is still on it. Wrecks nose to tail where the queue stopped, debris
+  // where something came down, and the traffic furniture that was already
+  // there when it did.
+  const alongRoad = (asset, entries, options = {}) => {
+    if (!asset) return;
+    for (const [distance, across, spin, scale = 1] of entries) {
+      place(asset, outside, roadPoint(distance, across),
+        [0, TOWN_BEARING + spin, 0], scale, options);
+    }
+  };
+  alongRoad(assets.wreckCar, [
+    [26, -1.6, 0.06], [34, 1.5, -0.22], [48, -1.4, 1.62], [63, 1.7, 0.10],
+    [96, -1.5, 0.34], [104, 1.6, 2.90], [148, -1.7, 0.18], [206, 1.5, -0.42],
+    [268, -1.4, 1.20], [352, 1.6, 0.28],
+  ], { collide: false });
+  alongRoad(assets.propTruck, [[74, -1.8, 0.24], [318, 1.9, 2.68]], { collide: false });
+  alongRoad(assets.debrisField, [
+    [40, 5.5, 0.4], [88, -6.0, 1.9], [132, 6.5, 0.8], [190, -5.5, 2.6],
+    [244, 6.0, 1.3], [300, -6.5, 0.5], [386, 5.0, 2.1],
+  ], { collide: false });
+  alongRoad(assets.propBarrier, [
+    [18, -1.2, 0], [18, 0.2, 0], [18, 1.6, 0],
+    [176, -1.0, 0.3], [176, 0.6, -0.2],
+  ], { collide: false });
+  alongRoad(assets.propCone, [
+    [22, -2.6, 0], [30, 2.5, 0], [120, -2.4, 0], [232, 2.6, 0],
+  ], { collide: false });
+  alongRoad(assets.propStreetLight, [
+    [44, 5.0, 1.57], [124, -5.0, -1.57], [204, 5.0, 1.57], [284, -5.0, -1.57],
+    [364, 5.0, 1.57],
+  ], { shrink: 0.2, collide: false });
+  alongRoad(assets.propTrashBags, [[58, 4.4, 0.6], [212, -4.6, 2.2]], { collide: false });
+  // Dead hedgerow along the road, which is what a Berkshire lane actually has.
+  if (deadTrees.length) {
+    for (let i = 0; i < 22; i++) {
+      const distance = 34 + i * 19;
+      const side = i % 2 ? 1 : -1;
+      place(deadTrees[i % deadTrees.length], outside,
+        roadPoint(distance, side * (8.5 + (i % 3) * 1.4)),
+        [0, i * 1.1, 0], 0.85 + (i % 4) * 0.08, { collide: false });
+    }
   }
 
   // The town, on the horizon to the south-west past the gate. Not a place you

@@ -179,6 +179,10 @@ const exteriorUrls = {
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
   rangeTarget: `${BASE}assets/blender/range_target_v1.glb`,
   distantTown: `${BASE}assets/blender/distant_town_v1.glb`,
+  road: `${BASE}assets/blender/road_section_v1.glb`,
+  roadDamaged: `${BASE}assets/blender/road_section_damaged_v1.glb`,
+  wreckCar: `${BASE}assets/blender/wreck_car_v1.glb`,
+  debrisField: `${BASE}assets/blender/debris_field_v1.glb`,
   estateCar: `${BASE}assets/blender/estate_car_v1.glb`,
 };
 
