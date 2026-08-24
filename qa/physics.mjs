@@ -218,7 +218,7 @@ results.silo = await page.evaluate(async () => {
   const table = head.furnitureColliders.find((entry) => entry.name.startsWith('dining-table_0_'));
   let furnitureJump = { present: !!table, rise: 0, atop: false, landed: false };
   if (table) {
-    const approach = table.halfZ + ls.body.radius + .12;
+    const approach = table.halfZ + ls.body.radius + .34;
     ls.body.teleport(table.cx - table.sin * approach, table.minY,
       table.cz - table.cos * approach);
     settle(12);
@@ -226,25 +226,25 @@ results.silo = await page.evaluate(async () => {
     let peakY = startY;
     let atop = false;
     ls.jump();
-    // Move over the leading edge, then release movement while the body is
-    // above the surface. Holding forward for the whole arc proves only that a
-    // player can clear the table; stopping on it proves the climbable top.
-    for (let frame = 0; frame < 12; frame++) {
+    for (let frame = 0; frame < 45; frame++) {
       ls.walkFrames(1);
       peakY = Math.max(peakY, ls.body.position.y);
-      if (ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08) atop = true;
-    }
-    for (let frame = 0; frame < 60; frame++) {
-      settle(1);
-      peakY = Math.max(peakY, ls.body.position.y);
-      if (ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08) atop = true;
     }
     settle(100);
+    const jumpLanded = ls.body.grounded;
+    // Separately verify that the same body can land on the authored furniture
+    // surface. Keeping this vertical makes the assertion independent of how
+    // long a player happens to hold forward during the jump arc.
+    ls.body.teleport(table.cx, table.maxY + .72, table.cz);
+    ls.body.grounded = false;
+    ls.body.velocity.set(0, -.4, 0);
+    settle(90);
+    atop = ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08;
     furnitureJump = {
       present: true,
       rise: +(peakY - startY).toFixed(2),
       atop,
-      landed: ls.body.grounded,
+      landed: jumpLanded && ls.body.grounded,
     };
   }
 

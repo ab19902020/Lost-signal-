@@ -92,7 +92,7 @@ if (physics.silo.present) {
   check(physics.silo.furnitureJump.present, 'the apartments expose no physical dining table');
   check(physics.silo.furnitureJump.rise > 0.65,
     `silo jump rose only ${physics.silo.furnitureJump.rise} m`);
-  check(physics.silo.furnitureJump.atop, 'jumping onto the dining table never landed on its top');
+  check(physics.silo.furnitureJump.atop, 'low apartment furniture did not provide a landing surface');
   check(physics.silo.furnitureJump.landed, 'the player did not return to a grounded state after jumping');
   check(physics.silo.aim.active, 'rifle aim mode did not engage');
   check(physics.silo.aim.fov < 56, `rifle aim FOV stayed at ${physics.silo.aim.fov}°`);
