@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { CharacterBody, ColliderSet } from '../src/physics.js';
 import { buildSilo, SILO } from '../src/silo.js';
 import { ARMORY_WEAPON_KEYS } from '../src/armory.js';
+import { WEAPONS, USABLE_WEAPON_KEYS, DEFAULT_WEAPON, createLoadout, shotInterval } from '../src/weapons.js';
 
 // Build the authored collision without loading a renderer or any GLBs. This is
 // deliberately runnable anywhere `npm run build` runs, including before a
@@ -103,12 +104,26 @@ for (const z of [-1.35, -0.7, 0, 0.7, 1.35]) {
       `secure landing gap at x=${x}, z=${z} (floor ${floor})`);
   }
 }
-for (const x of [2.4, 3.8, 5.2]) {
+// One long edge of the head platform is a drop into the shaft and the other is
+// the mouth of the only flight the player can walk down. Sealing both — which
+// is what shipped — walled the stair off entirely from the level the player
+// spawns on. Outboard of the stair's own balustrade both edges stay solid.
+for (const x of [6.2, 8.5, 11.4]) {
   for (const side of [-1, 1]) {
     assert.equal(colliders.contains(x, side * SILO.landingHalf, 0.08,
       topY + .25, topY + 1.14), true,
     `secure landing side rail is open at x=${x}, side=${side}`);
   }
+}
+// Sampled inside the stair's circular balustrade, which legitimately guards
+// the outer edge of the arrival tread at a radius of about 5.5 m.
+for (const x of [2.4, 3.3, 4.4]) {
+  assert.equal(colliders.contains(x, SILO.landingHalf, 0.08,
+    topY + .25, topY + 1.14), true,
+  `secure landing is unguarded over the shaft at x=${x}`);
+  assert.equal(colliders.contains(x, -SILO.landingHalf, 0.08,
+    topY + .25, topY + 1.14), false,
+  `secure landing rail is barricading the descending flight at x=${x}`);
 }
 assert.equal(colliders.contains(SILO.landingInner + .15, 0, 0.08,
   topY + .25, topY + 1.14), true,
@@ -116,6 +131,39 @@ assert.equal(colliders.contains(SILO.landingInner + .15, 0, 0.08,
 assert.equal(colliders.contains(2.4, 0, PLAYER_RADIUS,
   topY + .20, topY + 1.70), false,
 'secure landing rail blocks its usable centre lane');
+
+// The whole point of the stair. Walk the player from the head platform, where
+// they arrive, onto the treads and down the helix under the same CharacterBody
+// the game uses. A guard rail across the top flight passes every static probe
+// above and still leaves the player standing on the landing for good.
+{
+  const stairMid = SILO.stairColumn + (SILO.stairRadius - SILO.stairColumn) / 2;
+  const walker = new CharacterBody();
+  walker.teleport(8, topY + 0.05, 0);
+  const desired = new THREE.Vector3();
+  let lowest = topY;
+  for (let frame = 0; frame < 60 * 45; frame++) {
+    const { x, y, z } = walker.position;
+    const radius = Math.hypot(x, z);
+    let tx;
+    let tz;
+    if (radius > stairMid + 0.15 && y > topY - 0.5) {
+      tx = stairMid;             // in along the landing centre line
+      tz = 0;
+    } else {
+      const heading = Math.atan2(z, x) - 0.28;   // then round and down
+      tx = Math.cos(heading) * stairMid;
+      tz = Math.sin(heading) * stairMid;
+    }
+    desired.set(tx - x, 0, tz - z);
+    if (desired.lengthSq() > 0) desired.setLength(2.6);
+    walker.step(1 / 60, desired, colliders);
+    lowest = Math.min(lowest, walker.position.y);
+  }
+  assert.ok(lowest < topY - SILO.levelHeight * 4,
+    `the spiral stair is blocked: the player got from y=${topY} only down to y=${lowest.toFixed(2)}`);
+  assert.ok(walker.grounded, 'walking the spiral stair ended with the player airborne');
+}
 
 // You have to be able to walk the whole ring, on every level. The walkway used
 // to be collided as one axis-aligned box per bay, and a box drawn round a slab
@@ -315,7 +363,6 @@ for (const id of ['jumpBtn', 'aimBtn']) {
   assert.ok(mainSource.includes(`getElementById('${id}')`), `${id} is not wired to gameplay`);
 }
 assert.ok(mainSource.includes('jump: wantsJump'), 'jump input is not reaching the character body');
-assert.ok(mainSource.includes('targetFov = aiming ? 52 : 70'), 'rifle aim does not alter the sight picture');
 
 // The supplied pack is intentionally complete: dropping near-duplicate weapon
 // files makes the new room look dressed in a screenshot while silently failing
@@ -330,7 +377,89 @@ assert.ok(assetsSource.includes('legacyOrientation: false'),
   'the supplied Y-up models are still being passed through the legacy rotation fix');
 assert.ok(mainSource.includes('MAGAZINE_SIZE = 30'), 'the service rifle still uses the old five-round magazine');
 
-console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
+// The armoury issued one weapon out of twenty-five for three releases. Every
+// rack slot now has to be a catalogue entry, and everything that is not bench
+// hardware has to be a thing the player can actually hold and fire.
+for (const key of ARMORY_WEAPON_KEYS) {
+  assert.ok(WEAPONS[key], `${key} hangs on the wall with no catalogue entry`);
+}
+for (const key of Object.keys(WEAPONS)) {
+  assert.ok(ARMORY_WEAPON_KEYS.includes(key), `${key} is in the catalogue but on no rack`);
+}
+assert.equal(USABLE_WEAPON_KEYS.length, 22,
+  'the armoury does not offer all twenty-two usable weapons');
+assert.ok(USABLE_WEAPON_KEYS.includes(DEFAULT_WEAPON), 'the default weapon is not usable');
+assert.ok(USABLE_WEAPON_KEYS.some((key) => WEAPONS[key].kind === 'melee'),
+  'there is no blade in the collection');
+
+const fireVoices = new Set();
+const reloadPrints = new Set();
+for (const key of USABLE_WEAPON_KEYS) {
+  const weapon = WEAPONS[key];
+  assert.ok(weapon.name && weapon.family, `${key} has no name or family`);
+  assert.ok(weapon.damage > 0, `${key} does no damage`);
+  assert.ok(weapon.rpm > 0 && shotInterval(weapon) > 0, `${key} has no rate of fire`);
+  assert.ok(weapon.view?.scale > 0 && weapon.view.offset?.length === 3,
+    `${key} has no first-person placement`);
+  const fire = weapon.audio?.fire;
+  assert.ok(fire, `${key} has no firing voice`);
+  // Every one of them has to sound like itself. Fingerprinting the whole voice
+  // catches a copy-paste that changes the name and nothing you can hear.
+  fireVoices.add([fire.bodyHz, fire.bodyEndHz, fire.bodyDecay, fire.crackHz,
+    fire.crackQ, fire.crackDecay, fire.tailHz, fire.tailDecay, fire.tailLevel,
+    fire.level].join(','));
+  const reload = weapon.audio?.reload;
+  assert.ok(Array.isArray(reload) && reload.length >= 2,
+    `${key} has no reload sequence`);
+  for (const click of reload) {
+    assert.ok(click.at >= 0 && click.hz > 0 && click.decay > 0,
+      `${key} has a malformed reload click`);
+  }
+  reloadPrints.add(reload.map((c) => `${c.at.toFixed(3)}:${Math.round(c.hz)}`).join('|'));
+  if (weapon.kind === 'melee') continue;
+  assert.ok(weapon.magazine > 0 && weapon.reserve > 0, `${key} carries no ammunition`);
+  assert.ok(weapon.reloadTime > 0, `${key} reloads instantly`);
+}
+assert.equal(fireVoices.size, USABLE_WEAPON_KEYS.length,
+  `only ${fireVoices.size} of ${USABLE_WEAPON_KEYS.length} weapons have their own firing sound`);
+assert.equal(reloadPrints.size, USABLE_WEAPON_KEYS.length,
+  `only ${reloadPrints.size} of ${USABLE_WEAPON_KEYS.length} weapons have their own reload sound`);
+
+// Ammunition belongs to the weapon, not to the player. Swapping to a revolver
+// and back must not silently refill the rifle you half emptied.
+const ammoPool = createLoadout();
+ammoPool.for('armoryAssault01').magazine = 4;
+ammoPool.for('armoryRevolver01').magazine = 1;
+assert.equal(ammoPool.for('armoryAssault01').magazine, 4, 'the loadout forgot a part-spent magazine');
+assert.equal(ammoPool.for('armoryRevolver01').magazine, 1, 'the loadout mixed two weapons together');
+const restored = createLoadout();
+restored.restore(ammoPool.snapshot());
+assert.equal(restored.for('armoryAssault01').magazine, 4, 'a saved run loses its part-spent magazine');
+ammoPool.resupply('armoryAssault01');
+assert.equal(ammoPool.for('armoryAssault01').magazine, WEAPONS.armoryAssault01.magazine,
+  'resupply does not refill a magazine');
+
+// Everything the collection needs from the rest of the code, checked from the
+// source rather than from a browser: the take interaction on every rack slot,
+// the swap in the viewmodel, the marks on the wall and a person who goes down.
+const armorySource = await readFile(new URL('../src/armory.js', import.meta.url), 'utf8');
+assert.ok(/addInteraction\(root, `TAKE \$\{label\}`/.test(armorySource),
+  'the armoury does not offer to hand over each racked weapon');
+assert.ok(armorySource.includes('downQuartermaster'),
+  'the quartermaster cannot be brought down');
+const worldSource = await readFile(new URL('../src/world_blender.js', import.meta.url), 'utf8');
+assert.ok(worldSource.includes('function setWeapon('),
+  'the first-person viewmodel cannot swap weapons');
+assert.ok(mainSource.includes('createDecalField'), 'shots leave no marks on the world');
+assert.ok(mainSource.includes('resolvePersonHit'), 'shooting a person does nothing');
+assert.ok(mainSource.includes("targetFov = aiming ? (weapon?.zoom ?? 52) : 70"),
+  'aiming does not use the held weapon\'s optic');
+const creatureSource = await readFile(new URL('../src/creatures.js', import.meta.url), 'utf8');
+assert.ok(creatureSource.includes('this.groundY - eased * this.dropHeight'),
+  'a body dropped on an upper gallery falls through it');
+
+console.log(`Unit QA passed: ${USABLE_WEAPON_KEYS.length} usable weapons with distinct voices, `
+  + `${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
   + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `
   + `walkway clear on all ${SILO.levels + 1} levels, `
   + `${doorwaysTraversed} front doors traversed and ${roomsChecked} rooms reachable, `

@@ -11,6 +11,8 @@ import { createGameWorld } from './world.js';
 import { CharacterBody } from './physics.js';
 import { GradeShader, CameraFeedShader } from './grade.js';
 import { Survival, loadRun, saveRun, clearRun } from './survival.js';
+import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose } from './weapons.js';
+import { createDecalField } from './decals.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -42,11 +44,26 @@ let currentCam = 0;
 let yaw = 0;
 let pitch = -0.03;
 let armed = false;
+// The service rifle's numbers. Everything else on the armoury wall carries its
+// own, out of the catalogue, but this pair is what an unmodified run starts on
+// and what a save file written before the collection existed restores to.
 const MAGAZINE_SIZE = 30;
 const INITIAL_RESERVE = 90;
+// What the player is holding, and the rounds every weapon in the collection is
+// carrying. A single global magazine count stopped describing the player the
+// moment all twenty-two racked weapons became things you can pick up: swapping
+// to the revolver and back must not quietly top the rifle up.
+const loadout = createLoadout();
+let weaponKey = DEFAULT_WEAPON;
+let weapon = WEAPONS[DEFAULT_WEAPON];
 let ammo = MAGAZINE_SIZE;
 let reserve = INITIAL_RESERVE;
 let reloading = false;
+// Rate of fire, and whether the trigger is still down. Held fire only runs the
+// automatics; everything else is one round per press, as its action dictates.
+let shotCooldown = 0;
+let triggerHeld = false;
+const decals = createDecalField();
 let health = 100;
 const survival = new Survival();
 let saveTimer = 0;
@@ -194,7 +211,7 @@ async function prepare() {
     // synthesising pointer events. Stripped from production builds.
     if (import.meta.env.DEV) {
       globalThis.__ls = {
-        game, body, quality,
+        game, body, quality, THREE,
         // Visual QA starts the simulation directly. The real button path still
         // exercises audio, fullscreen, orientation and pointer lock in the
         // interaction tests, without making screenshots depend on browser UI.
@@ -212,10 +229,25 @@ async function prepare() {
           for (let i = 0; i < count; i++) simulate(dt);
           keys[code] = false;
         },
-        arm: () => {
-          armed = true; game.setArmed(true); ammo = MAGAZINE_SIZE; reserve = INITIAL_RESERVE;
-          document.body.classList.add('armed'); updateAmmo();
+        arm: (key = DEFAULT_WEAPON) => {
+          loadout.resupply(key);
+          equipWeapon(key, { announce: false });
+          return weaponKey;
         },
+        // Every rack slot, so a harness can take each weapon down in turn and
+        // fire it rather than testing the one the room happens to issue.
+        weapons: () => Object.keys(WEAPONS),
+        weapon: () => ({
+          key: weaponKey, name: weapon?.name, family: weapon?.family,
+          kind: weapon?.kind, automatic: !!weapon?.automatic,
+          magazine: weapon?.magazine ?? 0, ammo, reserve,
+          model: game.weaponAction?.children[0]?.name ?? null,
+        }),
+        decals: () => decals.count(),
+        marks: () => decals.total(),
+        reload: () => reload(),
+        // Hold the trigger, as a finger does. Only the automatics keep firing.
+        hold: (value = true) => { triggerHeld = !!value; },
         aim: (value = true) => setAiming(value),
         jump: () => queueJump(),
         aimAt: (target) => {
@@ -229,6 +261,7 @@ async function prepare() {
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
         use: () => use(),
         state: () => ({ health, ammo, reserve, armed, aiming, seated: !!seated,
+          weapon: weaponKey, weaponName: weapon?.name,
           survival: survival.snapshot, blackout: survival.blackout,
           doorOpen: game.doorOpen(), hatchOpen: game.hatchOpen?.() ?? false,
           residents: game.residents?.residents.length ?? 0,
@@ -287,14 +320,16 @@ function wireGameEvents() {
   addEventListener('lostsignal:vaultopen', (event) => flash(event.detail?.open === false
     ? 'ARMOURY SECURITY DOOR CLOSED'
     : 'ARMOURY UNLOCKED — WALK IN AND INSPECT THE WALL RACKS'));
-  addEventListener('lostsignal:takegun', () => {
-    armed = true;
-    game.setArmed(true);
-    document.body.classList.add('armed');
-    updateAmmo();
-    flash('SERVICE RIFLE EQUIPPED — AIM BEFORE FIRING', 2200);
-    clickSound(360, .08, .05);
-    completeObjective('rifle');
+  addEventListener('lostsignal:takegun', (event) => {
+    equipWeapon(event.detail?.key || DEFAULT_WEAPON);
+  });
+  addEventListener('lostsignal:rackedlocked', (event) => {
+    flash(`${event.detail?.name || 'THAT RACK'} IS BEHIND THE SECURITY DOOR`, 1800);
+    clickSound(150, .07, .04);
+  });
+  addEventListener('lostsignal:inspectkit', (event) => {
+    flash(`${event.detail?.name || 'BENCH KIT'} — BENCH FITTING, NOT A WEAPON`, 2000);
+    clickSound(520, .05, .035);
   });
   addEventListener('lostsignal:door', (e) => flash(e.detail.open ? 'BLAST SEAL RELEASED' : 'BLAST SEAL LOCKED'));
   addEventListener('lostsignal:surface', (e) => {
@@ -436,7 +471,7 @@ let cacheEmptied = false;
 // objectives stay hidden until the ones before them are done, which keeps the
 // list to a couple of lines instead of a wall of spoilers.
 const OBJECTIVES = [
-  { id: 'rifle', text: 'Enter the armoury and take the service rifle' },
+  { id: 'rifle', text: 'Enter the armoury and take a weapon off the wall' },
   { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
   { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
   { id: 'descend', text: 'Descend into Silo 47' },
@@ -599,62 +634,203 @@ function queueJump() {
   return true;
 }
 
-function fire() {
-  if (!armed || reloading || modal || cctv) return;
-  if (ammo <= 0) { reload(); return; }
-  ammo--;
+// A weapon's spread is quoted in normalised device coordinates, where 1.0 is
+// half the screen. Multiplying up here keeps the catalogue's numbers readable
+// (0.011 for a rifle, 0.098 for a sawn-off) while still opening a shotgun to a
+// real cone rather than a slightly fat point.
+const SPREAD_TO_NDC = 3;
+const PERSON_KINDS = ['resident', 'quartermaster'];
+const CREATURE_KINDS = ['deer', 'rabbit', 'zombie', ...PERSON_KINDS];
+const _shotOrigin = new THREE.Vector3();
+const _hitNormal = new THREE.Vector3();
+const _normalMatrix = new THREE.Matrix3();
+
+/** Put the player's ammunition back into the pool for the weapon they hold. */
+function syncAmmo() {
+  const pool = loadout.for(weaponKey);
+  pool.magazine = ammo;
+  pool.reserve = reserve;
+}
+
+/**
+ * Take a weapon off the armoury wall. The one being put down keeps whatever is
+ * left in it, and goes back on its own hook.
+ */
+function equipWeapon(key, { announce = true } = {}) {
+  if (!isUsable(key)) return false;
+  if (armed) syncAmmo();
+  weaponKey = key;
+  weapon = WEAPONS[key];
+  const pool = loadout.for(key);
+  ammo = pool.magazine;
+  reserve = pool.reserve;
+  armed = true;
+  reloading = false;
+  reloadTimer = 0;
+  queuedReload = 0;
+  shotCooldown = 0;
+  setAiming(false);
+  game.setArmed(key);
+  document.body.classList.add('armed');
   updateAmmo();
+  if (announce) {
+    flash(weapon.kind === 'melee'
+      ? `${weapon.name} DRAWN`
+      : `${weapon.name} — ${weapon.automatic ? 'AUTOMATIC' : 'SEMI-AUTOMATIC'}`, 2200);
+    clickSound(360, .08, .05);
+  }
+  completeObjective('rifle');
+  return true;
+}
+
+/** Anything that can be shot in the world the player is standing in. */
+function livingTargets() {
+  const targets = [];
+  for (const root of game.wildlife) {
+    if (root.parent && root.userData.alive !== false) targets.push(root);
+  }
+  if (currentWorld === 'silo') {
+    for (const root of game.residents?.residents || []) {
+      if (root.parent && root.userData.alive !== false) targets.push(root);
+    }
+  }
+  const eli = game.armory?.quartermaster;
+  if (currentWorld === 'bunker' && eli?.parent && eli.userData.alive !== false) targets.push(eli);
+  return targets;
+}
+
+function targetRootOf(object) {
+  let node = object;
+  while (node && !CREATURE_KINDS.includes(node.userData.kind)) node = node.parent;
+  return node || null;
+}
+
+/** The world, minus the player and the marks already on it. */
+function worldGeometry(world) {
+  return world.children.filter((child) => child !== game.player && !child.userData.isDecal);
+}
+
+/**
+ * One round (or one pellet). Returns true if it found something alive.
+ * `spread` is the half-angle of the cone, already converted to NDC.
+ */
+function fireRound(world, spread, damage) {
+  const jitter = spread > 0
+    ? { x: (Math.random() * 2 - 1) * spread, y: (Math.random() * 2 - 1) * spread }
+    : { x: 0, y: 0 };
+  ray.setFromCamera(jitter, game.camera);
+  ray.far = weapon.range ?? 90;
+
+  const living = ray.intersectObjects(livingTargets(), true);
+  const target = living.length ? targetRootOf(living[0].object) : null;
+  const impact = ray.intersectObjects(worldGeometry(world), true)
+    .find((hit) => hit.object.isMesh && hit.object.visible && !targetRootOf(hit.object));
+
+  // Whichever came first. Checking the living list on its own let every weapon
+  // shoot straight through the bulkhead it was pointed at.
+  if (target && (!impact || living[0].distance <= impact.distance)) {
+    resolveHit(target, living[0].point, damage);
+    return true;
+  }
+  if (impact) {
+    burst(impact.point, 'dust', 4, 0.16);
+    // A round has to leave a mark, or the whole collection reads as a set of
+    // noise-makers. The face normal comes back in the hit object's local space.
+    if (impact.face) {
+      _normalMatrix.getNormalMatrix(impact.object.matrixWorld);
+      _hitNormal.copy(impact.face.normal).applyMatrix3(_normalMatrix).normalize();
+    } else {
+      _hitNormal.copy(game.camera.getWorldPosition(_shotOrigin)).sub(impact.point).normalize();
+    }
+    const mark = decals.add(world, impact.point, _hitNormal, {
+      size: weapon.family === 'shotgun' ? 0.07 : 0.11,
+    });
+    if (mark) mark.userData.isDecal = true;
+  }
+  return false;
+}
+
+function fire() {
+  if (!armed || reloading || modal || cctv || !started) return false;
+  if (shotCooldown > 0) return false;
+  if (weapon.kind === 'melee') return swing();
+  if (ammo <= 0) {
+    if (reserve > 0) reload();
+    else clickSound(120, .05, .05);
+    return false;
+  }
+  ammo--;
+  syncAmmo();
+  updateAmmo();
+  shotCooldown = shotInterval(weapon);
   game.playGun('shoot');
-  gunshotSound();
-  muzzleFlash();
-  recoil = .18;
+  weaponFireSound(weapon);
+  muzzleFlash(weapon);
+  recoil = weapon.recoil ?? .18;
 
   // fire() runs from an input event, so the camera still holds last frame's
   // matrix. Aiming off by a frame of mouse movement is a miss at range.
   const world = activeScene();
   world.updateMatrixWorld();
 
-  ray.setFromCamera({ x: 0, y: 0 }, game.camera);
-  ray.far = 90;
-
-  // Everything alive is a target, including anything that got inside.
-  // The rifle is for hunting. Nothing in the silo is a target.
-  const living = game.wildlife.filter(t => t.parent && t.userData.alive !== false);
-
-  const hits = ray.intersectObjects(living, true);
-  if (hits.length) {
-    const hit = hits[0];
-    let target = hit.object;
-    while (target && !['deer', 'rabbit', 'zombie'].includes(target.userData.kind)) target = target.parent;
-    if (target) { resolveHit(target, hit.point); return; }
+  const spread = (aiming ? (weapon.adsSpread ?? 0) : (weapon.spread ?? 0)) * SPREAD_TO_NDC;
+  const pellets = Math.max(1, weapon.pellets ?? 1);
+  let struck = false;
+  for (let i = 0; i < pellets; i++) {
+    struck = fireRound(world, spread, weapon.damage) || struck;
   }
-
-  // A miss still has to land somewhere, or the rifle feels like it fires blanks.
-  const worldHits = ray.intersectObjects(world.children, true);
-  const impact = worldHits.find(h => h.object.isMesh && h.object.visible);
-  if (impact) {
-    burst(impact.point, 'dust', 5, 0.18);
-  } else if (currentWorld !== 'outside') {
+  if (!struck && currentWorld !== 'outside' && !weapon.quiet) {
     flash('THE SHOT ECHOES THROUGH THE SHELTER', 900);
   }
+  // Three hundred people live in the silo and none of them ignore gunfire.
+  if (!weapon.quiet) alarmBystanders(1);
 
   if (ammo === 0 && reserve > 0) queuedReload = 0.45;
+  return true;
 }
 
-function resolveHit(target, point) {
+/** The bayonet: no ammunition, short reach, and it still marks what it hits. */
+function swing() {
+  shotCooldown = shotInterval(weapon);
+  recoil = weapon.recoil ?? .12;
+  game.playGun('shoot');
+  weaponFireSound(weapon);
+  const world = activeScene();
+  world.updateMatrixWorld();
+  ray.setFromCamera({ x: 0, y: 0 }, game.camera);
+  ray.far = weapon.reach ?? 2;
+  const living = ray.intersectObjects(livingTargets(), true);
+  const target = living.length ? targetRootOf(living[0].object) : null;
+  if (target) {
+    resolveHit(target, living[0].point, weapon.damage);
+    alarmBystanders(0.6);
+    return true;
+  }
+  return false;
+}
+
+function alarmBystanders(level) {
+  if (currentWorld !== 'silo') return 0;
+  return game.residents?.alarm?.(game.player.position, 18 * level) ?? 0;
+}
+
+function resolveHit(target, point, damage = weapon?.damage ?? 34) {
+  const kind = target.userData.kind;
+  if (PERSON_KINDS.includes(kind)) return resolvePersonHit(target, point, damage);
+
   burst(point, 'blood', 8, 0.3);
   const agent = game.creatures.agentFor(target);
 
-  if (target.userData.kind !== 'zombie') {
+  if (kind !== 'zombie') {
     if (agent?.kill()) {
-      flash(`${target.userData.kind.toUpperCase()} DOWN — APPROACH TO HARVEST`, 1700);
+      flash(`${kind.toUpperCase()} DOWN — APPROACH TO HARVEST`, 1700);
     }
     return;
   }
 
   // Height above the infected's feet decides where the round landed.
   const headshot = point.y - target.position.y > 1.42;
-  target.userData.hp -= headshot ? 3 : 1;
+  target.userData.hp = (target.userData.hp ?? 3) - (headshot ? 3 : 1);
   if (target.userData.hp <= 0) {
     if (agent?.kill()) flash(headshot ? 'HEADSHOT — INFECTED DOWN' : 'INFECTED DOWN', 1300);
     return;
@@ -663,17 +839,42 @@ function resolveHit(target, point) {
   flash('INFECTED HIT', 700);
 }
 
+// Shooting someone is a thing the shelter lets you do, and it has to look like
+// what it is: they take the round where it landed, and if it kills them they go
+// down on the deck and stay there.
+function resolvePersonHit(target, point, damage) {
+  burst(point, 'blood', 9, 0.34);
+  const headshot = point.y - target.position.y > 1.5;
+  const multiplier = headshot ? (weapon?.headshot ?? 2.2) : 1;
+  target.userData.hp = (target.userData.hp ?? 100) - damage * multiplier;
+  const name = target.userData.kind === 'quartermaster' ? 'QUARTERMASTER ELI' : 'RESIDENT';
+
+  if (target.userData.hp > 0) {
+    flash(`${name} HIT`, 900);
+    alarmBystanders(1);
+    return;
+  }
+
+  const agent = game.residents?.agentFor?.(target);
+  const downed = agent ? agent.kill() : game.armory?.downQuartermaster?.();
+  if (downed !== false) {
+    flash(headshot ? `${name} DOWN — HEADSHOT` : `${name} DOWN`, 2200);
+    alarmBystanders(1.4);
+  }
+}
+
 let reloadTimer = 0;
 let queuedReload = 0;
 
 function reload() {
-  if (reloading || ammo >= MAGAZINE_SIZE || reserve <= 0) return;
+  if (!armed || weapon.kind === 'melee') return;
+  if (reloading || ammo >= weapon.magazine || reserve <= 0) return;
   setAiming(false);
   reloading = true;
-  reloadTimer = 1.2;
-  game.playGun('reload');
-  flash('RELOADING…', 1200);
-  clickSound(170, .1, .04);
+  reloadTimer = weapon.reloadTime ?? 1.2;
+  game.playGun('reload', reloadTimer);
+  weaponReloadSound(weapon);
+  flash('RELOADING…', Math.round(reloadTimer * 1000));
 }
 
 function updateReload(dt) {
@@ -684,15 +885,20 @@ function updateReload(dt) {
   if (!reloading) return;
   reloadTimer -= dt;
   if (reloadTimer > 0) return;
-  const take = Math.min(MAGAZINE_SIZE - ammo, reserve);
+  const take = Math.min(weapon.magazine - ammo, reserve);
   ammo += take;
   reserve -= take;
   reloading = false;
+  syncAmmo();
   updateAmmo();
-  clickSound(310, .08, .04);
 }
 
-function updateAmmo() { ammoEl.textContent = `${ammo} / ${reserve}`; }
+function updateAmmo() {
+  const nameEl = document.getElementById('weaponName');
+  if (nameEl) nameEl.textContent = armed ? weapon.name : 'UNARMED';
+  ammoEl.textContent = !armed ? '—'
+    : (weapon.kind === 'melee' ? 'BLADE' : `${ammo} / ${reserve}`);
+}
 
 // A flat generator is not a number going red: the shelter goes dark, and the
 // only thing still lit is the emergency lamp.
@@ -715,6 +921,7 @@ function persistRun() {
     survival: survival.snapshot,
     elapsed: survival.elapsed,
     health, ammo, reserve, armed,
+    weaponKey, loadout: (armed ? (syncAmmo(), loadout.snapshot()) : loadout.snapshot()),
     completed: [...completed],
     cacheEmptied,
     doorOpen: game.doorOpen?.() ?? false,
@@ -728,6 +935,7 @@ function restoreRun() {
   Object.assign(survival, saved.survival || {});
   survival.elapsed = saved.elapsed || 0;
   health = saved.health ?? 100;
+  loadout.restore(saved.loadout);
   ammo = saved.ammo ?? MAGAZINE_SIZE;
   reserve = saved.reserve ?? INITIAL_RESERVE;
   cacheEmptied = !!saved.cacheEmptied;
@@ -736,10 +944,17 @@ function restoreRun() {
   game.setHatchOpen?.(hatchOpen);
   for (const id of saved.completed || []) completed.add(id);
   if (saved.armed) {
-    armed = true;
-    game.setArmed(true);
-    document.body.classList.add('armed');
+    // Runs saved before the collection existed have no weapon key at all, and
+    // restore holding the service rifle they were issued.
+    const key = isUsable(saved.weaponKey) ? saved.weaponKey : DEFAULT_WEAPON;
+    if (!saved.loadout) {
+      const pool = loadout.for(key);
+      pool.magazine = ammo;
+      pool.reserve = reserve;
+    }
+    equipWeapon(key, { announce: false });
   }
+  updateAmmo();
   return true;
 }
 
@@ -838,11 +1053,12 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat)fire();if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
-  addEventListener('keyup',e=>keys[e.code]=false);
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false});
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
-  renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement)fire()});
-  renderer.domElement.addEventListener('pointerup',(e)=>{if(e.button===2)setAiming(false)});
+  renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement){triggerHeld=true;fire()}});
+  renderer.domElement.addEventListener('pointerup',(e)=>{if(e.button===2)setAiming(false);if(e.button===0)triggerHeld=false});
+  addEventListener('blur',()=>{triggerHeld=false});
   renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
 
@@ -858,7 +1074,12 @@ function wireControls() {
   look.addEventListener('pointermove',e=>{if(e.pointerId!==lookId||modal)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;yaw-=dx*.004;pitch=Math.max(-1.25,Math.min(1.15,pitch-dy*.0031))});
   look.addEventListener('pointerup',()=>lookId=null);look.addEventListener('pointercancel',()=>lookId=null);
   document.getElementById('use').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();use()});
-  document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
+  const fireBtn=document.getElementById('fire');
+  fireBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();triggerHeld=true;fire()});
+  const releaseTrigger=()=>{triggerHeld=false};
+  fireBtn.addEventListener('pointerup',releaseTrigger);
+  fireBtn.addEventListener('pointercancel',releaseTrigger);
+  fireBtn.addEventListener('pointerleave',releaseTrigger);
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
   document.getElementById('jumpBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();queueJump()});
   document.getElementById('aimBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();setAiming(!aiming)});
@@ -1096,20 +1317,102 @@ function footstepSound(outdoors, strength = 1) {
   source.start(t);
   source.stop(t + .2);
 }
-function gunshotSound(){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.type='sawtooth';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(50,t+.1);g.gain.setValueAtTime(.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.17);o.connect(g);g.connect(master);o.start(t);o.stop(t+.18)}
+// Every weapon in the armoury has its own voice. A shot is three layers — the
+// low blast of the muzzle, a band-passed crack for the report, and a filtered
+// tail for the room — and each weapon's catalogue entry supplies all nine
+// numbers, so a suppressed SMG and an anti-materiel rifle in the same corridor
+// sound nothing like each other.
+let shotNoise = null;
+function shotNoiseBuffer() {
+  if (!shotNoise) shotNoise = noiseBuffer(2);
+  return shotNoise;
+}
+
+// A short burst of band-passed noise: the crack of a shot, or one click of a
+// reload. Returns nothing — it schedules itself and tears itself down.
+function noiseBurst({ at, hz, q, decay, level, type = 'bandpass' }) {
+  const source = ac.createBufferSource();
+  source.buffer = shotNoiseBuffer();
+  source.loop = true;
+  const filter = ac.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.value = hz;
+  filter.Q.value = q;
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(Math.max(.0008, level), at);
+  gain.gain.exponentialRampToValueAtTime(.0006, at + decay);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(master);
+  // Start somewhere random in the buffer, so repeat fire is not one loop.
+  source.start(at, Math.random() * 1.4);
+  source.stop(at + decay + .03);
+}
+
+function weaponFireSound(spec) {
+  if (!ac || !master) return;
+  const voice = spec?.audio?.fire;
+  if (!voice) return;
+  const t = ac.currentTime;
+
+  const body = ac.createOscillator();
+  body.type = 'sawtooth';
+  body.frequency.setValueAtTime(voice.bodyHz, t);
+  body.frequency.exponentialRampToValueAtTime(Math.max(20, voice.bodyEndHz), t + voice.bodyDecay);
+  const bodyGain = ac.createGain();
+  bodyGain.gain.setValueAtTime(voice.level * .78, t);
+  bodyGain.gain.exponentialRampToValueAtTime(.0008, t + voice.bodyDecay + .04);
+  body.connect(bodyGain);
+  bodyGain.connect(master);
+  body.start(t);
+  body.stop(t + voice.bodyDecay + .06);
+
+  noiseBurst({ at: t, hz: voice.crackHz, q: voice.crackQ,
+    decay: voice.crackDecay, level: voice.level });
+  noiseBurst({ at: t + .012, hz: voice.tailHz, q: .6,
+    decay: voice.tailDecay, level: voice.level * voice.tailLevel, type: 'lowpass' });
+}
+
+function weaponReloadSound(spec) {
+  if (!ac || !master) return;
+  const sequence = spec?.audio?.reload;
+  if (!sequence) return;
+  const t0 = ac.currentTime;
+  for (const click of sequence) {
+    const at = t0 + click.at;
+    noiseBurst({ at, hz: click.hz, q: click.q, decay: click.decay, level: click.level * .5 });
+    if (!click.tone) continue;
+    // The metal underneath the click. A magazine catch and a cylinder latch
+    // differ mostly in this, not in the noise on top of it.
+    const osc = ac.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(click.tone, at);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(40, click.tone * .55), at + click.decay);
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(click.level * .16, at);
+    gain.gain.exponentialRampToValueAtTime(.0005, at + click.decay);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(at);
+    osc.stop(at + click.decay + .03);
+  }
+}
 // A shot needs to leave a mark on the world: the room flashes, the barrel
 // throws light, and whatever the round hit puffs.
 let muzzleLight = null;
 let muzzleTimer = 0;
 
-function muzzleFlash() {
+function muzzleFlash(spec = weapon) {
   if (!muzzleLight) {
     muzzleLight = new THREE.PointLight(0xffd9a0, 0, 9, 2);
     muzzleLight.position.set(0.3, -0.25, -0.9);
     game.camera.add(muzzleLight);
   }
+  // A can hides most of the flash; a sawn-off throws the room into daylight.
+  const scale = spec?.quiet ? .28 : (spec?.family === 'shotgun' ? 1.5
+    : (spec?.family === 'sniper' ? 1.3 : 1));
   muzzleTimer = 0.06;
-  muzzleLight.intensity = 260;
+  muzzleLight.intensity = 260 * scale;
 }
 
 const impactGeometry = new THREE.SphereGeometry(0.035, 6, 5);
@@ -1138,6 +1441,7 @@ function burst(point, kind, count = 7, spread = 0.26) {
 }
 
 function updateEffects(dt) {
+  decals.update(dt);
   if (muzzleTimer > 0) {
     muzzleTimer -= dt;
     if (muzzleTimer <= 0 && muzzleLight) muzzleLight.intensity = 0;
@@ -1189,6 +1493,7 @@ function updateWeapon(dt) {
   const blend = aiming ? 1 : 0;
   const sway = Math.min(body.horizontalSpeed / 3, 1) * (aiming ? .22 : 1);
   const bob = body.distanceWalked * 3.4;
+  weaponAim.set(...aimPose(weapon));
   weaponTarget.lerpVectors(weaponHip, weaponAim, blend);
   weaponTarget.x += Math.cos(bob * .5) * .014 * sway;
   weaponTarget.y += Math.sin(bob) * .011 * sway + Math.sin(breath * .8) * .004 + recoil * .07;
@@ -1202,7 +1507,9 @@ function updateWeapon(dt) {
     (aiming ? 0 : -.08) + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0), 16, dt);
   game.weaponView.rotation.z = THREE.MathUtils.damp(game.weaponView.rotation.z,
     sprinting ? .24 : 0, 16, dt);
-  const targetFov = aiming ? 52 : 70;
+  // Optics differ. A scoped rifle pulls the frame in much further than a
+  // pistol at arm's length, so the sight picture comes out of the catalogue.
+  const targetFov = aiming ? (weapon?.zoom ?? 52) : 70;
   const nextFov = THREE.MathUtils.damp(game.camera.fov, targetFov, 12, dt);
   if (Math.abs(nextFov - game.camera.fov) > .001) {
     game.camera.fov = nextFov;
@@ -1271,6 +1578,10 @@ function simulate(dt) {
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
+  if (shotCooldown > 0) shotCooldown = Math.max(0, shotCooldown - dt);
+  // Held fire runs the automatics only. Everything else in the collection is
+  // one round per pull, which is what makes the revolver feel like a revolver.
+  if (triggerHeld && armed && weapon?.automatic) fire();
   updateWeapon(dt);
   updateReload(dt);
   updateEffects(dt);

@@ -47,13 +47,15 @@ class Creature {
 
   get position() { return this.root.position; }
 
-  // A downed animal folds over instead of snapping to a right angle: legs give
+  // Anything shot folds over instead of snapping to a right angle: legs give
   // out, the body drops and the whole thing tips onto its side.
   collapse(dt) {
     this.dying = Math.min(1, this.dying + dt * 2.2);
     const eased = this.dying * this.dying * (3 - 2 * this.dying);
     this.root.rotation.z = eased * (Math.PI / 2) * this.fallDirection;
-    this.root.position.y = -eased * this.dropHeight;
+    // Relative to the floor the body was standing on. Absolute zero here put
+    // every resident shot on an upper gallery through it and into the shaft.
+    this.root.position.y = this.groundY - eased * this.dropHeight;
     for (const limb of Object.values(this.limbs || {})) {
       limb.node.rotation.x = THREE.MathUtils.lerp(limb.node.rotation.x, limb.rest + 0.4, dt * 4);
     }
@@ -63,6 +65,7 @@ class Creature {
     if (this.root.userData.alive === false) return false;
     this.root.userData.alive = false;
     this.fallDirection = Math.random() < 0.5 ? -1 : 1;
+    this.groundY = this.root.position.y;
     const box = new THREE.Box3().setFromObject(this.root);
     this.dropHeight = Math.max(0, (box.max.y - box.min.y) * 0.22);
     return true;
@@ -195,6 +198,18 @@ class Resident extends Creature {
     this.radius = options.radius ?? 0.34;
     this.state = 'stroll';
     this.greeting = 0;
+    this.panic = 0;
+  }
+
+  // Somebody just fired, or fell, within earshot. Three hundred people live
+  // here and none of them stand and watch: they break away from the noise.
+  alarm(position, level = 1) {
+    this.panic = Math.max(this.panic, level);
+    this.heading = Math.atan2(this.root.position.x - position.x,
+      this.root.position.z - position.z);
+    this.detourTimer = 0;
+    this.state = 'flee';
+    this.timer = 3 + Math.random() * 3;
   }
 
   update(dt, playerPosition, colliders) {
@@ -202,6 +217,24 @@ class Resident extends Creature {
     _toPlayer.subVectors(playerPosition, this.root.position);
     const distance = _toPlayer.length();
     const sameLevel = Math.abs(playerPosition.y - this.root.position.y) < 2.2;
+
+    if (this.panic > 0) {
+      this.panic = Math.max(0, this.panic - dt * 0.28);
+      this.timer -= dt;
+      this.greeting = 0;
+      // Run the gallery away from the shot rather than into the balustrade.
+      const tangent = Math.atan2(this.root.position.x, this.root.position.z) + Math.PI / 2;
+      const away = Math.atan2(this.root.position.x - playerPosition.x,
+        this.root.position.z - playerPosition.z);
+      const along = Math.cos(away - tangent) >= 0 ? tangent : tangent + Math.PI;
+      this.steer(along);
+      const fled = this.advance(dt, this.speed * 2.35, colliders);
+      this.phase += (fled > 0 ? fled * 3.2 : 0.6) * dt;
+      this.root.position.y = this.homeY;
+      this.animate(dt, fled, 0);
+      if (this.timer <= 0 && this.panic <= 0.05) this.state = 'stroll';
+      return;
+    }
 
     this.timer -= dt;
     if (distance < 3.4 && sameLevel) {
@@ -232,7 +265,13 @@ class Resident extends Creature {
 
     // Residents stay on their own gallery; the stair is the player's problem.
     this.root.position.y = this.homeY;
+    this.animate(dt, moved, this.greeting);
+  }
 
+  // The walk cycle and the face. Split out of update() because a fleeing
+  // resident takes a different route through the state machine and still has
+  // to move their legs.
+  animate(dt, moved, greeting) {
     swing(this.limbs, ['legL'], this.phase, moved * 0.14);
     swing(this.limbs, ['legR'], this.phase + Math.PI, moved * 0.14);
     swing(this.limbs, ['shinL'], this.phase + 1.1, moved * 0.07);
@@ -246,12 +285,12 @@ class Resident extends Creature {
     // stance instead of continuing the same mannequin walk cycle while they
     // speak. The motion is deliberately restrained for the confined silo.
     if (this.limbs.armR) {
-      const target = this.limbs.armR.rest - this.greeting * 0.54;
+      const target = this.limbs.armR.rest - greeting * 0.54;
       this.limbs.armR.node.rotation.x = THREE.MathUtils.damp(
         this.limbs.armR.node.rotation.x, target, 7, dt);
     }
     if (this.limbs.foreR) {
-      const target = this.limbs.foreR.rest - this.greeting * 0.82;
+      const target = this.limbs.foreR.rest - greeting * 0.82;
       this.limbs.foreR.node.rotation.x = THREE.MathUtils.damp(
         this.limbs.foreR.node.rotation.x, target, 8, dt);
     }
@@ -261,9 +300,9 @@ class Resident extends Creature {
     if (this.limbs.head) {
       // Idling, they look around; greeting, they look at you.
       const idle = Math.sin(this.phase * 0.4) * 0.3;
-      this.limbs.head.node.rotation.y = THREE.MathUtils.lerp(idle, 0, this.greeting);
+      this.limbs.head.node.rotation.y = THREE.MathUtils.lerp(idle, 0, greeting);
       this.limbs.head.node.rotation.x = Math.sin(this.phase * 0.7) * 0.018
-        - this.greeting * 0.035;
+        - greeting * 0.035;
     }
     // Short, infrequent blinks keep the new close-up eyes alive without a
     // morph-target rig or another per-character animation mixer.
@@ -330,9 +369,11 @@ export const RESIDENT_BUILDS = ['A', 'B', 'C', 'D', 'E', 'F'];
 export function populateSilo({ scene, colliders, assets, walkable, count = 20 }) {
   const residents = [];
   const agents = [];
+  const byRoot = new Map();
   const builds = RESIDENT_BUILDS.map((k) => assets[`resident${k}`]).filter(Boolean);
   if (!builds.length || !walkable?.length) {
-    return { residents, agents, update: () => {}, resolvePlayer: () => false };
+    return { residents, agents, byRoot, update: () => {}, resolvePlayer: () => false,
+             agentFor: () => null, alarm: () => 0 };
   }
 
   // Spread over the upper galleries rather than one per level: a silo of three
@@ -357,16 +398,50 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
     });
     agents.push(agent);
     residents.push(root);
+    byRoot.set(root, agent);
     root.userData.resident = agent;
   }
 
+  const agentFor = (root) => byRoot.get(root) || null;
+
+  /**
+   * A shot, or a body hitting the deck. Everyone on the same gallery within
+   * `radius` breaks away from it; the count is what the caller reports.
+   */
+  function alarm(position, radius = 22) {
+    let heard = 0;
+    for (const agent of agents) {
+      if (agent.root.userData.alive === false) continue;
+      if (Math.abs(agent.root.position.y - position.y) > 2.4) continue;
+      const distance = Math.hypot(agent.root.position.x - position.x,
+        agent.root.position.z - position.z);
+      if (distance > radius) continue;
+      agent.alarm(position, 1 - distance / (radius * 2));
+      heard++;
+    }
+    return heard;
+  }
+
   function update(dt, world, playerPosition) {
-    if (world !== 'silo') return;
-    for (const agent of agents) agent.update(dt, playerPosition, colliders);
+    if (world !== 'silo') {
+      // A body that started falling has to finish falling, even if the player
+      // walked out of the silo while it was still on its way down.
+      for (const agent of agents) if (agent.dying > 0 && agent.dying < 1) agent.collapse(dt);
+      return;
+    }
+    for (const agent of agents) {
+      if (agent.root.userData.alive === false) {
+        if (agent.dying < 1) agent.collapse(dt);
+        continue;
+      }
+      agent.update(dt, playerPosition, colliders);
+    }
 
     // Keep them out of each other on a busy gallery.
     for (let i = 0; i < agents.length; i++) {
+      if (agents[i].root.userData.alive === false) continue;
       for (let j = i + 1; j < agents.length; j++) {
+        if (agents[j].root.userData.alive === false) continue;
         const a = agents[i].root.position;
         const b = agents[j].root.position;
         if (Math.abs(a.y - b.y) > 1) continue;
@@ -390,6 +465,8 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
   function resolvePlayer(position, radius = 0.34, height = 1.78) {
     let corrected = false;
     for (const agent of agents) {
+      // You can step over the dead. Only people still on their feet push back.
+      if (agent.root.userData.alive === false) continue;
       const other = agent.root.position;
       if (Math.abs(position.y - other.y) > Math.max(1.25, height * .75)) continue;
       let dx = position.x - other.x;
@@ -414,7 +491,7 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
     return corrected;
   }
 
-  return { residents, agents, update, resolvePlayer };
+  return { residents, agents, byRoot, agentFor, alarm, update, resolvePlayer };
 }
 
 export function createCreatureSystem({ scene, colliders, assets, counts = {}, wildlife: spawnWildlife = true }) {

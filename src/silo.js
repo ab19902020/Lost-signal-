@@ -651,15 +651,23 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     // could walk through either one and fall into the shaft. These oriented
     // boxes follow both radial edges and overlap the gallery returns.
     // Begin the straight parapets where the circular stair balustrade meets
-    // them. Extending either parapet back to the service core puts a rail
-    // straight across the helical treads: it looks protective from the gallery
-    // and becomes an impassable barrier to anyone actually using the stair.
-    const guardInner = level === levels ? landingInner : stairGuardRadius;
+    // them. Extending a parapet back to the service core puts a rail straight
+    // across the helical treads: it looks protective from the gallery and
+    // becomes an impassable barrier to anyone actually using the stair.
+    // Which edge is a stair mouth is therefore decided per side, not per level:
+    // sealing both on the head platform, as this used to, walled the player off
+    // the one flight they can actually walk down.
     const guardOuter = wellRadius + 0.12;
-    const guardMid = (guardInner + guardOuter) / 2;
-    const guardHalf = (guardOuter - guardInner) / 2;
     for (const side of [-1, 1]) {
       const offset = side * landingHalf;
+      // Side -1 is the edge this level's own flight climbs away through; it
+      // does not exist on the head platform, so there the rail closes right
+      // in to the core. Side +1 is always the mouth of the flight arriving
+      // from below and always stays clear of the treads.
+      const isStairMouth = side < 0 ? level < levels : true;
+      const guardInner = isStairMouth ? stairGuardRadius : landingInner;
+      const guardMid = (guardInner + guardOuter) / 2;
+      const guardHalf = (guardOuter - guardInner) / 2;
       colliders.addOrientedBox({
         cx: Math.cos(angle) * guardMid + Math.sin(angle) * offset,
         cz: Math.sin(angle) * guardMid - Math.cos(angle) * offset,
@@ -671,9 +679,10 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       });
     }
     if (level === levels) {
-      // The final landing has no next flight through its inner edge. This
-      // cross-piece joins the two long rails and physically prevents a player
-      // walking off the head platform into the full-height shaft.
+      // Nothing rises through the head platform's inner edge. This cross-piece
+      // joins the two long rails and physically prevents a player walking off
+      // it into the full-height shaft. It sits inside the treads' inner radius
+      // so it never stands in the descending lane.
       const innerRailRadius = landingInner + 0.15;
       colliders.addOrientedBox({
         cx: Math.cos(angle) * innerRailRadius,

@@ -4,6 +4,7 @@ import { ColliderSet } from './physics.js';
 import { createCreatureSystem, populateSilo } from './creatures.js';
 import { buildSilo } from './silo.js';
 import { buildArmory } from './armory.js';
+import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
 // No visible architecture/props are authored with Three.js geometry.
@@ -316,21 +317,46 @@ export function createGameWorld(assets) {
   rain.frustumCulled=false;
   outside.add(rain);
 
-  // Blender rifle as first-person viewmodel.
+  // The held weapon, as a first-person viewmodel. `weaponView` carries the
+  // sway, bob and recoil the player controller drives; the model inside it is
+  // swapped whenever they take something else off the wall, so switching from
+  // a rifle to a revolver does not reset the rig mid-stride.
   const weaponView = new THREE.Group();
   camera.add(weaponView);
   weaponView.position.set(.32,-.38,-.72);
   weaponView.rotation.set(-.04,-.08,0);
   weaponView.visible=false;
-  const rifle = cloneGLTF(armory?.weaponAsset || assets.rifle);
-  // Both rifle sources point down local +X. Rotate that axis into camera -Z
-  // so the muzzle points where the crosshair points instead of lying sideways
-  // across the lower third of the screen.
-  rifle.rotation.set(0,Math.PI / 2,0);
-  rifle.scale.setScalar(armory?.weaponAsset ? .16 : .78);
-  rifle.position.set(armory?.weaponAsset ? -.04 : 0,armory?.weaponAsset ? -.08 : -.02,0);
-  rifle.name = 'Equipped_Service_Rifle';
-  weaponView.add(rifle);
+  // A second group carries the reload gesture on its own, so a magazine change
+  // reads as the weapon moving in the hands rather than the camera lurching.
+  const weaponAction = new THREE.Group();
+  weaponView.add(weaponAction);
+  let heldModel = null;
+  let heldKey = null;
+
+  function setWeapon(key) {
+    if (heldKey === key && heldModel) return heldModel;
+    if (heldModel) {
+      weaponAction.remove(heldModel);
+      heldModel = null;
+    }
+    const source = (key && assets[key]) || armory?.weaponAsset || assets.rifle;
+    if (!source) { heldKey = null; return null; }
+    heldKey = key && assets[key] ? key : null;
+    const model = cloneGLTF(source);
+    // Every supplied model and the fallback hunting rifle point down local +X.
+    // Rotate that axis into camera -Z so the muzzle points where the crosshair
+    // points instead of lying sideways across the lower third of the screen.
+    model.rotation.set(0,Math.PI / 2,0);
+    const view = WEAPONS[heldKey]?.view
+      || { scale: armory?.weaponAsset ? .16 : .78, offset: [armory?.weaponAsset ? -.04 : 0, armory?.weaponAsset ? -.08 : -.02, 0] };
+    model.scale.setScalar(view.scale);
+    model.position.set(...view.offset);
+    model.name = `Equipped_${heldKey || 'Rifle'}`;
+    weaponAction.add(model);
+    heldModel = model;
+    return model;
+  }
+  setWeapon(DEFAULT_WEAPON);
 
   // CCTV cameras look at the Blender exterior scene.
   const cctvCameras=[
@@ -404,13 +430,74 @@ export function createGameWorld(assets) {
     return o?.userData.interaction||null;
   }
 
-  function setArmed(v) {
-    weaponView.visible=v;
-    armory?.setArmed(v);
+  /**
+   * `value` is the key of the weapon in the player's hands, or a falsy value
+   * when they are carrying nothing. `true` is still accepted, and means the
+   * default service rifle, so saved runs and the QA harness keep working.
+   */
+  function setArmed(value) {
+    const key = value === true ? DEFAULT_WEAPON : (value || null);
+    weaponView.visible = !!key;
+    if (key) setWeapon(key);
+    armory?.setEquipped(key);
+    return key;
   }
 
-  function playGun(kind) {
-    if(kind==='reload') weaponView.rotation.z=-.05;
+  // How a reload looks depends on what is being reloaded: a magazine drops out
+  // of the bottom of the weapon, a pump gun is worked fore and aft, a bolt is
+  // rolled right and thrown, a cylinder swings left. One shared timer, four
+  // gestures, so twenty-two weapons never all mime the same magazine change.
+  let actionTimer = 0;
+  let actionLength = 0;
+  let actionStyle = 'magazine';
+  const ACTION_STYLE = {
+    rifle: 'magazine', smg: 'magazine', pistol: 'magazine',
+    shotgun: 'pump', sniper: 'magazine', revolver: 'cylinder', blade: 'stow',
+  };
+
+  function playGun(kind, seconds = 0) {
+    if (kind !== 'reload') return;
+    const weapon = WEAPONS[heldKey];
+    actionStyle = weapon?.family === 'sniper' && /bolt|materiel/i.test(weapon.name)
+      ? 'bolt'
+      : (ACTION_STYLE[weapon?.family] || 'magazine');
+    actionLength = Math.max(.25, seconds || weapon?.reloadTime || 1.2);
+    actionTimer = actionLength;
+  }
+
+  function updateAction(dt) {
+    let x = 0, y = 0, z = 0, pitch = 0, roll = 0;
+    if (actionTimer > 0) {
+      actionTimer = Math.max(0, actionTimer - dt);
+      // A single 0..1..0 arc over the length of the reload.
+      const t = 1 - actionTimer / actionLength;
+      const arc = Math.sin(Math.PI * Math.min(1, t));
+      const beat = Math.sin(Math.PI * 2 * Math.min(1, t));
+      if (actionStyle === 'pump') {
+        z = arc * .10 + beat * .05;
+        pitch = arc * .12;
+      } else if (actionStyle === 'bolt') {
+        roll = -arc * .40;
+        z = beat * .045;
+        pitch = arc * .10;
+      } else if (actionStyle === 'cylinder') {
+        roll = arc * .62;
+        y = -arc * .07;
+      } else if (actionStyle === 'stow') {
+        y = -arc * .22;
+        pitch = arc * .55;
+      } else {
+        y = -arc * .13;
+        roll = -arc * .30;
+        pitch = arc * .16;
+      }
+    }
+    weaponAction.position.set(
+      THREE.MathUtils.damp(weaponAction.position.x, x, 18, dt),
+      THREE.MathUtils.damp(weaponAction.position.y, y, 18, dt),
+      THREE.MathUtils.damp(weaponAction.position.z, z, 18, dt));
+    weaponAction.rotation.x = THREE.MathUtils.damp(weaponAction.rotation.x, pitch, 18, dt);
+    weaponAction.rotation.z = THREE.MathUtils.damp(weaponAction.rotation.z, roll, 18, dt);
   }
 
   function setDoorOpen(open) {
@@ -431,6 +518,7 @@ export function createGameWorld(assets) {
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     armory?.update(dt);
+    updateAction(dt);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
     if (hatchHinge) hatchHinge.rotation.x = THREE.MathUtils.damp(
       hatchHinge.rotation.x, hatchOpen ? 1.38 : 0, 5.2, dt);
@@ -455,8 +543,9 @@ export function createGameWorld(assets) {
 
   return {
     bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
-    weaponView,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
-    playGun,setDoorOpen,setHatchOpen,update,
+    weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
+    playGun,setWeapon,setDoorOpen,setHatchOpen,update,
+    heldWeapon:()=>heldKey,
     bunkerLights,emergency,siloWorld,armory,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
