@@ -20,7 +20,9 @@ const focusedViews = new Set([
   '05aa-secure-top-stair-transition',
   '06-silo-home',
   '06a-resident-conversation-closeup',
+  '06b-directory-signage',
   '09-mobile-secure-top-transition',
+  '09a-mobile-rifle-aim',
 ]);
 
 const withQuality = (url, tier) => {
@@ -309,7 +311,7 @@ await desktop.evaluate(() => {
 
   // Review the authored apartment itself. The gallery/stair shot already
   // covers the full environment; hiding unrelated rings here prevents a view
-  // through the doorway from paying to draw the other 125 homes.
+  // through the doorway from paying to draw the other 76 homes.
   for (const child of ls.game.silo.children) {
     if (child.isPointLight) {
       child.visible = child.position.y < 4.2 && child.position.x > 14 && Math.abs(child.position.z) < 9;
@@ -328,6 +330,39 @@ await desktop.evaluate(() => {
 });
 await saveChecked(desktop, '06-silo-home', {
   minMean: 0.06, maxMean: 0.5, maxDark: 0.82, maxBright: 0.055,
+});
+
+// The supplied sign screenshot showed every word from its back face. Review
+// the player-facing side directly, large enough that mirrored lettering is an
+// unmistakable visual failure rather than a detail hidden in the gallery.
+await desktop.setViewportSize({ width: 720, height: 480 });
+await desktop.evaluate(() => {
+  const ls = globalThis.__ls;
+  const mesh = ls.game.silo.getObjectByName('HabDirectory');
+  if (!mesh) throw new Error('no silo directory available for visual QA');
+  let root = mesh;
+  while (root.parent && root.parent !== ls.game.silo) root = root.parent;
+  for (const child of ls.game.silo.children) {
+    child.visible = child === root || child === ls.game.camera || child.isLight;
+  }
+  root.visible = true;
+  const angle = .28;
+  const cameraRadius = 11.45;
+  const boardRadius = 14.1;
+  const reviewPosition = {
+    x: Math.cos(angle) * cameraRadius,
+    y: 1.44,
+    z: Math.sin(angle) * cameraRadius,
+  };
+  for (let i = 0; i < 120; i++) ls.game.siloWorld.update(1 / 60, reviewPosition);
+  ls.freecam(reviewPosition.x, reviewPosition.y, reviewPosition.z,
+    Math.cos(angle) * boardRadius, 1.38, Math.sin(angle) * boardRadius, 39);
+  ls.game.camera.near = .05;
+  ls.game.camera.far = 9;
+  ls.game.camera.updateProjectionMatrix();
+});
+await saveChecked(desktop, '06b-directory-signage', {
+  minMean: 0.035, maxMean: 0.48, maxDark: 0.92, maxBright: 0.07,
 });
 
 // Conversation-distance character review. It catches black bead eyes, joined
@@ -374,6 +409,24 @@ const mobileOverlap = await mobile.evaluate(() => {
     Math.max(0, Math.min(help.bottom, stats.bottom) - Math.max(help.top, stats.top));
 });
 if (mobileOverlap > 0) throw new Error(`mobile help button overlaps survival stats by ${mobileOverlap}px²`);
+const controlOverlaps = await mobile.evaluate(() => {
+  const wasArmed = document.body.classList.contains('armed');
+  document.body.classList.add('armed');
+  const ids = ['use', 'fire', 'reloadBtn', 'aimBtn', 'movePad', 'sprintBtn', 'crouchBtn', 'jumpBtn'];
+  const rects = Object.fromEntries(ids.map((id) => [id, document.getElementById(id).getBoundingClientRect()]));
+  const overlaps = [];
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = rects[ids[i]], b = rects[ids[j]];
+      const area = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+        Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      if (area > 1) overlaps.push(`${ids[i]}/${ids[j]}=${Math.round(area)}`);
+    }
+  }
+  if (!wasArmed) document.body.classList.remove('armed');
+  return overlaps;
+});
+if (controlOverlaps.length) throw new Error(`mobile controls overlap: ${controlOverlaps.join(', ')}`);
 await saveChecked(mobile, '07-mobile-landscape', { minMean: 0.09, maxBright: 0.07 });
 
 // Mobile must be reviewed in the world that failed in the supplied recording,
@@ -404,6 +457,20 @@ await mobile.evaluate(() => {
 await saveChecked(mobile, '09-mobile-secure-top-transition', {
   minMean: 0.055, maxMean: 0.48, maxBright: 0.06,
 });
+
+// Actual touch HUD plus the corrected rifle in ADS. This frame proves the
+// weapon points forward, the sights centre, and AIM/JUMP coexist with the
+// existing controls at the user's phone aspect ratio.
+await mobile.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.arm();
+  ls.aim(true);
+  ls.simulate(120);
+});
+await saveChecked(mobile, '09a-mobile-rifle-aim', {
+  minMean: 0.055, maxMean: 0.52, maxBright: 0.07,
+});
+await mobile.evaluate(() => globalThis.__ls.aim(false));
 await stopMobilePump();
 await mobile.close();
 

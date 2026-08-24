@@ -328,9 +328,12 @@ export function createGameWorld(assets) {
   weaponView.rotation.set(-.04,-.08,0);
   weaponView.visible=false;
   const rifle = cloneGLTF(assets.rifle);
-  rifle.rotation.set(0,Math.PI,0);
+  // The authored rifle points down local +X. Rotate that axis into camera -Z
+  // so the muzzle points where the crosshair points instead of lying sideways
+  // across the lower third of the screen.
+  rifle.rotation.set(0,Math.PI / 2,0);
   rifle.scale.setScalar(.78);
-  rifle.position.set(.15,-.02,0);
+  rifle.position.set(0,-.02,0);
   weaponView.add(rifle);
 
   // CCTV cameras look at the Blender exterior scene.
@@ -391,7 +394,7 @@ export function createGameWorld(assets) {
     ray.setFromCamera({x:0,y:0},camera);
     camera.getWorldPosition(_interactionCamera);
     // The silo now has a real interaction on every quarters door. Raycasting
-    // all 126 furnished meshes every frame is needless work on a phone; reject
+    // all 84 furnished meshes every frame is needless work on a phone; reject
     // anything whose hinge/root is not even within reach first.
     const candidates=interactions.filter((o) => {
       if (o.userData.interaction?.world !== world) return false;

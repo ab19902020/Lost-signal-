@@ -24,7 +24,7 @@ export const SILO = {
   deckOuter: 19.6,      // 6.6 m of clear walkway, all the way round
   levelHeight: 4.0,
   levels: 7,
-  segments: 18,         // homes per level: 126 in all
+  segments: 12,         // 11 family homes + one service bay: 77 homes in all
   stairRadius: 5.4,
   stairColumn: 1.2,     // a slim service core, not a drum filling the well
   stairSteps: 36,
@@ -39,7 +39,7 @@ export const SILO = {
 };
 
 const TAU = Math.PI * 2;
-const TUNNEL_BAY = 9;
+const TUNNEL_BAY = 6;
 const TUNNEL_ENTRY_HALF = 1.45;
 const TUNNEL_DOOR_HALF = 0.98;
 const TUNNEL_DOOR_DEPTH = 3.72;
@@ -315,6 +315,8 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const apartmentDepth = (apartmentBack - deckOuter) / 2;
   const homes = [];
   const sofas = [];
+  const seats = [];
+  const furnitureColliders = [];
   const homeDoors = [];
   const tunnelDoors = [];
   const homeDoorByKey = new Map();
@@ -324,6 +326,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // real interaction without splitting the joined apartment GLB into hundreds
   // of draw calls. It remains visible to the raycaster but writes no pixels.
   const sofaHitGeometry = new THREE.BoxGeometry(1.95, 0.92, 0.72);
+  const benchHitGeometry = new THREE.BoxGeometry(1.95, 0.58, 0.48);
   const sofaHitMaterial = new THREE.MeshBasicMaterial({
     transparent: true, opacity: 0, depthWrite: false, colorWrite: false,
   });
@@ -435,19 +438,21 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       // any front door instead of discovering a decorative dead end.
       if (assets.habApartment) {
         const rotationY = -angle + Math.PI / 2;
+        const homePosition = new THREE.Vector3(
+          Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid);
         const home = place(assets.habApartment, scene,
-          [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
+          homePosition.toArray(),
           [0, rotationY, 0], 1, { world: 'silo', collide: false });
         home.userData.home = { level, bay };
         homes.push(home);
 
         const sofa = new THREE.Mesh(sofaHitGeometry, sofaHitMaterial);
         sofa.name = `SofaInteraction_${level}_${bay}`;
-        sofa.position.set(1.80, 0.55, 0.92);
+        sofa.position.set(2.60, 0.55, 0.28);
         home.add(sofa);
-        const toWorld = (local) => local.applyAxisAngle(yAxis, rotationY).add(home.position);
-        const seat = toWorld(new THREE.Vector3(1.80, 0.02, 0.88));
-        const stand = toWorld(new THREE.Vector3(1.80, 0.02, -0.58));
+        const toWorld = (local) => local.applyAxisAngle(yAxis, rotationY).add(homePosition);
+        const seat = toWorld(new THREE.Vector3(2.60, 0.02, 0.28));
+        const stand = toWorld(new THREE.Vector3(2.60, 0.02, -1.60));
         const unit = `QUARTERS ${String(levels - level).padStart(2, '0')}-${String(bay + 1).padStart(2, '0')}`;
         addInteraction(sofa, `SIT ON SOFA — ${unit}`, 'silo', () => {
           window.dispatchEvent(new CustomEvent('lostsignal:sofa', {
@@ -455,6 +460,64 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
           }));
         });
         sofas.push(sofa);
+        seats.push(sofa);
+
+        // The dining bench is usable as well. Both targets are deliberately
+        // separate from the joined render mesh, keeping every home to one draw
+        // call while still giving the furniture more than decorative value.
+        const bench = new THREE.Mesh(benchHitGeometry, sofaHitMaterial);
+        bench.name = `DiningSeatInteraction_${level}_${bay}`;
+        bench.position.set(1.00, 0.36, -2.33);
+        home.add(bench);
+        const benchSeat = toWorld(new THREE.Vector3(1.00, 0.02, -2.33));
+        const benchStand = toWorld(new THREE.Vector3(1.00, 0.02, -3.55));
+        addInteraction(bench, `SIT AT DINING TABLE — ${unit}`, 'silo', () => {
+          window.dispatchEvent(new CustomEvent('lostsignal:sofa', {
+            detail: { seat: benchSeat.clone(), stand: benchStand.clone(), yaw: rotationY,
+              unit: `${unit} · DINING TABLE` },
+          }));
+        });
+        seats.push(bench);
+
+        // Major visible furniture is physical. Low objects are climbable only
+        // after a jump reaches their top; tall shelving and wardrobes remain
+        // full-height blockers. Small decoration inherits the solid surface it
+        // sits on, so mugs do not need hundreds of capsule tests per frame.
+        const addFurniture = (name, x, z, halfX, halfZ, min, max, climbable = false) => {
+          const centreLocal = new THREE.Vector3(x, 0, z).applyAxisAngle(yAxis, rotationY);
+          const collider = colliders.addOrientedBox({
+            cx: homePosition.x + centreLocal.x,
+            cz: homePosition.z + centreLocal.z,
+            halfX, halfZ, rotationY,
+            minY: y + min, maxY: y + max, climbable,
+          });
+          collider.name = `${name}_${level}_${bay}`;
+          furnitureColliders.push(collider);
+        };
+        const furniture = [
+          ['hall-console', -4.36, -3.88, .50, .58, 0, .84, false],
+          ['hall-plant', 4.38, -3.48, .38, .38, 0, 1.28, false],
+          ['kitchen-counter', -4.43, -1.55, .46, 1.15, 0, 1.04, true],
+          ['kitchen-larder', -2.12, -2.20, .42, .42, 0, 2.10, false],
+          ['dining-table', 1.00, -1.45, 1.00, .62, 0, .80, true],
+          ['dining-bench-front', 1.00, -2.33, .96, .24, 0, .49, true],
+          ['dining-bench-back', 1.00, -.57, .96, .24, 0, .49, true],
+          ['sofa', 2.60, .42, 1.06, .62, 0, 1.02, true],
+          ['coffee-table', 2.60, -.70, .48, .48, 0, .61, true],
+          ['living-pouf-a', .65, .55, .42, .42, 0, .78, true],
+          ['living-pouf-b', 4.15, .60, .38, .38, 0, .72, true],
+          ['tub-chair', 4.05, -.75, .55, .55, 0, 1.00, true],
+          ['bookcase', 4.43, -1.85, .26, .66, 0, 2.60, false],
+          ['living-plant', -.55, .48, .34, .34, 0, 1.30, false],
+          ['parent-bed', -2.55, 3.15, 1.02, 1.10, 0, .72, true],
+          ['bedside-table', -1.18, 2.27, .28, .28, 0, .66, true],
+          ['wardrobe', -4.25, 4.52, .50, .40, 0, 2.20, false],
+          ['parent-pouf', -4.05, 1.95, .35, .35, 0, .65, true],
+          ['bunk-bed', 2.25, 3.20, 1.03, 1.10, 0, 2.35, false],
+          ['child-desk', 4.25, 3.70, .38, .59, 0, .80, true],
+          ['toy-crate', .55, 4.55, .36, .30, 0, .46, true],
+        ];
+        for (const spec of furniture) addFurniture(...spec);
       }
 
       const hinge = -doorHalf + 0.04;
@@ -500,13 +563,13 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const halfW = homeWidth / 2;
       const halfD = apartmentDepth;
       const centre = apartmentMid;
-      const T = 0.10, DW = 0.48, WIDE = 1.55, top = y + levelHeight - 0.5;
+      const T = 0.10, DW = 0.62, WIDE = 1.80, top = y + levelHeight - 0.5;
       const across = (z, x0, x1) => addArcWall(
         angle + ((x0 + x1) / 2) / centre, centre + z, (x1 - x0) / 2, T, y, top);
       const along = (x, z0, z1) => addRadialWall(
         angle + x / centre, centre + z0, centre + z1, T, y, top);
-      const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
-      const kitchenDoor = -2.05, livingGap = 0.0, bedA = -1.70, bedB = 1.70;
+      const HALL_BACK = -2.75, KITCHEN_X = -1.40, KITCHEN_BACK = -0.35, BED_FRONT = 1.25;
+      const kitchenDoor = -3.10, livingGap = 0.0, bedA = -2.50, bedB = 2.50;
       across(HALL_BACK, -halfW, kitchenDoor - DW);
       if (livingGap - WIDE > kitchenDoor + DW + 0.02) {
         across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
@@ -564,8 +627,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     // At the foot of that level's flight: the bottom tread stands at floor
     // height, so stepping off it puts you straight onto the landing.
     const angle = level * stairTurn;
-    if (assets.habLanding) {
-      place(assets.habLanding, scene,
+    const landingAsset = level === levels ? assets.habTopLanding : assets.habLanding;
+    if (landingAsset) {
+      place(landingAsset, scene,
         [Math.cos(angle) * landingMid, y, Math.sin(angle) * landingMid],
         [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
     }
@@ -590,7 +654,7 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     // them. Extending either parapet back to the service core puts a rail
     // straight across the helical treads: it looks protective from the gallery
     // and becomes an impassable barrier to anyone actually using the stair.
-    const guardInner = stairGuardRadius;
+    const guardInner = level === levels ? landingInner : stairGuardRadius;
     const guardOuter = wellRadius + 0.12;
     const guardMid = (guardInner + guardOuter) / 2;
     const guardHalf = (guardOuter - guardInner) / 2;
@@ -601,6 +665,21 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         cz: Math.sin(angle) * guardMid - Math.cos(angle) * offset,
         halfX: guardHalf,
         halfZ: 0.19,
+        rotationY: -angle,
+        minY: y + 0.02,
+        maxY: y + 1.18,
+      });
+    }
+    if (level === levels) {
+      // The final landing has no next flight through its inner edge. This
+      // cross-piece joins the two long rails and physically prevents a player
+      // walking off the head platform into the full-height shaft.
+      const innerRailRadius = landingInner + 0.15;
+      colliders.addOrientedBox({
+        cx: Math.cos(angle) * innerRailRadius,
+        cz: Math.sin(angle) * innerRailRadius,
+        halfX: 0.19,
+        halfZ: landingHalf + 0.04,
         rotationY: -angle,
         minY: y + 0.02,
         maxY: y + 1.18,
@@ -932,10 +1011,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   });
 
   return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes, sofas,
+           seats, furnitureColliders,
            openBays, homeBays, homeDoors, tunnelDoors, setHomeDoor, setTunnelDoor, lightState,
            tunnelBay: TUNNEL_BAY, tunnelDoorRadius: deckOuter - 0.30 + TUNNEL_DOOR_DEPTH,
            apartmentMid,
            stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, landingInner,
            wellRadius, deckOuter,
-           levelHeight, levels };
+           levelHeight, levels, segments };
 }

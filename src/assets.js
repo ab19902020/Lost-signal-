@@ -50,6 +50,7 @@ const siloUrls = {
   habSecureDoor: `${BASE}assets/blender/hab_secure_door_v4.glb`,
   habDirectory: `${BASE}assets/blender/hab_directory_v4.glb`,
   habLanding: `${BASE}assets/blender/hab_landing_v4.glb`,
+  habTopLanding: `${BASE}assets/blender/hab_top_landing_v1.glb`,
   habApartment: `${BASE}assets/blender/hab_apartment_v4.glb`,
   habDoor: `${BASE}assets/blender/hab_door_v4.glb`,
   habCrown: `${BASE}assets/blender/hab_crown_v5.glb`,

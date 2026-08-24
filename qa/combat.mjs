@@ -94,6 +94,18 @@ const results = await page.evaluate(async () => {
       playerY: +ls.body.position.y.toFixed(2),
       targetY: +target.position.y.toFixed(2),
     };
+
+    // People are moving bodies, not static prop boxes. Put the player inside
+    // one resident's footprint and advance the actual game loop; the dynamic
+    // resolver must separate them again.
+    const agent = target.userData.resident;
+    ls.body.teleport(target.position.x + .05, target.position.y, target.position.z);
+    ls.simulate(2);
+    out.residentCollision = {
+      distance: +Math.hypot(ls.body.position.x - target.position.x,
+        ls.body.position.z - target.position.z).toFixed(3),
+      minimum: +(ls.body.radius + (agent?.radius || .34)).toFixed(3),
+    };
   }
   out.ammoAfter = ls.state().ammo;
   return out;
