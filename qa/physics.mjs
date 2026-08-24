@@ -56,10 +56,67 @@ await walk(90);
 results.backWall = await read();
 
 // Walk into the storage rack standing against the east wall.
-await setup(3.6, 1.45, -Math.PI / 2);
+await setup(3.6, -1.10, -Math.PI / 2);
 await frames(2);
 await walk(90);
 results.storageRack = await read();
+
+// The armoury is a room, not an interaction pretending to be one: its shut
+// pocket door blocks the player, the open door admits the real controller, the
+// back wall stops them, every supplied weapon is present, and the quartermaster
+// is a solid animated character rather than a ghost prop.
+results.armory = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const armory = ls.game.armory;
+  if (!armory) return { present: false };
+  const settle = (count) => ls.simulate(count);
+
+  ls.world('bunker');
+  ls.body.teleport(3.80, .02, -.10);
+  ls.look(Math.PI, 0); // camera forward is +Z, straight through the entrance
+  settle(8);
+  ls.walkFrames(55);
+  const shutDoorZ = ls.body.position.z;
+
+  armory.open();
+  settle(75);
+  const doorOffset = armory.shell.getObjectByName('Armory_Door_Leaf')?.position.x || 0;
+  ls.body.teleport(3.80, .02, -.10);
+  ls.look(Math.PI, 0);
+  settle(8);
+  ls.walkFrames(105);
+  settle(12);
+  const openDoorZ = ls.body.position.z;
+
+  const person = armory.quartermaster;
+  let characterCollision = null;
+  if (person) {
+    ls.body.teleport(person.position.x + .03, .02, person.position.z);
+    settle(3);
+    characterCollision = Math.hypot(ls.body.position.x - person.position.x,
+      ls.body.position.z - person.position.z);
+  }
+
+  armory.primaryDisplay?.userData.interaction?.onUse();
+  settle(3);
+  const characterBox = person ? ls.bounds(person) : null;
+  return {
+    present: true,
+    weapons: armory.displayWeapons.length,
+    shutDoorZ: +shutDoorZ.toFixed(2),
+    openDoorZ: +openDoorZ.toFixed(2),
+    doorOffset: +doorOffset.toFixed(2),
+    character: !!person,
+    characterHeight: characterBox ? +(characterBox.max.y - characterBox.min.y).toFixed(2) : 0,
+    characterAnimations: armory.animationCount,
+    characterCollision: characterCollision == null ? null : +characterCollision.toFixed(2),
+    rifleIssued: armory.isIssued(),
+    rifleVisibleOnRack: armory.primaryDisplay?.visible ?? true,
+    armed: ls.state().armed,
+    magazine: ls.state().ammo,
+    staticColliders: armory.staticColliderCount,
+  };
+});
 
 // Sprint down the open middle of the room, then crouch under the desk line.
 await setup(0, 5.5, Math.PI);
@@ -182,13 +239,15 @@ results.silo = await page.evaluate(async () => {
   // can actually get there.
   const homeLevel = 0;
   const homeBay = head.homeBays[homeLevel][2];
-  const homeAngle = homeBay * Math.PI * 2 / 18;
+  const homeAngle = homeBay * Math.PI * 2 / head.segments;
   head.setHomeDoor(homeLevel, homeBay, false);
   const homeClosed = ls.game.blocked?.('silo',
     Math.cos(homeAngle) * (head.deckOuter - .30),
     Math.sin(homeAngle) * (head.deckOuter - .30), .34, .2, 1.7) ?? true;
   head.setHomeDoor(homeLevel, homeBay, true);
-  ls.body.teleport(Math.cos(homeAngle) * 18.1, .5, Math.sin(homeAngle) * 18.1);
+  const homeLane = -.45;
+  ls.body.teleport(Math.cos(homeAngle) * 18.1 + Math.sin(homeAngle) * homeLane, .5,
+    Math.sin(homeAngle) * 18.1 - Math.cos(homeAngle) * homeLane);
   settle(30);
   // Camera yaw uses -sin(yaw), -cos(yaw) as forward, so radial-outward is
   // -angle - PI/2 (angle - PI/2 mirrors Z and walks beside the doorway).
@@ -210,11 +269,60 @@ results.silo = await page.evaluate(async () => {
   settle(12);
   const sofaUse = { present: !!sofa, satDown, seatedEye, stoodUp: !ls.state().seated };
 
+  // Jump in the silo and use the new climbable furniture top. This follows the
+  // real queued input and CharacterBody path; a button that only animates the
+  // HUD cannot satisfy it.
+  const table = head.furnitureColliders.find((entry) => entry.name.startsWith('dining-table_0_'));
+  let furnitureJump = { present: !!table, rise: 0, atop: false, landed: false };
+  if (table) {
+    const approach = table.halfZ + ls.body.radius + .34;
+    ls.body.teleport(table.cx - table.sin * approach, table.minY,
+      table.cz - table.cos * approach);
+    settle(12);
+    const startY = ls.body.position.y;
+    let peakY = startY;
+    let atop = false;
+    ls.jump();
+    for (let frame = 0; frame < 45; frame++) {
+      ls.walkFrames(1);
+      peakY = Math.max(peakY, ls.body.position.y);
+    }
+    settle(100);
+    const jumpLanded = ls.body.grounded;
+    // Separately verify that the same body can land on the authored furniture
+    // surface. Keeping this vertical makes the assertion independent of how
+    // long a player happens to hold forward during the jump arc.
+    ls.body.teleport(table.cx, table.maxY + .72, table.cz);
+    ls.body.grounded = false;
+    ls.body.velocity.set(0, -.4, 0);
+    settle(90);
+    atop = ls.body.grounded && Math.abs(ls.body.position.y - table.maxY) < .08;
+    furnitureJump = {
+      present: true,
+      rise: +(peakY - startY).toFixed(2),
+      atop,
+      landed: jumpLanded && ls.body.grounded,
+    };
+  }
+
+  ls.arm();
+  ls.aim(true);
+  settle(90);
+  const rifle = ls.game.weaponView.children[0];
+  const aim = {
+    active: ls.state().aiming,
+    fov: +ls.game.camera.fov.toFixed(2),
+    centred: Math.abs(ls.game.weaponView.position.x) < .04,
+    rifleYaw: +rifle.rotation.y.toFixed(3),
+  };
+  ls.aim(false);
+  settle(45);
+
   // The arched landmark now has an independently animated bulkhead and a room
   // behind it. Walk through the opened leaf rather than merely checking its
   // interaction callback exists.
   const tunnelLevel = 0;
-  const tunnelAngle = head.tunnelBay * Math.PI * 2 / 18;
+  const tunnelAngle = head.tunnelBay * Math.PI * 2 / head.segments;
   head.setTunnelDoor(tunnelLevel, false);
   const tunnelClosed = ls.game.blocked?.('silo',
     Math.cos(tunnelAngle) * head.tunnelDoorRadius,
@@ -310,6 +418,8 @@ results.silo = await page.evaluate(async () => {
     floors,
     homeEntry,
     sofaUse,
+    furnitureJump,
+    aim,
     tunnelEntry,
     lightStability,
     lightMotion,
@@ -317,6 +427,9 @@ results.silo = await page.evaluate(async () => {
     colliders: ls.game.colliders.silo.boxes.length,
     doorArcs: ls.game.colliders.silo.arcs.length,
     interactions: ls.game.interactions.filter(o => o.userData.interaction?.world === 'silo').length,
+    homes: head.homeDoors.length,
+    seats: head.seats.length,
+    furnitureColliders: head.furnitureColliders.length,
   };
 });
 

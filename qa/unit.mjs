@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { CharacterBody, ColliderSet } from '../src/physics.js';
 import { buildSilo, SILO } from '../src/silo.js';
+import { ARMORY_WEAPON_KEYS } from '../src/armory.js';
 
 // Build the authored collision without loading a renderer or any GLBs. This is
 // deliberately runnable anywhere `npm run build` runs, including before a
@@ -10,19 +11,30 @@ import { buildSilo, SILO } from '../src/silo.js';
 const scene = new THREE.Scene();
 const colliders = new ColliderSet();
 const interactionNames = [];
+const placedAssets = [];
+const assets = {
+  habShell: {}, habLevel: {}, habStair: {}, habCrown: {}, habSump: {},
+  habLanding: {}, habTopLanding: {}, habApartment: {}, habDoor: {},
+  habTunnel: {}, habBulkheadDoor: {},
+};
 const silo = buildSilo({
   scene,
   colliders,
   // Stubs stand in for the GLBs; what matters is that every branch of the
   // builder runs, including the ones that only fire when an asset is present.
-  assets: {
-    habShell: {}, habLevel: {}, habStair: {}, habCrown: {}, habSump: {},
-    habApartment: {}, habDoor: {}, habTunnel: {}, habBulkheadDoor: {},
+  assets,
+  place: (asset, _parent, position = [0, 0, 0], rotation = [0, 0, 0]) => {
+    const root = new THREE.Group();
+    root.position.set(...position);
+    root.rotation.set(...rotation);
+    placedAssets.push(asset);
+    return root;
   },
-  place: () => new THREE.Group(),
   addInteraction: (_object, name) => interactionNames.push(name),
 });
 assert.ok(silo, 'silo collision did not build');
+assert.ok(placedAssets.includes(assets.habTopLanding),
+  'the secure stair head did not use its fully guarded landing asset');
 
 // Via contains() rather than by scanning boxes: the silo's circular surfaces —
 // the walkway, its railing, the wall of front doors — are ring colliders now,
@@ -91,6 +103,19 @@ for (const z of [-1.35, -0.7, 0, 0.7, 1.35]) {
       `secure landing gap at x=${x}, z=${z} (floor ${floor})`);
   }
 }
+for (const x of [2.4, 3.8, 5.2]) {
+  for (const side of [-1, 1]) {
+    assert.equal(colliders.contains(x, side * SILO.landingHalf, 0.08,
+      topY + .25, topY + 1.14), true,
+    `secure landing side rail is open at x=${x}, side=${side}`);
+  }
+}
+assert.equal(colliders.contains(SILO.landingInner + .15, 0, 0.08,
+  topY + .25, topY + 1.14), true,
+'secure landing inner edge has no cross rail');
+assert.equal(colliders.contains(2.4, 0, PLAYER_RADIUS,
+  topY + .20, topY + 1.70), false,
+'secure landing rail blocks its usable centre lane');
 
 // You have to be able to walk the whole ring, on every level. The walkway used
 // to be collided as one axis-aligned box per bay, and a box drawn round a slab
@@ -154,7 +179,7 @@ assert.ok(colliders.floorAt(0, 0, 0.34, 1.0) > -0.2,
 // Navigation: every front door must really open for the player capsule. Point
 // samples inside rooms once missed a narrow/misaligned threshold because they
 // never actually crossed it, so this drives the same CharacterBody used in play
-// from the gallery into all 119 homes.
+// from the gallery into all 77 family homes.
 let doorwaysTraversed = 0;
 for (let level = 0; level < SILO.levels; level++) {
   const y = level * SILO.levelHeight;
@@ -171,7 +196,12 @@ for (let level = 0; level < SILO.levels; level++) {
     `level ${level} bay ${bay}: open quarters door still blocks its threshold`);
 
     const body = new CharacterBody();
-    body.teleport(Math.cos(angle) * 18.15, y + .02, Math.sin(angle) * 18.15);
+    // The dining setting is solid now, so follow the deliberately authored
+    // circulation lane just left of it instead of demanding a route through
+    // the middle of the table.
+    const lane = -.45;
+    body.teleport(Math.cos(angle) * 18.15 + Math.sin(angle) * lane, y + .02,
+      Math.sin(angle) * 18.15 - Math.cos(angle) * lane);
     const desired = new THREE.Vector3(Math.cos(angle) * 2.55, 0, Math.sin(angle) * 2.55);
     for (let frame = 0; frame < 180; frame++) body.step(1 / 60, desired, colliders);
     const reached = Math.hypot(body.position.x, body.position.z);
@@ -187,8 +217,8 @@ for (let level = 0; level < SILO.levels; level++) {
 // portals, and a partition placed a few centimetres wrong seals one of them off
 // without anything looking wrong from the walkway.
 const ROOMS = [
-  ['hall', 0, -4.1], ['kitchen', -2.0, -1.9], ['living', 0, -1.0],
-  ['bedroom A', -1.7, 3.2], ['bedroom B', 1.7, 3.2],
+  ['hall', 0, -4.1], ['kitchen', -3.2, -1.0], ['living', -.7, -.3],
+  ['bedroom A', -4.15, 3.0], ['bedroom B', 4.1, 2.0],
 ];
 let roomsChecked = 0;
 for (let level = 0; level < SILO.levels; level++) {
@@ -213,6 +243,32 @@ assert.equal(silo.sofas.length, doorwaysTraversed,
   `only ${silo.sofas.length} of ${doorwaysTraversed} quarters have a usable sofa`);
 assert.equal(interactionNames.filter((name) => name.startsWith('SIT ON SOFA')).length,
   doorwaysTraversed, 'not every apartment sofa exposes a USE interaction');
+assert.equal(silo.seats.length, doorwaysTraversed * 2,
+  'every family home should offer both sofa and dining seating');
+assert.equal(silo.furnitureColliders.length, doorwaysTraversed * 21,
+  'the major furniture in every family home is not fully physical');
+
+// Low furniture blocks a standing capsule, then catches it on top after a
+// jump/fall. Tall furniture remains a full-height blocker.
+const table = silo.furnitureColliders.find((entry) => entry.name === 'dining-table_0_0');
+const wardrobe = silo.furnitureColliders.find((entry) => entry.name === 'wardrobe_0_0');
+assert.ok(table && wardrobe, 'representative apartment furniture collision is missing');
+const insideTable = new THREE.Vector3(table.cx, 0, table.cz);
+assert.equal(colliders.resolve(insideTable, PLAYER_RADIUS, 0, 1.78, .34), true,
+  'the dining table can be walked through');
+assert.ok(Math.hypot(insideTable.x - table.cx, insideTable.z - table.cz) > .2,
+  'the dining table did not push the capsule out');
+assert.equal(colliders.contains(wardrobe.cx, wardrobe.cz, PLAYER_RADIUS, .2, 1.7), true,
+  'the wardrobe can be walked through');
+const landingProbe = new CharacterBody();
+landingProbe.teleport(table.cx, 1.18, table.cz);
+landingProbe.grounded = false;
+landingProbe.velocity.y = -1;
+for (let frame = 0; frame < 90; frame++) {
+  landingProbe.step(1 / 60, new THREE.Vector3(), colliders);
+}
+assert.ok(Math.abs(landingProbe.position.y - table.maxY) < .04 && landingProbe.grounded,
+  'a jumping player cannot land on top of low apartment furniture');
 
 // The landmark arch is always a real passage. Its bulkhead blocks the far end
 // while shut, then opens into the maintenance room behind it on every level.
@@ -255,6 +311,24 @@ for (const [event, count] of counts) {
   assert.equal(count, 1, `lostsignal:${event} is registered ${count} times`);
 }
 assert.ok(!mainSource.includes('TWELVE LEVELS BELOW'), 'silo copy disagrees with its seven levels');
+for (const id of ['jumpBtn', 'aimBtn']) {
+  assert.ok(mainSource.includes(`getElementById('${id}')`), `${id} is not wired to gameplay`);
+}
+assert.ok(mainSource.includes('jump: wantsJump'), 'jump input is not reaching the character body');
+assert.ok(mainSource.includes('targetFov = aiming ? 52 : 70'), 'rifle aim does not alter the sight picture');
+
+// The supplied pack is intentionally complete: dropping near-duplicate weapon
+// files makes the new room look dressed in a screenshot while silently failing
+// the user's request to see the whole collection on its walls.
+assert.equal(ARMORY_WEAPON_KEYS.length, 25, 'the armoury does not enumerate all 25 supplied models');
+assert.equal(new Set(ARMORY_WEAPON_KEYS).size, 25, 'an armoury wall slot repeats a weapon model');
+const assetsSource = await readFile(new URL('../src/assets.js', import.meta.url), 'utf8');
+for (const key of ARMORY_WEAPON_KEYS) {
+  assert.ok(assetsSource.includes(`${key}:`), `the asset loader does not publish ${key}`);
+}
+assert.ok(assetsSource.includes('legacyOrientation: false'),
+  'the supplied Y-up models are still being passed through the legacy rotation fix');
+assert.ok(mainSource.includes('MAGAZINE_SIZE = 30'), 'the service rifle still uses the old five-round magazine');
 
 console.log(`Unit QA passed: ${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
   + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `

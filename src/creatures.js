@@ -331,7 +331,9 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
   const residents = [];
   const agents = [];
   const builds = RESIDENT_BUILDS.map((k) => assets[`resident${k}`]).filter(Boolean);
-  if (!builds.length || !walkable?.length) return { residents, agents, update: () => {} };
+  if (!builds.length || !walkable?.length) {
+    return { residents, agents, update: () => {}, resolvePlayer: () => false };
+  }
 
   // Spread over the upper galleries rather than one per level: a silo of three
   // hundred should look inhabited from the first landing you reach, not offer
@@ -381,7 +383,38 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
     }
   }
 
-  return { residents, agents, update };
+  // Residents are moving actors, so static level collision cannot represent
+  // them. Resolve the player capsule against their current positions after
+  // movement instead: people feel like people, not ghosts, while still being
+  // free to walk their gallery routes.
+  function resolvePlayer(position, radius = 0.34, height = 1.78) {
+    let corrected = false;
+    for (const agent of agents) {
+      const other = agent.root.position;
+      if (Math.abs(position.y - other.y) > Math.max(1.25, height * .75)) continue;
+      let dx = position.x - other.x;
+      let dz = position.z - other.z;
+      const minimum = radius + agent.radius + .04;
+      let distance = Math.hypot(dx, dz);
+      if (distance >= minimum) continue;
+      if (distance < 1e-5) {
+        const fallback = agent.root.id * 1.618;
+        dx = Math.cos(fallback);
+        dz = Math.sin(fallback);
+        distance = 1;
+      }
+      const push = minimum - distance;
+      position.x += dx / distance * push;
+      position.z += dz / distance * push;
+      corrected = true;
+    }
+    if (corrected) {
+      colliders.resolve(position, radius, position.y, position.y + height, 0);
+    }
+    return corrected;
+  }
+
+  return { residents, agents, update, resolvePlayer };
 }
 
 export function createCreatureSystem({ scene, colliders, assets, counts = {}, wildlife: spawnWildlife = true }) {

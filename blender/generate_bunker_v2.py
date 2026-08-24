@@ -101,6 +101,24 @@ def between(name, a, b, radius, material, verts=16):
     return o
 
 
+def text_obj(name, text, loc, size, material, rotation=(0, math.pi, 0), extrude=.006):
+    """Readable, converted-to-mesh signage for the Y-up runtime."""
+    bpy.ops.object.text_add(location=loc, rotation=rotation)
+    o = bpy.context.object
+    o.name = name
+    o.data.body = text
+    o.data.align_x = 'CENTER'
+    o.data.align_y = 'CENTER'
+    o.data.size = size
+    o.data.extrude = extrude
+    o.data.bevel_depth = .002
+    o.data.materials.append(material)
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.convert(target='MESH')
+    return o
+
+
 # These scripts author with Y as the up axis (floor at y=0, ceiling at y=4.2),
 # which is exactly the convention the Three.js runtime expects. Blender's glTF
 # exporter otherwise assumes Z is up and rotates every asset 90 degrees on the
@@ -356,6 +374,102 @@ def build_rifle():
     export('hunting_rifle.glb')
 
 
+def build_armory():
+    """A real walk-in armoury, not a wardrobe-sized gun cupboard.
+
+    The room is deliberately exported without its weapons: the supplied
+    Quaternius pack remains as authored GLBs and is mounted on these racks at
+    runtime. Named walls, fittings and door pieces give the game exact solid
+    collision and a door that can slide into its pocket.
+    """
+    clear_scene()
+    GUNMETAL = mat('ArmoryGunmetal', (.075, .09, .085), .86, .30)
+    PANEL = mat('ArmoryPanel', (.12, .15, .13), .70, .42)
+    PEG = mat('ArmoryPegboard', (.045, .055, .050), .74, .48)
+    FLOOR = mat('ArmoryFloor', (.18, .20, .18), .76, .40)
+    LABEL = mat('ArmoryLabel', (.30, .36, .31), 0, .24,
+                (.72, 1.0, .79), 1.55)
+
+    # 4.6 x 4.1 metres of usable floor, with a 1.8 m adult doorway.
+    cube('Armory_Floor', (0, .045, 0), (2.38, .045, 2.10), FLOOR, edge=.018)
+    cube('Armory_Wall_Back', (0, 1.58, 2.05), (2.38, 1.58, .085), PANEL, edge=.035)
+    cube('Armory_Wall_Left', (-2.30, 1.58, 0), (.085, 1.58, 2.05), PANEL, edge=.035)
+    cube('Armory_Wall_Right', (2.30, 1.58, 0), (.085, 1.58, 2.05), PANEL, edge=.035)
+    cube('Armory_Wall_Front_Left', (-1.62, 1.58, -2.05), (.68, 1.58, .085),
+         PANEL, edge=.035)
+    cube('Armory_Wall_Front_Right', (1.62, 1.58, -2.05), (.68, 1.58, .085),
+         PANEL, edge=.035)
+    cube('Armory_Door_Header', (0, 2.88, -2.05), (.96, .28, .085), GUNMETAL, edge=.035)
+    for x in (-.94, .94):
+        cube('Armory_Door_Jamb_%s' % x, (x, 1.35, -2.10), (.07, 1.35, .12),
+             GUNMETAL, edge=.025)
+
+    # Pocket door. Runtime moves every Armory_Door_* part together.
+    cube('Armory_Door_Leaf', (0, 1.32, -2.12), (.86, 1.28, .065),
+         GUNMETAL, edge=.045)
+    cube('Armory_Door_Inset', (0, 1.34, -2.195), (.68, .92, .018),
+         DARK, edge=.025)
+    cube('Armory_Door_Window', (0, 1.76, -2.218), (.43, .16, .012),
+         SCREEN, edge=.018)
+    for y in (.54, 1.05, 2.05):
+        cube('Armory_Door_Brace_%s' % y, (0, y, -2.225), (.66, .035, .018),
+             STEEL2, edge=.010)
+
+    cube('Armory_Keypad', (1.14, 1.42, -2.17), (.16, .30, .08), DARK, edge=.035)
+    for row in range(4):
+        for col in range(3):
+            cyl('Armory_Key_%d_%d' % (row, col),
+                (1.14 + (col - 1) * .07, 1.27 + row * .09, -2.258),
+                .018, .012, AMBER if row == 3 else STEEL2,
+                rotation=(math.pi / 2, 0, 0), verts=12, edge=.002)
+
+    # Heavy pegboard and slotted rails make the supplied weapons feel mounted,
+    # not floated a centimetre in front of a bare wall.
+    cube('Armory_Rack_Back', (0, 1.58, 1.89), (2.05, 1.29, .045), PEG, edge=.022)
+    cube('Armory_Rack_Left', (-2.14, 1.58, 0), (.045, 1.29, 1.78), PEG, edge=.022)
+    cube('Armory_Rack_Right', (2.14, 1.58, 0), (.045, 1.29, 1.78), PEG, edge=.022)
+    for row, y in enumerate((.48, 1.05, 1.62, 2.19, 2.76)):
+        cube('Armory_Rail_Back_%d' % row, (0, y, 1.82), (2.02, .025, .025),
+             STEEL2, edge=.008)
+    for side in (-1, 1):
+        for row, y in enumerate((.52, 1.28, 2.04, 2.80)):
+            cube('Armory_Rail_Side_%s_%d' % (side, row),
+                 (side * 2.07, y, 0), (.025, .025, 1.75), STEEL2, edge=.008)
+
+    # A compact issue counter leaves a broad central aisle and room to inspect
+    # every wall. The quartermaster stands behind its short return.
+    cube('Armory_Counter_Top', (1.20, 1.02, .72), (.78, .07, .42),
+         STEEL2, edge=.055)
+    cube('Armory_Counter_Body', (1.20, .50, .77), (.68, .50, .34),
+         DARK, edge=.055)
+    cube('Armory_Counter_Return', (1.72, .72, 1.23), (.16, .72, .48),
+         DARK, edge=.045)
+    for y in (.27, .66):
+        cube('Armory_Ammo_Shelf_%s' % y, (-1.58, y, 1.48), (.42, .035, .33),
+             STEEL2, edge=.012)
+    for row, y in enumerate((.47, .86)):
+        for col, x in enumerate((-1.82, -1.55, -1.28)):
+            cube('Armory_Ammo_Crate_%d_%d' % (row, col), (x, y, 1.48),
+                 (.115, .16, .23), GREEN if (row + col) % 2 else WOOD, edge=.025)
+
+    # Overhead cage beams, paired lights, and a readable exterior sign.
+    for x in (-2.20, 0, 2.20):
+        cube('Armory_Ceiling_Beam_%s' % x, (x, 3.08, 0), (.045, .045, 2.02),
+             GUNMETAL, edge=.012)
+    for z in (-.76, .76):
+        cube('Armory_Light_Housing_%s' % z, (0, 3.02, z), (.72, .07, .18),
+             DARK, edge=.035)
+        cube('Armory_Light_Lens_%s' % z, (0, 2.94, z), (.58, .018, .12),
+             WHITE, edge=.018)
+    cube('Armory_Sign_Plate', (0, 2.98, -2.15), (1.38, .20, .025),
+         DARK, edge=.025)
+    text_obj('Armory_Sign_Text', 'SHELTER 47 ARMOURY', (0, 2.98, -2.181),
+             .255, LABEL, extrude=.004)
+    text_obj('Armory_Sign_Subtext', 'CONTROLLED ISSUE', (0, 2.70, -2.181),
+             .095, AMBER, extrude=.003)
+    export('walk_in_armory_v1.glb')
+
+
 def build_generator():
     clear_scene()
     cube('Generator_Frame',(0,.88,0),(1.40,.88,.72),GREEN,edge=.13)
@@ -450,7 +564,9 @@ def build_light():
     export('ceiling_light.glb')
 
 
-for fn in (build_desk,build_radio,build_cctv,build_vault,build_rifle,build_generator,build_bed,build_chair,build_storage,build_door,build_pipes,build_light):
+for fn in (build_desk,build_radio,build_cctv,build_vault,build_rifle,build_armory,
+           build_generator,build_bed,build_chair,build_storage,build_door,
+           build_pipes,build_light):
     fn()
 
 print('Lost Signal Blender bunker V2 complete.')

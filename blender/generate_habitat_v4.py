@@ -13,9 +13,9 @@ os.makedirs(OUT, exist_ok=True)
 # the top, built around an open light well. Nobody in it knows why the world
 # ended. Same authoring convention as the other generators — Y is up, +Z is
 # depth, a cylinder's own axis is local Z so a vertical one needs UP.
-# Visual rebuild revision 9: a watertight gallery deck, exact stair openings,
-# full-depth guarded landings, genuinely open apartments and higher-detail
-# residents, in addition to the stateful quarters and smooth service vaults.
+# Visual rebuild revision 10: a protected top stair head, family-sized homes,
+# solid furniture layouts and front-facing signage, on top of the watertight
+# gallery and exact stair connections from revision nine.
 ORIENTATION_MARKER = 'LS_ORIENT_YUP'
 UP = (math.pi / 2, 0, 0)
 
@@ -28,13 +28,14 @@ WELL_RADIUS = 13.0       # the open shaft the walkways look down into
 DECK_OUTER = 19.6        # 6.6 m of clear walkway, all the way round
 LEVEL_HEIGHT = 4.0
 LEVELS = 7               # residential levels
-SEGMENTS = 18            # homes per level: 126 in all
+SEGMENTS = 12            # 11 family homes + one service bay per level:
+                         # 77 homes in all, averaging 3.9 residents
 STAIR_RADIUS = 5.4       # the great stair spirals down the middle of the shaft
 STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
 STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .84          # 1.68 m clear opening; comfortable for a player capsule
-TUNNEL_BAY = 9           # the bay whose facade is left out of the level ring,
+TUNNEL_BAY = 6           # the bay whose facade is left out of the level ring,
                          # so the arched tunnel has an opening to stand in. The
                          # ring is one mesh placed on every level, so this has
                          # to be the same bearing on all of them — which is what
@@ -858,11 +859,14 @@ def build_stair():
     export('hab_stair_v4.glb')
 
 
-def build_landing():
+def build_landing(top=False):
     """The platform where the stair meets a floor.
 
     Not a catwalk: it is as wide as the stair is, so stepping off the bottom
     tread puts you on a proper landing that carries you out to the walkway.
+    The head of the final flight gets its own U-shaped adult-height parapet:
+    no next flight continues through it, so leaving the inner deck edge open
+    there is a genuine fall rather than a stair opening.
     """
     clear_scene()
     # Runtime places the asset using the original stair-edge-to-gallery centre.
@@ -901,11 +905,10 @@ def build_landing():
              deck_mid + (r / 5 - .5) * 1.82 * deck_span), (half * .92, .11, .07),
              DARK, edge=.02)
     gallery_inset = .18
-    # The deck reaches the core to close the dangerous top-floor hole, but its
-    # straight parapets begin only where they meet the circular stair guard.
-    # Running a side parapet back across the tread envelope turns that safety
-    # rail into a waist-high barrier across the only route off the stair.
-    guard_inner = STAIR_GUARD_RADIUS - asset_origin
+    # Ordinary floors leave the tread envelope clear for the next flight. At
+    # the top there is no continuing flight, so the side parapets run all the
+    # way back and a third parapet closes the otherwise lethal inner edge.
+    guard_inner = (LANDING_INNER if top else STAIR_GUARD_RADIUS) - asset_origin
     guard_outer = outer - gallery_inset
     guard_span = (guard_outer - guard_inner) / 2
     guard_mid = (guard_outer + guard_inner) / 2
@@ -914,11 +917,11 @@ def build_landing():
         # overlap the exact stair newels without crossing the tread envelope.
         # At the outer end they terminate flush in the gallery's solid returns,
         # making one continuous safety line.
-        cube(f'Landing_Parapet_{side}', (side * half, .52, guard_mid),
+        cube(f'Landing_Parapet_{side}', (side * half, .55, guard_mid),
              (.15, .52, guard_span), CONCRETE, edge=.03)
         cube(f'Landing_Foot_{side}', (side * half, .10, guard_mid),
              (.19, .10, guard_span), CONCRETE, edge=.03)
-        cube(f'Landing_Cap_{side}', (side * half, 1.06, guard_mid),
+        cube(f'Landing_Cap_{side}', (side * half, 1.10, guard_mid),
              (.21, .06, guard_span), BRUSHED, edge=.02)
         cube(f'Landing_Reveal_{side}', (side * (half - .16), .86, guard_mid),
              (.04, .05, guard_span), DARK, edge=.006)
@@ -930,8 +933,21 @@ def build_landing():
             cube(f'Landing_Tie_{side}_{k}', (side * (half - .16), .58,
                  guard_mid + (k / 3 - .5) * 1.7 * guard_span),
                  (.03, .03, .03), DARK, edge=.006)
-    join_all('HabLanding')
-    export('hab_landing_v4.glb')
+    if top:
+        # A poured knee wall with a continuous steel handrail. It sits just
+        # inside the deck edge, behind the final tread, and joins both side
+        # newels so there is no child-sized or capsule-sized escape gap.
+        cube('TopLanding_InnerParapet', (0, .55, inner + .15),
+             (half, .52, .15), CONCRETE, edge=.035)
+        cube('TopLanding_InnerFoot', (0, .10, inner + .15),
+             (half + .04, .10, .19), CONCRETE, edge=.025)
+        cube('TopLanding_InnerCap', (0, 1.10, inner + .15),
+             (half + .06, .06, .21), BRUSHED, edge=.02)
+        for x in (-1.20, -.60, 0, .60, 1.20):
+            cube(f'TopLanding_InnerTie_{x:.1f}', (x, .62, inner + .31),
+                 (.025, .38, .025), DARK, edge=.006)
+    join_all('HabTopLanding' if top else 'HabLanding')
+    export('hab_top_landing_v1.glb' if top else 'hab_landing_v4.glb')
 
 
 def arch_head(name, xc, zc, half, spring, material, across=True, thick=.10, steps=6):
@@ -1092,16 +1108,16 @@ def build_apartment():
 
     # Room plan, in metres from the middle of the home. src/silo.js builds the
     # collision from the same numbers — keep the two in step.
-    HALL_BACK = -3.20
-    KITCHEN_X = -.90
-    KITCHEN_BACK = -.60
-    BED_FRONT = 1.60
-    DOOR_W = .48            # half-width of a bedroom portal
+    HALL_BACK = -2.75
+    KITCHEN_X = -1.40
+    KITCHEN_BACK = -.35
+    BED_FRONT = 1.25
+    DOOR_W = .62            # 1.24 m clear bedroom and kitchen portals
     # The front door used to face a solid partition only 1.8 m inside the
     # apartment. Its two off-centre arches made the open home look barricaded
     # from the gallery and forced the player to turn sharply in a tiny hall.
     # A broad central arch now opens the entrance directly into the living room.
-    WIDE_W = 1.55           # half-width of the living-room portal
+    WIDE_W = 1.80           # 3.6 m opening into the family living room
     SPRING = 1.72           # springing line of every arch
     T = .10
 
@@ -1246,7 +1262,7 @@ def build_apartment():
         cube(f'Apt_Cove_{k}', (0, height - drop / 2 - .01, 0),
              (half_w - inset, max(.02, drop / 2), half_d - inset), CREAM, edge=.02)
     for dz in (-1.9, .4, 2.7):
-        for dx in (-1.7, 1.7):
+        for dx in (-3.3, 0, 3.3):
             cyl(f'Apt_Down_{dx}_{dz}', (dx, height - .22, dz), .075, .03, WARMLAMP,
                 rotation=UP, verts=12, edge=.006)
 
@@ -1258,7 +1274,7 @@ def build_apartment():
              across=False, facing=-side)
 
     # --- Partitions ----------------------------------------------------------
-    kitchen_door, living_gap = -2.05, 0.0
+    kitchen_door, living_gap = -3.10, 0.0
     hall_spans = (
         (-half_w, kitchen_door - DOOR_W),
         (kitchen_door + DOOR_W, living_gap - WIDE_W),
@@ -1279,7 +1295,7 @@ def build_apartment():
     part_x('Apt_P2_head', KITCHEN_X, -2.10, KITCHEN_BACK, 2.20, height)
     cube('Apt_HatchSill', (KITCHEN_X, 1.06, -1.35), (T + .05, .04, .70), BRASS, edge=.01)
 
-    bed_a, bed_b = -1.70, 1.70
+    bed_a, bed_b = -2.50, 2.50
     bed_spans = (
         (-half_w, bed_a - DOOR_W),
         (bed_a + DOOR_W, bed_b - DOOR_W),
@@ -1339,14 +1355,17 @@ def build_apartment():
         for j in range(4):
             cyl(f'Apt_Jar_{shelf}_{j}', (kx - .10, 2.16 + shelf * .40, kz - .78 + j * .52),
                 .062, .22, GLASS if j % 2 else BRASS, rotation=UP, verts=10)
-    cube('Apt_Larder', (-1.48, 1.05, -2.60), (.38, 1.05, .38), WARM, edge=.03)
-    cube('Apt_LarderHandle', (-1.48, 1.20, -3.00), (.10, .12, .02), BRASS, edge=.006)
+    cube('Apt_Larder', (-2.12, 1.05, -2.20), (.38, 1.05, .38), WARM, edge=.03)
+    cube('Apt_LarderHandle', (-2.12, 1.20, -2.60), (.10, .12, .02), BRASS, edge=.006)
     cube('Apt_KitchenLight', (kx + .10, 1.94, kz), (.26, .035, .90), WARMLAMP, edge=.012)
 
     # --- Living room ---------------------------------------------------------
-    lx, lz = .55, -1.80
+    # Keep a full capsule-width circulation lane from the front arch to the
+    # bedroom corridor; the former centred table turned solid furniture into
+    # a new barrier as soon as proper collision was added.
+    lx, lz = 1.00, -1.45
     pendant('Apt_LivPend', lx, lz, height, .80, .24)
-    pendant('Apt_LivPend2', 2.10, .35, height, 1.05, .19)
+    pendant('Apt_LivPend2', 2.60, .35, height, 1.05, .19)
     cube('Apt_Table', (lx, .74, lz), (.96, .05, .58), WARM, edge=.03)
     for tx in (-.78, .78):
         for tz in (-.42, .42):
@@ -1360,59 +1379,59 @@ def build_apartment():
             rotation=UP, verts=14)
 
     # The sitting end: a low sofa, a round table, poufs and a tub chair.
-    cube('Apt_Sofa_Base', (1.80, .30, .92), (.86, .30, .42), ORANGE, edge=.10)
-    cube('Apt_Sofa_Back', (1.80, .66, 1.28), (1.02, .34, .14), ORANGE, edge=.12)
+    cube('Apt_Sofa_Base', (2.60, .30, .28), (.86, .30, .42), ORANGE, edge=.10)
+    cube('Apt_Sofa_Back', (2.60, .66, .64), (1.02, .34, .14), ORANGE, edge=.12)
     for k in (-1, 1):
         loft(f'Apt_Sofa_End_{k}', [
-            ((1.80 + k * .90, .02, .92), .19, .42),
-            ((1.80 + k * .90, .34, .92), .22, .45),
-            ((1.80 + k * .90, .58, .92), .18, .38),
+            ((2.60 + k * .90, .02, .28), .19, .42),
+            ((2.60 + k * .90, .34, .28), .22, .45),
+            ((2.60 + k * .90, .58, .28), .18, .38),
         ], ORANGE, sides=12, subdiv=1)
     for cx in (-.52, .52):
-        cube(f'Apt_Cushion_{cx}', (1.80 + cx, .64, .86), (.40, .09, .34), CLOTH, edge=.06)
+        cube(f'Apt_Cushion_{cx}', (2.60 + cx, .64, .22), (.40, .09, .34), CLOTH, edge=.06)
     loft('Apt_CoffeeTop', [
-        ((1.85, .34, .05), .44, .44),
-        ((1.85, .40, .05), .46, .46),
-        ((1.85, .44, .05), .42, .42),
+        ((2.60, .34, -.70), .44, .44),
+        ((2.60, .40, -.70), .46, .46),
+        ((2.60, .44, -.70), .42, .42),
     ], BRASS, sides=16, subdiv=1)
-    cyl('Apt_CoffeeStem', (1.85, .17, .05), .07, .34, STEEL, rotation=UP, verts=12)
+    cyl('Apt_CoffeeStem', (2.60, .17, -.70), .07, .34, STEEL, rotation=UP, verts=12)
     for i, (ox, oz) in enumerate(((-.16, -.10), (.10, .12), (.20, -.14))):
         loft(f'Apt_Pot_{i}', [
-            ((1.85 + ox, .45, .05 + oz), .045, .045),
-            ((1.85 + ox, .53, .05 + oz), .075, .075),
-            ((1.85 + ox, .60, .05 + oz), .05, .05),
+            ((2.60 + ox, .45, -.70 + oz), .045, .045),
+            ((2.60 + ox, .53, -.70 + oz), .075, .075),
+            ((2.60 + ox, .60, -.70 + oz), .05, .05),
         ], BRASS if i % 2 else POTTERY, sides=10, subdiv=1)
-    pouf('Apt_Pouf_1', .35, -.05, .40, .38, POTTERY)
-    pouf('Apt_Pouf_2', 2.85, .10, .36, .34, TILEBAND)
-    tub_chair('Apt_Tub', 2.55, -.90, 2.2)
-    cube('Apt_Rug', (1.75, .01, .20), (1.25, .01, 1.05), TILEBAND, edge=.01)
-    cube('Apt_Shelf_Tall', (half_w - .55, 1.30, -2.20), (.22, 1.30, .62), WARM, edge=.03)
+    pouf('Apt_Pouf_1', .65, .55, .40, .38, POTTERY)
+    pouf('Apt_Pouf_2', 4.15, .60, .36, .34, TILEBAND)
+    tub_chair('Apt_Tub', 4.05, -.75, 2.2)
+    cube('Apt_Rug', (2.60, .01, -.20), (1.55, .01, 1.18), TILEBAND, edge=.01)
+    cube('Apt_Shelf_Tall', (half_w - .55, 1.30, -1.85), (.22, 1.30, .62), WARM, edge=.03)
     for b in range(4):
-        cube(f'Apt_Books_{b}', (half_w - .55, .38 + b * .62, -2.20 + (b % 2) * .18),
+        cube(f'Apt_Books_{b}', (half_w - .55, .38 + b * .62, -1.85 + (b % 2) * .18),
              (.16, .16, .40), ORANGE if b % 2 else AMBER, edge=.01)
-    house_plant('Apt_LivPlant', -.40, .60, 1.05)
+    house_plant('Apt_LivPlant', -.55, .48, 1.05)
 
     # --- Bedroom A: the parents' room ----------------------------------------
-    ax, az = -1.78, BED_FRONT + 1.50
+    ax, az = -2.55, BED_FRONT + 1.90
     cube('Apt_BedA_Frame', (ax, .30, az), (.98, .18, 1.05), WARM, edge=.04)
     cube('Apt_BedA_Mattress', (ax, .54, az), (.94, .12, 1.00), CLOTH, edge=.07)
     cube('Apt_BedA_Blanket', (ax, .58, az + .25), (.95, .09, .74), ORANGE, edge=.07)
     for k in (-1, 1):
         cube(f'Apt_BedA_Pillow_{k}', (ax + k * .44, .68, az - .78), (.40, .09, .24), BONE, edge=.05)
     cube('Apt_BedA_Head', (ax, .86, az - 1.08), (.98, .56, .06), TILEBAND, edge=.03)
-    cube('Apt_BedA_Table', (-.48, .32, az - .88), (.24, .32, .24), WARM, edge=.03)
-    pendant('Apt_BedA_Pend', -.48, az - .88, height, 1.60, .13)
-    cube('Apt_Wardrobe', (-.62, 1.10, half_d - .48), (.46, 1.10, .34), WARM, edge=.04)
+    cube('Apt_BedA_Table', (-1.18, .32, az - .88), (.24, .32, .24), WARM, edge=.03)
+    pendant('Apt_BedA_Pend', -1.18, az - .88, height, 1.60, .13)
+    cube('Apt_Wardrobe', (-4.25, 1.10, half_d - .48), (.46, 1.10, .34), WARM, edge=.04)
     for k in (-1, 1):
-        cube(f'Apt_WardrobeDoor_{k}', (-.62 + k * .23, 1.10, half_d - .83),
+        cube(f'Apt_WardrobeDoor_{k}', (-4.25 + k * .23, 1.10, half_d - .83),
              (.21, 1.02, .02), TILEBAND, edge=.012)
-        cube(f'Apt_WardrobeKnob_{k}', (-.62 + k * .05, 1.06, half_d - .86),
+        cube(f'Apt_WardrobeKnob_{k}', (-4.25 + k * .05, 1.06, half_d - .86),
              (.03, .03, .02), BRASS, edge=.006)
     cube('Apt_BedA_Light', (ax, height - .16, az), (.22, .04, .22), WARMLAMP, edge=.015)
-    pouf('Apt_BedA_Pouf', -2.72, BED_FRONT + .62, .32, .30, ORANGE)
+    pouf('Apt_BedA_Pouf', -4.05, BED_FRONT + .70, .32, .30, ORANGE)
 
     # --- Bedroom B: the children's room --------------------------------------
-    bx2, bz = 1.28, BED_FRONT + 1.62
+    bx2, bz = 2.25, BED_FRONT + 1.95
     for bunk in range(2):
         y = .48 + bunk * 1.12
         cube(f'Apt_BunkFrame_{bunk}', (bx2, y, bz), (.95, .07, 1.02), WARM, edge=.03)
@@ -1426,11 +1445,11 @@ def build_apartment():
     for r in range(3):
         cube(f'Apt_Ladder_Rung_{r}', (bx2 - .50, .50 + r * .40, bz - 1.1), (.34, .03, .03),
              BRASS, edge=.008)
-    cube('Apt_Desk', (2.72, .72, half_d - 1.30), (.34, .04, .55), WARM, edge=.02)
+    cube('Apt_Desk', (4.25, .72, half_d - 1.30), (.34, .04, .55), WARM, edge=.02)
     for dz in (-.46, .46):
-        cube(f'Apt_DeskLeg_{dz}', (2.72, .36, half_d - 1.30 + dz), (.30, .36, .04),
+        cube(f'Apt_DeskLeg_{dz}', (4.25, .36, half_d - 1.30 + dz), (.30, .36, .04),
              BRASS, edge=.01)
-    cube('Apt_DeskLamp', (2.72, .92, half_d - 1.70), (.09, .15, .09), WARMLAMP, edge=.02)
+    cube('Apt_DeskLamp', (4.25, .92, half_d - 1.70), (.09, .15, .09), WARMLAMP, edge=.02)
     cube('Apt_ToyCrate', (.55, .22, half_d - .45), (.32, .22, .26), ORANGE, edge=.04)
     cube('Apt_BedB_Light', (bx2, height - .16, bz), (.22, .04, .22), WARMLAMP, edge=.015)
 
@@ -1822,9 +1841,9 @@ def build_secure_door():
     cyl('Secure_ReaderLamp', (1.72, 1.44, -.43), .04, .03, REDLIGHT, verts=12)
     cube('Secure_Window', (0, 2.35, -.43), (.44, .20, .03), GLASS, edge=.008)
     cube('Secure_WindowFrame', (0, 2.35, -.42), (.52, .28, .02), DARK, edge=.01)
-    text_obj('Secure_Sign', 'SECURE UNIT', (0, 3.42, -.36), .26, AMBER, rotation=(0, 0, 0), extrude=.01)
+    text_obj('Secure_Sign', 'SECURE UNIT', (0, 3.42, -.36), .26, AMBER, extrude=.01)
     text_obj('Secure_Notice', 'AUTHORISED PERSONNEL', (0, .78, -.44), .11, DARK,
-             rotation=(0, 0, 0), extrude=.004)
+             extrude=.004)
     for i in range(9):
         a = i * math.tau / 9
         cube(f'Secure_Hazard_{i}', (-2.0 + i * .5, .06, -.55), (.22, .05, .16),
@@ -1837,10 +1856,10 @@ def build_directory():
     clear_scene()
     cube('Directory_Board', (0, 1.35, 0), (.95, .70, .07), DARK, edge=.03)
     cube('Directory_Face', (0, 1.35, -.08), (.86, .62, .02), STEEL, edge=.01)
-    text_obj('Directory_Title', 'SILO 47', (0, 1.82, -.11), .17, AMBER, rotation=(0, 0, 0), extrude=.006)
-    text_obj('Directory_Body', 'RESIDENCE', (0, 1.48, -.11), .12, GREENLIGHT, rotation=(0, 0, 0), extrude=.004)
-    text_obj('Directory_Count', 'POP 300', (0, 1.20, -.11), .12, GREENLIGHT, rotation=(0, 0, 0), extrude=.004)
-    text_obj('Directory_Note', 'SECURE UNIT: TOP', (0, .95, -.11), .085, AMBER, rotation=(0, 0, 0), extrude=.003)
+    text_obj('Directory_Title', 'SILO 47', (0, 1.82, -.11), .17, AMBER, extrude=.006)
+    text_obj('Directory_Body', 'RESIDENCE', (0, 1.48, -.11), .12, GREENLIGHT, extrude=.004)
+    text_obj('Directory_Count', 'POP 300', (0, 1.20, -.11), .12, GREENLIGHT, extrude=.004)
+    text_obj('Directory_Note', 'SECURE UNIT: TOP', (0, .95, -.11), .085, AMBER, extrude=.003)
     cube('Directory_Post', (0, .48, .04), (.09, .48, .09), BRUSHED, edge=.02)
     cube('Directory_Foot', (0, .04, .04), (.30, .04, .30), DARK, edge=.01)
     join_all('HabDirectory')
@@ -2217,6 +2236,7 @@ build_shell()
 build_level()
 build_stair()
 build_landing()
+build_landing(top=True)
 build_apartment()
 build_door()
 build_crown()

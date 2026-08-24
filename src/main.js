@@ -42,8 +42,10 @@ let currentCam = 0;
 let yaw = 0;
 let pitch = -0.03;
 let armed = false;
-let ammo = 5;
-let reserve = 20;
+const MAGAZINE_SIZE = 30;
+const INITIAL_RESERVE = 90;
+let ammo = MAGAZINE_SIZE;
+let reserve = INITIAL_RESERVE;
 let reloading = false;
 let health = 100;
 const survival = new Survival();
@@ -55,6 +57,8 @@ let recoil = 0;
 let sprinting = false;
 let stamina = 1;
 let seated = null;
+let aiming = false;
+let jumpQueued = false;
 const touch = { sprint: false, crouch: false };
 let breath = 0;
 const body = new CharacterBody();
@@ -208,7 +212,12 @@ async function prepare() {
           for (let i = 0; i < count; i++) simulate(dt);
           keys[code] = false;
         },
-        arm: () => { armed = true; game.setArmed(true); ammo = 5; reserve = 20; updateAmmo(); },
+        arm: () => {
+          armed = true; game.setArmed(true); ammo = MAGAZINE_SIZE; reserve = INITIAL_RESERVE;
+          document.body.classList.add('armed'); updateAmmo();
+        },
+        aim: (value = true) => setAiming(value),
+        jump: () => queueJump(),
         aimAt: (target) => {
           const point = target.isVector3 ? target.clone() : new THREE.Vector3(target.x, target.y, target.z);
           const to = point.sub(game.camera.getWorldPosition(new THREE.Vector3()));
@@ -219,7 +228,7 @@ async function prepare() {
         bounds: (object) => new THREE.Box3().setFromObject(object),
         openDoor: () => { const door = game.interactions.find(o => o.userData.interaction?.name === 'BLAST DOOR'); door?.userData.interaction.onUse(); },
         use: () => use(),
-        state: () => ({ health, ammo, reserve, armed, seated: !!seated,
+        state: () => ({ health, ammo, reserve, armed, aiming, seated: !!seated,
           survival: survival.snapshot, blackout: survival.blackout,
           doorOpen: game.doorOpen(), hatchOpen: game.hatchOpen?.() ?? false,
           residents: game.residents?.residents.length ?? 0,
@@ -245,7 +254,7 @@ async function prepare() {
         },
       };
     }
-    engineState.textContent = '✓ Shelter 47, surface compound, wildlife and rifle loaded from this repository.';
+    engineState.textContent = '✓ Shelter 47, walk-in armoury, habitation silo and service rifle loaded.';
     backendEl.textContent = `S47 INTERNAL // EXTERNAL LINK LOST // ${quality.name.toUpperCase()} DISPLAY`;
     startButton.disabled = false;
     startButton.textContent = 'ENTER SHELTER';
@@ -275,13 +284,15 @@ function wireGameEvents() {
     updateStats();
     if (result.ok) clickSound(340, .18, .05);
   });
-  addEventListener('lostsignal:vaultopen', () => flash('ARMORY UNLOCKED — USE AGAIN TO TAKE THE RIFLE'));
+  addEventListener('lostsignal:vaultopen', (event) => flash(event.detail?.open === false
+    ? 'ARMOURY SECURITY DOOR CLOSED'
+    : 'ARMOURY UNLOCKED — WALK IN AND INSPECT THE WALL RACKS'));
   addEventListener('lostsignal:takegun', () => {
     armed = true;
     game.setArmed(true);
     document.body.classList.add('armed');
     updateAmmo();
-    flash('SURVIVAL RIFLE EQUIPPED', 2200);
+    flash('SERVICE RIFLE EQUIPPED — AIM BEFORE FIRING', 2200);
     clickSound(360, .08, .05);
     completeObjective('rifle');
   });
@@ -345,6 +356,7 @@ function wireGameEvents() {
     pitch = 0.015;
     touch.sprint = false;
     touch.crouch = false;
+    setAiming(false);
     document.getElementById('sprintBtn').classList.remove('on');
     document.getElementById('crouchBtn').classList.remove('on');
     flash(`${unit} — SEATED · USE AGAIN TO STAND`, 2600);
@@ -373,14 +385,18 @@ function wireGameEvents() {
     flash(e.detail.line, 4200);
   });
 
+  addEventListener('lostsignal:quartermaster', (e) => {
+    flash(`QUARTERMASTER ELI: ${e.detail.line}`, 5200);
+  });
+
   addEventListener('lostsignal:cache', () => {
     if (cacheEmptied) { flash('THE CACHE IS EMPTY'); return; }
     cacheEmptied = true;
-    reserve += 24;
+    reserve += 60;
     survival.resupply({ food: 6, water: 8, fuel: 3, filters: 2 });
     updateAmmo();
     updateStats();
-    flash('+24 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
+    flash('+60 ROUNDS · RATIONS · WATER · FUEL · FILTERS', 3600);
     clickSound(520, .12, .05);
     completeObjective('cache');
   });
@@ -420,7 +436,7 @@ let cacheEmptied = false;
 // objectives stay hidden until the ones before them are done, which keeps the
 // list to a couple of lines instead of a wall of spoilers.
 const OBJECTIVES = [
-  { id: 'rifle', text: 'Open the gun vault and take the rifle' },
+  { id: 'rifle', text: 'Enter the armoury and take the service rifle' },
   { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
   { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
   { id: 'descend', text: 'Descend into Silo 47' },
@@ -461,6 +477,7 @@ function completeObjective(id) {
 // the right way.
 function enterWorld(name, facing, tilt) {
   seated = null;
+  setAiming(false);
   currentWorld = name;
   const spawn = game.setWorld(name);
   body.teleport(spawn.x, spawn.y, spawn.z);
@@ -487,12 +504,14 @@ function toggleHelp(force) {
   panel.classList.toggle('open', open);
   document.body.classList.toggle('overlay-open', open);
   modal = open || cctv;
+  if (open) setAiming(false);
   if (open) document.exitPointerLock?.();
   clickSound(open ? 480 : 300, .05, .03);
 }
 
 function openModal(id) {
   modal = true;
+  setAiming(false);
   document.exitPointerLock?.();
   document.getElementById(id).classList.add('open');
   document.body.classList.add('overlay-open');
@@ -558,6 +577,26 @@ function use() {
     downed.parent?.remove(downed);
     flash(`${downed.userData.kind.toUpperCase()} HARVESTED — +${gain} DAYS FOOD`, 2200);
   }
+}
+
+function setAiming(value) {
+  const next = !!value && armed && !reloading && !modal && !cctv && !seated && !sprinting;
+  if (aiming === next) return aiming;
+  aiming = next;
+  document.body.classList.toggle('aiming', aiming);
+  document.getElementById('aimBtn')?.classList.toggle('on', aiming);
+  return aiming;
+}
+
+function queueJump() {
+  if (!started || modal || cctv) return false;
+  if (seated) {
+    leaveSeat();
+    return false;
+  }
+  jumpQueued = true;
+  setAiming(false);
+  return true;
 }
 
 function fire() {
@@ -628,7 +667,8 @@ let reloadTimer = 0;
 let queuedReload = 0;
 
 function reload() {
-  if (reloading || ammo >= 5 || reserve <= 0) return;
+  if (reloading || ammo >= MAGAZINE_SIZE || reserve <= 0) return;
+  setAiming(false);
   reloading = true;
   reloadTimer = 1.2;
   game.playGun('reload');
@@ -644,7 +684,7 @@ function updateReload(dt) {
   if (!reloading) return;
   reloadTimer -= dt;
   if (reloadTimer > 0) return;
-  const take = Math.min(5 - ammo, reserve);
+  const take = Math.min(MAGAZINE_SIZE - ammo, reserve);
   ammo += take;
   reserve -= take;
   reloading = false;
@@ -688,8 +728,8 @@ function restoreRun() {
   Object.assign(survival, saved.survival || {});
   survival.elapsed = saved.elapsed || 0;
   health = saved.health ?? 100;
-  ammo = saved.ammo ?? 5;
-  reserve = saved.reserve ?? 20;
+  ammo = saved.ammo ?? MAGAZINE_SIZE;
+  reserve = saved.reserve ?? INITIAL_RESERVE;
   cacheEmptied = !!saved.cacheEmptied;
   hatchOpen = !!saved.hatchOpen;
   game.setDoorOpen?.(!!saved.doorOpen);
@@ -746,6 +786,7 @@ const camNames = ['MAIN GATE','EAST FENCE / WOODLINE','SERVICE YARD','TOWER OVER
 function openCCTV() {
   cctv = true;
   modal = true;
+  setAiming(false);
   document.exitPointerLock?.();
   document.getElementById('cctv').classList.add('open');
   document.body.classList.add('overlay-open');
@@ -797,9 +838,12 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE')use();if(e.code==='KeyR')reload();if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();fire()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat)fire();if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
   addEventListener('keyup',e=>keys[e.code]=false);
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
+  renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement)fire()});
+  renderer.domElement.addEventListener('pointerup',(e)=>{if(e.button===2)setAiming(false)});
+  renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
   addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){yaw-=e.movementX*.0022;pitch=Math.max(-1.25,Math.min(1.15,pitch-e.movementY*.0018))}});
 
   const move={x:0,y:0},pad=document.getElementById('movePad'),nub=document.getElementById('moveNub');
@@ -816,6 +860,8 @@ function wireControls() {
   document.getElementById('use').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();use()});
   document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fire()});
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
+  document.getElementById('jumpBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();queueJump()});
+  document.getElementById('aimBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();setAiming(!aiming)});
   document.getElementById('helpBtn').addEventListener('click',()=>toggleHelp());
   document.querySelector('#help .x').addEventListener('click',()=>toggleHelp(false));
 
@@ -849,7 +895,10 @@ function updatePlayer(dt) {
 
   if (seated) {
     desiredVelocity.set(0, 0, 0);
-    body.step(dt, desiredVelocity, game.colliders[currentWorld], { crouch: false, jump: false });
+    // A seat is itself solid. Keep the seated capsule at the authored pose
+    // instead of resolving it out through the sofa on the next physics frame.
+    body.velocity.set(0, 0, 0);
+    body.grounded = true;
     game.player.position.set(body.position.x, body.position.y, body.position.z);
     game.camera.position.set(0, 1.18 + Math.sin(breath) * 0.003, 0);
     game.camera.rotation.z = 0;
@@ -869,6 +918,7 @@ function updatePlayer(dt) {
   const crouching = !!keys.ControlLeft || !!keys.KeyC || touch.crouch;
   const wantsSprint = (!!keys.ShiftLeft || !!keys.ShiftRight || touch.sprint) && forward > 0.1 && !crouching;
   sprinting = wantsSprint && stamina > 0.05;
+  if (sprinting && aiming) setAiming(false);
 
   // Sprinting drains stamina; standing still or walking refills it, with a
   // short recovery lag so a spent player cannot immediately sprint again.
@@ -887,10 +937,14 @@ function updatePlayer(dt) {
   desiredVelocity.copy(forwardAxis).multiplyScalar(forward * speed)
     .addScaledVector(rightAxis, strafe * speed);
 
+  const wantsJump = jumpQueued;
+  jumpQueued = false;
   body.step(dt, desiredVelocity, game.colliders[currentWorld], {
     crouch: crouching,
-    jump: !!keys.Space && currentWorld === 'outside',
+    jump: wantsJump,
+    jumpSpeed: 5.8,
   });
+  game.residents?.resolvePlayer?.(body.position, body.radius, body.height);
   game.player.position.set(body.position.x, body.position.y, body.position.z);
 
   // Head bob is driven by distance walked, not by wall-clock time, so it stops
@@ -1124,22 +1178,36 @@ startButton.onclick=async()=>{
 };
 
 // Weapon sway is driven by the body, so the rifle settles when the player does.
-const weaponRest = new THREE.Vector3(.32, -.38, -.72);
+const weaponHip = new THREE.Vector3(.32, -.38, -.72);
+// Centre the supplied rifle without lifting its receiver over the target. ADS
+// keeps the stock low, then pitches the muzzle onto the firing ray below.
+const weaponAim = new THREE.Vector3(.03, -.13, -.64);
+const weaponTarget = new THREE.Vector3();
 
 function updateWeapon(dt) {
   if (!armed) return;
-  const sway = Math.min(body.horizontalSpeed / 3, 1);
+  const blend = aiming ? 1 : 0;
+  const sway = Math.min(body.horizontalSpeed / 3, 1) * (aiming ? .22 : 1);
   const bob = body.distanceWalked * 3.4;
-  game.weaponView.position.set(
-    weaponRest.x + Math.cos(bob * 0.5) * 0.014 * sway,
-    weaponRest.y + Math.sin(bob) * 0.011 * sway + Math.sin(breath * 0.8) * 0.004 + recoil * 0.07,
-    weaponRest.z + recoil * 0.13 + (sprinting ? 0.05 : 0),
-  );
-  game.weaponView.rotation.set(
-    -0.04 - recoil * 0.5 + (sprinting ? 0.22 : 0),
-    -0.08 + Math.sin(bob * 0.5) * 0.02 * sway + (sprinting ? 0.3 : 0),
-    (sprinting ? 0.24 : 0),
-  );
+  weaponTarget.lerpVectors(weaponHip, weaponAim, blend);
+  weaponTarget.x += Math.cos(bob * .5) * .014 * sway;
+  weaponTarget.y += Math.sin(bob) * .011 * sway + Math.sin(breath * .8) * .004 + recoil * .07;
+  weaponTarget.z += recoil * .13 + (sprinting ? .05 : 0);
+  game.weaponView.position.x = THREE.MathUtils.damp(game.weaponView.position.x, weaponTarget.x, 15, dt);
+  game.weaponView.position.y = THREE.MathUtils.damp(game.weaponView.position.y, weaponTarget.y, 15, dt);
+  game.weaponView.position.z = THREE.MathUtils.damp(game.weaponView.position.z, weaponTarget.z, 15, dt);
+  game.weaponView.rotation.x = THREE.MathUtils.damp(game.weaponView.rotation.x,
+    (aiming ? .13 : -.04) - recoil * .5 + (sprinting ? .22 : 0), 16, dt);
+  game.weaponView.rotation.y = THREE.MathUtils.damp(game.weaponView.rotation.y,
+    (aiming ? 0 : -.08) + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0), 16, dt);
+  game.weaponView.rotation.z = THREE.MathUtils.damp(game.weaponView.rotation.z,
+    sprinting ? .24 : 0, 16, dt);
+  const targetFov = aiming ? 52 : 70;
+  const nextFov = THREE.MathUtils.damp(game.camera.fov, targetFov, 12, dt);
+  if (Math.abs(nextFov - game.camera.fov) > .001) {
+    game.camera.fov = nextFov;
+    game.camera.updateProjectionMatrix();
+  }
 }
 
 // Motion detection: anything alive inside the camera's frustum trips the

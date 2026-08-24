@@ -35,6 +35,32 @@ check(physics.world.wildlife === 0,
   `the surface has ${physics.world.wildlife} animals on it and should have none`);
 check(physics.world.bunkerColliders > 5, 'the shelter has no collision volumes');
 
+check(physics.armory?.present, 'the walk-in armoury did not load');
+if (physics.armory?.present) {
+  check(physics.armory.weapons === 25,
+    `the armoury displays ${physics.armory.weapons} of the 25 supplied models`);
+  check(physics.armory.shutDoorZ < 0.25,
+    `the shut armoury door let the player reach z=${physics.armory.shutDoorZ}`);
+  check(physics.armory.doorOffset < -1.65,
+    `the armoury door moved only ${physics.armory.doorOffset} m into its pocket`);
+  check(physics.armory.openDoorZ > 2.0,
+    `the open armoury stopped the player at z=${physics.armory.openDoorZ}`);
+  check(physics.armory.openDoorZ < 4.45,
+    `the player walked through the armoury back wall to z=${physics.armory.openDoorZ}`);
+  check(physics.armory.staticColliders >= 15,
+    `the armoury exposes only ${physics.armory.staticColliders} solid fittings`);
+  check(physics.armory.character && physics.armory.characterHeight > 1.7,
+    'the supplied full-height Adventurer character is missing');
+  check(physics.armory.characterAnimations >= 24,
+    'the supplied Adventurer animation set is not active');
+  check(physics.armory.characterCollision >= .64,
+    `the player passed through the quartermaster (${physics.armory.characterCollision} m)`);
+  check(physics.armory.rifleIssued && !physics.armory.rifleVisibleOnRack,
+    'taking the service rifle did not remove it from its wall mount');
+  check(physics.armory.armed && physics.armory.magazine === 30,
+    `the issued rifle loaded ${physics.armory.magazine} rounds instead of 30`);
+}
+
 // A 1x1 map is three.js substituting a placeholder for a texture that failed to
 // load — which is exactly how the shelter once shipped untextured.
 for (const texture of physics.textures) {
@@ -89,6 +115,16 @@ if (physics.silo.present) {
   check(physics.silo.sofaUse.satDown, 'using an apartment sofa did not seat the player');
   check(physics.silo.sofaUse.seatedEye < 1.3, 'the sofa interaction left the camera at standing height');
   check(physics.silo.sofaUse.stoodUp, 'using the control again did not stand up from the sofa');
+  check(physics.silo.furnitureJump.present, 'the apartments expose no physical dining table');
+  check(physics.silo.furnitureJump.rise > 0.65,
+    `silo jump rose only ${physics.silo.furnitureJump.rise} m`);
+  check(physics.silo.furnitureJump.atop, 'low apartment furniture did not provide a landing surface');
+  check(physics.silo.furnitureJump.landed, 'the player did not return to a grounded state after jumping');
+  check(physics.silo.aim.active, 'rifle aim mode did not engage');
+  check(physics.silo.aim.fov < 56, `rifle aim FOV stayed at ${physics.silo.aim.fov}°`);
+  check(physics.silo.aim.centred, 'rifle did not centre under the crosshair while aiming');
+  check(Math.abs(physics.silo.aim.rifleYaw - Math.PI / 2) < .03,
+    `rifle is still sideways (${physics.silo.aim.rifleYaw} rad yaw)`);
   check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
   check(physics.silo.tunnelEntry.doorMesh, 'the animated arched bulkhead asset did not load');
   check(physics.silo.tunnelEntry.radius > 24.0,
@@ -103,9 +139,15 @@ if (physics.silo.present) {
     `${physics.silo.lightMotion.hotSwaps} silo light slot(s) moved while still illuminated`);
   check(physics.silo.lightMotion.maxSlotStep < 2.6,
     `moving silo light changed by ${physics.silo.lightMotion.maxSlotStep.toFixed(2)} intensity units in one frame`);
-  check(physics.silo.doorArcs >= 126,
+  check(physics.silo.homes >= 70,
+    `the enlarged silo contains only ${physics.silo.homes} family homes`);
+  check(physics.silo.seats === physics.silo.homes * 2,
+    `${physics.silo.homes} homes expose only ${physics.silo.seats} usable seats`);
+  check(physics.silo.furnitureColliders >= physics.silo.homes * 21,
+    `the apartments expose only ${physics.silo.furnitureColliders} furniture colliders`);
+  check(physics.silo.doorArcs >= physics.silo.homes + 7,
     `the silo has only ${physics.silo.doorArcs} stateful door colliders`);
-  check(physics.silo.interactions >= 245,
+  check(physics.silo.interactions >= physics.silo.homes * 3 + 7,
     `the silo exposes only ${physics.silo.interactions} interactions; quarters or sofas are missing`);
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
@@ -121,6 +163,8 @@ check(combat.residentLines === combat.residents, 'a resident has nothing to say'
 check(combat.residentBuilds >= 6,
   `residents are drawn from ${combat.residentBuilds} body build(s), expected 6`);
 check(combat.speakPrompt, 'standing beside a resident offered no way to speak to them');
+check(combat.residentCollision?.distance >= combat.residentCollision?.minimum - .03,
+  `the player passed through a resident (${combat.residentCollision?.distance} m separation)`);
 check(combat.residentsOffGallery === 0,
   `${combat.residentsOffGallery} residents walked through a gallery wall or balustrade`);
 
