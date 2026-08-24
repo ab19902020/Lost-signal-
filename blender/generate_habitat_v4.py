@@ -901,15 +901,19 @@ def build_landing():
              deck_mid + (r / 5 - .5) * 1.82 * deck_span), (half * .92, .11, .07),
              DARK, edge=.02)
     gallery_inset = .18
-    guard_inner = inner + .04
+    # The deck reaches the core to close the dangerous top-floor hole, but its
+    # straight parapets begin only where they meet the circular stair guard.
+    # Running a side parapet back across the tread envelope turns that safety
+    # rail into a waist-high barrier across the only route off the stair.
+    guard_inner = STAIR_GUARD_RADIUS - asset_origin
     guard_outer = outer - gallery_inset
     guard_span = (guard_outer - guard_inner) / 2
     guard_mid = (guard_outer + guard_inner) / 2
     for side in (-1, 1):
         # Cast parapets, matching the galleries the landing runs out to. They
-        # extend 300 mm past the inner deck edge to overlap the exact stair
-        # newels. At the outer end they terminate flush in the gallery's solid
-        # returns, making one continuous safety line.
+        # overlap the exact stair newels without crossing the tread envelope.
+        # At the outer end they terminate flush in the gallery's solid returns,
+        # making one continuous safety line.
         cube(f'Landing_Parapet_{side}', (side * half, .52, guard_mid),
              (.15, .52, guard_span), CONCRETE, edge=.03)
         cube(f'Landing_Foot_{side}', (side * half, .10, guard_mid),
