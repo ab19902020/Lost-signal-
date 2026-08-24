@@ -153,7 +153,10 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     quartermaster = cloneGLTF(assets.adventurer);
     quartermaster.name = 'Quartermaster_Adventurer';
     quartermaster.position.copy(ARMORY_ORIGIN).add(new THREE.Vector3(1.17, .01, 1.43));
-    quartermaster.rotation.y = 0;
+    // Quaternius characters face local +Z (the backpack sits on -Z). The
+    // armoury entrance is toward -Z, so turn Eli around to greet the player
+    // instead of presenting the backpack at conversation distance.
+    quartermaster.rotation.y = Math.PI;
     quartermaster.userData.kind = 'quartermaster';
     scene.add(quartermaster);
     mixer = new THREE.AnimationMixer(quartermaster);
