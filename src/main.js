@@ -1182,7 +1182,7 @@ const weaponHip = new THREE.Vector3(.32, -.38, -.72);
 // Bring the rear sight onto the crosshair in ADS. The supplied rifle's stock
 // and sight line sit higher than the old placeholder model, so the former
 // -0.22 offset pointed visibly below the ray even though shots were accurate.
-const weaponAim = new THREE.Vector3(.03, -.13, -.64);
+const weaponAim = new THREE.Vector3(.03, -.03, -.64);
 const weaponTarget = new THREE.Vector3();
 
 function updateWeapon(dt) {
