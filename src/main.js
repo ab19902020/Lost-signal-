@@ -1179,10 +1179,9 @@ startButton.onclick=async()=>{
 
 // Weapon sway is driven by the body, so the rifle settles when the player does.
 const weaponHip = new THREE.Vector3(.32, -.38, -.72);
-// Bring the rear sight onto the crosshair in ADS. The supplied rifle's stock
-// and sight line sit higher than the old placeholder model, so the former
-// -0.22 offset pointed visibly below the ray even though shots were accurate.
-const weaponAim = new THREE.Vector3(.03, -.03, -.64);
+// Centre the supplied rifle without lifting its receiver over the target. ADS
+// keeps the stock low, then pitches the muzzle onto the firing ray below.
+const weaponAim = new THREE.Vector3(.03, -.13, -.64);
 const weaponTarget = new THREE.Vector3();
 
 function updateWeapon(dt) {
@@ -1198,7 +1197,7 @@ function updateWeapon(dt) {
   game.weaponView.position.y = THREE.MathUtils.damp(game.weaponView.position.y, weaponTarget.y, 15, dt);
   game.weaponView.position.z = THREE.MathUtils.damp(game.weaponView.position.z, weaponTarget.z, 15, dt);
   game.weaponView.rotation.x = THREE.MathUtils.damp(game.weaponView.rotation.x,
-    (aiming ? 0 : -.04) - recoil * .5 + (sprinting ? .22 : 0), 16, dt);
+    (aiming ? .13 : -.04) - recoil * .5 + (sprinting ? .22 : 0), 16, dt);
   game.weaponView.rotation.y = THREE.MathUtils.damp(game.weaponView.rotation.y,
     (aiming ? 0 : -.08) + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0), 16, dt);
   game.weaponView.rotation.z = THREE.MathUtils.damp(game.weaponView.rotation.z,
