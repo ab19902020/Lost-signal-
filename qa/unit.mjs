@@ -9,6 +9,7 @@ import { buildSilo, SILO } from '../src/silo.js';
 // browser is installed in CI.
 const scene = new THREE.Scene();
 const colliders = new ColliderSet();
+const interactionNames = [];
 const silo = buildSilo({
   scene,
   colliders,
@@ -19,7 +20,7 @@ const silo = buildSilo({
     habApartment: {}, habDoor: {}, habTunnel: {}, habBulkheadDoor: {},
   },
   place: () => new THREE.Group(),
-  addInteraction: () => {},
+  addInteraction: (_object, name) => interactionNames.push(name),
 });
 assert.ok(silo, 'silo collision did not build');
 
@@ -67,14 +68,27 @@ for (let level = 0; level < SILO.levels; level++) {
   }
 }
 
+const PLAYER_RADIUS = 0.34;
+
 // The floor bridge must stay continuous from the stair edge, over the landing,
 // and onto every gallery—including the secure level at the top.
 for (let level = 0; level <= SILO.levels; level++) {
   const y = level * SILO.levelHeight;
-  for (const radius of [5.55, 7, 9, 11, 12.8, 13.2, 14, 16, 18.5]) {
+  for (const radius of [1.65, 2.5, 3.5, 4.7, 5.3, 5.55, 7, 9, 11, 12.8, 13.2, 14, 16, 18.5]) {
     const floor = colliders.floorAt(radius, 0, 0.24, y + 0.36);
     assert.ok(floor >= y - 0.03 && floor <= y + 0.34,
       `level ${level}: floor gap at radius ${radius} (floor ${floor})`);
+  }
+}
+
+// The secure top landing must be safe across its full 3.6 m width, not only on
+// the narrow diagonal where the last helical tread happens to overlap it.
+const topY = SILO.levels * SILO.levelHeight;
+for (const z of [-1.35, -0.7, 0, 0.7, 1.35]) {
+  for (const x of [5.35, 4.7, 3.6, 2.4, 1.65]) {
+    const floor = colliders.floorAt(x, z, PLAYER_RADIUS, topY + 0.36);
+    assert.ok(Math.abs(floor - topY) < 0.1,
+      `secure landing gap at x=${x}, z=${z} (floor ${floor})`);
   }
 }
 
@@ -83,21 +97,28 @@ for (let level = 0; level <= SILO.levels; level++) {
 // that is wide along the ring and thin through it is metres bigger than the
 // slab — better than a third of every walkway was solid to the player and
 // invisible on screen, leaving a single walkable lane down the middle.
-const PLAYER_RADIUS = 0.34;
-
-// Both long sides of every landing are physical guards, while the 3.6 m centre
-// route remains open from the gallery to the stair.
+// Both long sides of every landing are physical guards from the circular stair
+// newels out to the gallery. Inside that join the same two edges are the broad
+// arrival/departure mouths of the helical stair, so putting straight rails
+// there would barricade the treads instead of protecting them.
 for (let level = 0; level <= SILO.levels; level++) {
   const y = level * SILO.levelHeight;
-  for (const radius of [6.0, 9.0, 12.7]) {
-    for (const side of [-1, 1]) {
-      assert.equal(colliders.contains(radius, -side * SILO.landingHalf, 0.12,
-        y + 0.40, y + 1.15), true,
-      `level ${level}: landing side ${side} is unguarded at radius ${radius}`);
+  for (const radius of [2.1, 3.5, 6.0, 9.0, 12.7]) {
+    if (radius >= SILO.stairRadius + .4) {
+      for (const side of [-1, 1]) {
+        assert.equal(colliders.contains(radius, -side * SILO.landingHalf, 0.12,
+          y + 0.40, y + 1.15), true,
+        `level ${level}: landing side ${side} is unguarded at radius ${radius}`);
+      }
     }
-    assert.equal(colliders.contains(radius, 0, PLAYER_RADIUS,
-      y + 0.20, y + 1.70), false,
-    `level ${level}: landing centre is blocked at radius ${radius}`);
+    // Inside the stair radius, overlapping climbable treads intentionally
+    // register in the cheap contains() query. The player controller steps onto
+    // them; the unobstructed flat centre is asserted from the stair edge out.
+    if (radius >= SILO.stairRadius + .4) {
+      assert.equal(colliders.contains(radius, 0, PLAYER_RADIUS,
+        y + 0.20, y + 1.70), false,
+      `level ${level}: landing centre is blocked at radius ${radius}`);
+    }
   }
 }
 
@@ -152,10 +173,10 @@ for (let level = 0; level < SILO.levels; level++) {
     const body = new CharacterBody();
     body.teleport(Math.cos(angle) * 18.15, y + .02, Math.sin(angle) * 18.15);
     const desired = new THREE.Vector3(Math.cos(angle) * 2.55, 0, Math.sin(angle) * 2.55);
-    for (let frame = 0; frame < 95; frame++) body.step(1 / 60, desired, colliders);
+    for (let frame = 0; frame < 180; frame++) body.step(1 / 60, desired, colliders);
     const reached = Math.hypot(body.position.x, body.position.z);
-    assert.ok(reached > SILO.deckOuter + .45,
-      `level ${level} bay ${bay}: capsule stopped at r=${reached.toFixed(2)} before entering the home`);
+    assert.ok(reached > silo.apartmentMid - .25,
+      `level ${level} bay ${bay}: capsule stopped at r=${reached.toFixed(2)} at the old hall barrier`);
     assert.ok(body.grounded, `level ${level} bay ${bay}: entering the home left the player airborne`);
     doorwaysTraversed++;
   }
@@ -166,7 +187,7 @@ for (let level = 0; level < SILO.levels; level++) {
 // portals, and a partition placed a few centimetres wrong seals one of them off
 // without anything looking wrong from the walkway.
 const ROOMS = [
-  ['hall', 0, -4.1], ['kitchen', -2.0, -1.9], ['living', 1.6, -1.0],
+  ['hall', 0, -4.1], ['kitchen', -2.0, -1.9], ['living', 0, -1.0],
   ['bedroom A', -1.7, 3.2], ['bedroom B', 1.7, 3.2],
 ];
 let roomsChecked = 0;
@@ -187,6 +208,11 @@ for (let level = 0; level < SILO.levels; level++) {
     }
   }
 }
+
+assert.equal(silo.sofas.length, doorwaysTraversed,
+  `only ${silo.sofas.length} of ${doorwaysTraversed} quarters have a usable sofa`);
+assert.equal(interactionNames.filter((name) => name.startsWith('SIT ON SOFA')).length,
+  doorwaysTraversed, 'not every apartment sofa exposes a USE interaction');
 
 // The landmark arch is always a real passage. Its bulkhead blocks the far end
 // while shut, then opens into the maintenance room behind it on every level.

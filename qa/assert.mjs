@@ -64,6 +64,12 @@ if (physics.silo.present) {
     check(Math.abs(entry.y - entry.level * 4) < 0.7,
       `level ${entry.level}: entering the stair changed level to y=${entry.y}`);
   }
+  for (const lane of physics.silo.topTransition || []) {
+    check(lane.minimumY > 27.5,
+      `top landing lane ${lane.offset} fell to y=${lane.minimumY}`);
+    check(lane.grounded, `top landing lane ${lane.offset} did not remain grounded`);
+    check(lane.x < 5.1, `top landing lane ${lane.offset} stopped before the final stair join`);
+  }
   // ...and the stair has to join every floor. Walking straight off the foot of
   // a flight should cross the landing and put you out on the walkway. An
   // unbroken gallery railing runs across the mouth of the landing and the walk
@@ -76,9 +82,13 @@ if (physics.silo.present) {
     check(Math.abs(floor.drop) < 1.0, `level ${floor.level}: walking off the stair changed level`);
   }
   check(physics.silo.homeEntry.closedBlocked, 'a closed quarters door has no collision');
-  check(physics.silo.homeEntry.radius > 20.0,
-    `player stopped at r=${physics.silo.homeEntry.radius} before entering the opened quarters`);
+  check(physics.silo.homeEntry.radius > 24.0,
+    `player stopped at r=${physics.silo.homeEntry.radius} at the opened quarters hall barrier`);
   check(physics.silo.homeEntry.grounded, 'entering an opened quarters left the player airborne');
+  check(physics.silo.sofaUse.present, 'the apartments expose no sofa interaction');
+  check(physics.silo.sofaUse.satDown, 'using an apartment sofa did not seat the player');
+  check(physics.silo.sofaUse.seatedEye < 1.3, 'the sofa interaction left the camera at standing height');
+  check(physics.silo.sofaUse.stoodUp, 'using the control again did not stand up from the sofa');
   check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
   check(physics.silo.tunnelEntry.doorMesh, 'the animated arched bulkhead asset did not load');
   check(physics.silo.tunnelEntry.radius > 24.0,
@@ -95,8 +105,8 @@ if (physics.silo.present) {
     `moving silo light changed by ${physics.silo.lightMotion.maxSlotStep.toFixed(2)} intensity units in one frame`);
   check(physics.silo.doorArcs >= 126,
     `the silo has only ${physics.silo.doorArcs} stateful door colliders`);
-  check(physics.silo.interactions >= 126,
-    `the silo exposes only ${physics.silo.interactions} interactions; quarters/bulkheads are missing`);
+  check(physics.silo.interactions >= 245,
+    `the silo exposes only ${physics.silo.interactions} interactions; quarters or sofas are missing`);
 } else {
   console.error('note: silo assets are not present in this checkout, skipping silo checks');
 }

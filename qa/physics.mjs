@@ -126,6 +126,32 @@ results.silo = await page.evaluate(async () => {
     });
   }
 
+  // Reproduce the supplied mobile route: walk straight inward across five
+  // lanes of the secure top landing. Previously only the diagonal overlap with
+  // the final tread had floor; the centre and right side dropped into the well.
+  const topTransition = [];
+  for (const offset of [-1.35, -0.7, 0, 0.7, 1.35]) {
+    ls.world('silo');
+    settle(10);
+    const floorY = head.levelHeight * head.levels;
+    ls.body.teleport(8.0, floorY + 0.5, offset);
+    settle(25);
+    let minimumY = ls.body.position.y;
+    ls.look(Math.PI / 2, 0);
+    for (let frame = 0; frame < 105; frame++) {
+      ls.walkFrames(1);
+      minimumY = Math.min(minimumY, ls.body.position.y);
+    }
+    settle(15);
+    topTransition.push({
+      offset,
+      x: +ls.body.position.x.toFixed(2),
+      y: +ls.body.position.y.toFixed(2),
+      minimumY: +minimumY.toFixed(2),
+      grounded: ls.body.grounded,
+    });
+  }
+
   // Walk off the stair, across the landing, onto the floor — on every level,
   // not one. This is the join the whole silo hangs on: the flight discharges
   // at bay 0 of each storey, through a gap in its balustrade and a gap in the
@@ -167,13 +193,22 @@ results.silo = await page.evaluate(async () => {
   // Camera yaw uses -sin(yaw), -cos(yaw) as forward, so radial-outward is
   // -angle - PI/2 (angle - PI/2 mirrors Z and walks beside the doorway).
   ls.look(-homeAngle - Math.PI / 2, 0);
-  ls.walkFrames(105);
+  ls.walkFrames(180);
   settle(12);
   const homeEntry = {
     level: homeLevel, bay: homeBay, closedBlocked: homeClosed,
     radius: +Math.hypot(ls.body.position.x, ls.body.position.z).toFixed(2),
     grounded: ls.body.grounded,
   };
+
+  const sofa = head.sofas.find((candidate) => candidate.userData.interaction);
+  sofa?.userData.interaction.onUse();
+  settle(12);
+  const satDown = ls.state().seated;
+  const seatedEye = +ls.game.camera.position.y.toFixed(2);
+  ls.use();
+  settle(12);
+  const sofaUse = { present: !!sofa, satDown, seatedEye, stoodUp: !ls.state().seated };
 
   // The arched landmark now has an independently animated bulkhead and a room
   // behind it. Walk through the opened leaf rather than merely checking its
@@ -271,8 +306,10 @@ results.silo = await page.evaluate(async () => {
     stairTop,
     stairFoot,
     stairEntries,
+    topTransition,
     floors,
     homeEntry,
+    sofaUse,
     tunnelEntry,
     lightStability,
     lightMotion,

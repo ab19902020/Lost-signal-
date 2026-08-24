@@ -30,6 +30,7 @@ export const SILO = {
   stairSteps: 36,
   stairTurn: Math.PI * 2,   // a full turn per level, so the landings stack
   landingHalf: 1.8,
+  landingInner: 1.38,       // full-depth landing reaches back to the stair core
   apartmentBack: 29.6,  // rear wall of every home: ten metres deep
   // A 1.24 m opening left less than sixty centimetres of usable centre line
   // once the player's capsule margin was applied. These are residential front
@@ -88,22 +89,13 @@ function styleLevel(root, level) {
 const box = (minX, minY, minZ, maxX, maxY, maxZ) =>
   new THREE.Box3(new THREE.Vector3(minX, minY, minZ), new THREE.Vector3(maxX, maxY, maxZ));
 
-// Conservative axis-aligned bounds for a slab standing at `distance` from the
-// axis, rotated to face the centre.
-function ringBox(angle, distance, halfWidth, halfDepth, minY, maxY) {
-  const cx = Math.cos(angle) * distance;
-  const cz = Math.sin(angle) * distance;
-  const ex = Math.abs(Math.cos(angle)) * halfDepth + Math.abs(Math.sin(angle)) * halfWidth;
-  const ez = Math.abs(Math.sin(angle)) * halfDepth + Math.abs(Math.cos(angle)) * halfWidth;
-  return box(cx - ex, minY, cz - ez, cx + ex, maxY, cz + ez);
-}
-
 export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   if (!assets.habShell || !assets.habLevel || !assets.habStair) return null;
 
   const {
     shellRadius, wellRadius, deckOuter, levelHeight, levels, segments,
-    stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, apartmentBack, doorHalf,
+    stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, landingInner,
+    apartmentBack, doorHalf,
   } = SILO;
   // A tread is deep in the radial direction and narrow along the helix. The
   // collision used to pass those the other way round, which made every tread a
@@ -264,8 +256,20 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     for (let i = 0; i < stairSteps; i++) {
       const angle = spin + (i * stairTurn) / stairSteps;
       const top = base + i * rise + 0.09;
-      colliders.addBox(ringBox(angle, stairMid, goingHalf, treadDepth, top - 0.55, top),
-        { climbable: true });
+      // Keep collision in the tread's true rotated footprint. A conservative
+      // axis-aligned bound is almost two metres wider at diagonal bearings;
+      // neighbouring bounds then overlap into an invisible shelf that catches
+      // the player part-way down an otherwise continuous flight.
+      colliders.addOrientedBox({
+        cx: Math.cos(angle) * stairMid,
+        cz: Math.sin(angle) * stairMid,
+        halfX: treadDepth,
+        halfZ: goingHalf,
+        rotationY: -angle,
+        minY: top - 0.55,
+        maxY: top,
+        climbable: true,
+      });
       // Clip the collision exactly as the Blender balustrade is clipped. The
       // central route stays comfortably open while both edges become solid
       // immediately outside the 3.6 m landing.
@@ -276,9 +280,19 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const guardEnd = Math.min(panelEnd, stairTurn - landingOpeningAngle);
       if (guardEnd > guardStart) {
         const guardAngle = spin + (guardStart + guardEnd) / 2;
-        const guardHalf = (guardEnd - guardStart) * stairGuardRadius / 2 * 1.015;
-        colliders.addBox(ringBox(guardAngle, stairGuardRadius, guardHalf, 0.18,
-          top, top + 1.05), {});
+        // Resolve the faceted visual rail as the curved barrier it follows.
+        // Independent rotated rectangles create tiny corners between panels;
+        // a capsule following the helix can catch on one even though the rail
+        // looks continuous. Polar arcs keep the same guarded span and let the
+        // controller slide smoothly all the way to the landing opening.
+        colliders.addArc({
+          innerRadius: stairGuardRadius - 0.18,
+          outerRadius: stairGuardRadius + 0.18,
+          centre: guardAngle,
+          halfWidth: (guardEnd - guardStart) / 2,
+          minY: top,
+          maxY: top + 1.05,
+        });
       }
     }
     // The core the helix wraps is solid; the shaft around it stays open.
@@ -300,11 +314,19 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   const apartmentMid = (deckOuter + apartmentBack) / 2;
   const apartmentDepth = (apartmentBack - deckOuter) / 2;
   const homes = [];
+  const sofas = [];
   const homeDoors = [];
   const tunnelDoors = [];
   const homeDoorByKey = new Map();
   const tunnelDoorByLevel = new Map();
   const yAxis = new THREE.Vector3(0, 1, 0);
+  // One shared, invisible ray target per home turns the authored sofa into a
+  // real interaction without splitting the joined apartment GLB into hundreds
+  // of draw calls. It remains visible to the raycaster but writes no pixels.
+  const sofaHitGeometry = new THREE.BoxGeometry(1.95, 0.92, 0.72);
+  const sofaHitMaterial = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0, depthWrite: false, colorWrite: false,
+  });
 
   const updateDoorLabel = (state) => {
     const interaction = state.root?.userData?.interaction;
@@ -412,11 +434,27 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       // culling means only the rooms in view draw, and a player may now open
       // any front door instead of discovering a decorative dead end.
       if (assets.habApartment) {
+        const rotationY = -angle + Math.PI / 2;
         const home = place(assets.habApartment, scene,
           [Math.cos(angle) * apartmentMid, y, Math.sin(angle) * apartmentMid],
-          [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
+          [0, rotationY, 0], 1, { world: 'silo', collide: false });
         home.userData.home = { level, bay };
         homes.push(home);
+
+        const sofa = new THREE.Mesh(sofaHitGeometry, sofaHitMaterial);
+        sofa.name = `SofaInteraction_${level}_${bay}`;
+        sofa.position.set(1.80, 0.55, 0.92);
+        home.add(sofa);
+        const toWorld = (local) => local.applyAxisAngle(yAxis, rotationY).add(home.position);
+        const seat = toWorld(new THREE.Vector3(1.80, 0.02, 0.88));
+        const stand = toWorld(new THREE.Vector3(1.80, 0.02, -0.58));
+        const unit = `QUARTERS ${String(levels - level).padStart(2, '0')}-${String(bay + 1).padStart(2, '0')}`;
+        addInteraction(sofa, `SIT ON SOFA — ${unit}`, 'silo', () => {
+          window.dispatchEvent(new CustomEvent('lostsignal:sofa', {
+            detail: { seat: seat.clone(), stand: stand.clone(), yaw: rotationY, unit },
+          }));
+        });
+        sofas.push(sofa);
       }
 
       const hinge = -doorHalf + 0.04;
@@ -462,15 +500,17 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       const halfW = homeWidth / 2;
       const halfD = apartmentDepth;
       const centre = apartmentMid;
-      const T = 0.10, DW = 0.48, WIDE = 0.85, top = y + levelHeight - 0.5;
+      const T = 0.10, DW = 0.48, WIDE = 1.55, top = y + levelHeight - 0.5;
       const across = (z, x0, x1) => addArcWall(
         angle + ((x0 + x1) / 2) / centre, centre + z, (x1 - x0) / 2, T, y, top);
       const along = (x, z0, z1) => addRadialWall(
         angle + x / centre, centre + z0, centre + z1, T, y, top);
       const HALL_BACK = -3.20, KITCHEN_X = -0.90, KITCHEN_BACK = -0.60, BED_FRONT = 1.60;
-      const kitchenDoor = -2.05, livingGap = 1.95, bedA = -1.70, bedB = 1.70;
+      const kitchenDoor = -2.05, livingGap = 0.0, bedA = -1.70, bedB = 1.70;
       across(HALL_BACK, -halfW, kitchenDoor - DW);
-      across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
+      if (livingGap - WIDE > kitchenDoor + DW + 0.02) {
+        across(HALL_BACK, kitchenDoor + DW, livingGap - WIDE);
+      }
       across(HALL_BACK, livingGap + WIDE, halfW);
       along(KITCHEN_X, HALL_BACK, KITCHEN_BACK);
       across(BED_FRONT, -halfW, bedA - DW);
@@ -516,6 +556,9 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // helix ends in mid-air and the galleries are unreachable.
   const landingSpan = (wellRadius + 0.3 - stairRadius) / 2;
   const landingMid = stairRadius + landingSpan;
+  const landingOuter = wellRadius + 0.3;
+  const landingDeckSpan = (landingOuter - landingInner) / 2;
+  const landingDeckMid = landingInner + landingDeckSpan;
   for (let level = 0; level <= levels; level++) {
     const y = levelY(level);
     // At the foot of that level's flight: the bottom tread stands at floor
@@ -526,12 +569,28 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
         [Math.cos(angle) * landingMid, y, Math.sin(angle) * landingMid],
         [0, -angle + Math.PI / 2, 0], 1, { world: 'silo', collide: false });
     }
-    colliders.addBox(ringBox(angle, landingMid, landingHalf, landingSpan, y - 0.3, y + 0.02),
-      { climbable: true });
+    // The old landing stopped at the stair's outer radius. On the secure top
+    // level there is no next flight beneath that missing inner section, so a
+    // player walking straight over the final joint fell into the shaft. This
+    // full-depth platform laps under the arrival tread and stays guarded.
+    colliders.addOrientedBox({
+      cx: Math.cos(angle) * landingDeckMid,
+      cz: Math.sin(angle) * landingDeckMid,
+      halfX: landingDeckSpan,
+      halfZ: landingHalf,
+      rotationY: -angle,
+      minY: y - 0.3,
+      maxY: y + 0.02,
+      climbable: true,
+    });
     // The authored landing parapets used to be visual only, so the player
     // could walk through either one and fall into the shaft. These oriented
     // boxes follow both radial edges and overlap the gallery returns.
-    const guardInner = stairRadius - 0.30;
+    // Begin the straight parapets where the circular stair balustrade meets
+    // them. Extending either parapet back to the service core puts a rail
+    // straight across the helical treads: it looks protective from the gallery
+    // and becomes an impassable barrier to anyone actually using the stair.
+    const guardInner = stairGuardRadius;
     const guardOuter = wellRadius + 0.12;
     const guardMid = (guardInner + guardOuter) / 2;
     const guardHalf = (guardOuter - guardInner) / 2;
@@ -872,10 +931,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     })),
   });
 
-  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes,
+  return { spawn, update, walkable, secureDoor, securePosition, topY, shaftHeight, homes, sofas,
            openBays, homeBays, homeDoors, tunnelDoors, setHomeDoor, setTunnelDoor, lightState,
            tunnelBay: TUNNEL_BAY, tunnelDoorRadius: deckOuter - 0.30 + TUNNEL_DOOR_DEPTH,
            apartmentMid,
-           stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, wellRadius, deckOuter,
+           stairRadius, stairColumn, stairSteps, stairTurn, landingHalf, landingInner,
+           wellRadius, deckOuter,
            levelHeight, levels };
 }
