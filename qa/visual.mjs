@@ -152,7 +152,7 @@ await desktop.evaluate(() => {
 });
 await saveChecked(desktop, '02-bunker-overview', { minMean: 0.12, maxBright: 0.07 });
 
-// Review the new room from its actual doorway. All 25 supplied models should
+// Review the new room from its actual doorway. All 29 supplied models should
 // read as mounted inventory, the door should be visibly pocketed, and the
 // central aisle must remain broad enough to walk rather than becoming a prop
 // diorama the player can only look into.
@@ -173,7 +173,7 @@ const armouryProof = await desktop.evaluate(() => {
     doorX: armory.shell.getObjectByName('Armory_Door_Leaf')?.position.x || 0,
   };
 });
-if (armouryProof.weapons !== 25) throw new Error(`armoury shows ${armouryProof.weapons}/25 supplied models`);
+if (armouryProof.weapons !== 29) throw new Error(`armoury shows ${armouryProof.weapons}/29 supplied models`);
 if (armouryProof.doorX > -1.6) throw new Error(`armoury door is not pocketed (${armouryProof.doorX.toFixed(2)} m)`);
 await saveChecked(desktop, '02a-walk-in-armoury', {
   minMean: 0.065, maxMean: 0.54, maxDark: 0.84, maxBright: 0.08,
