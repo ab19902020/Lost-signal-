@@ -502,12 +502,17 @@ def build_exterior_ground():
 
     # The field, and a wider skirt of it behind the fence so the ground runs
     # out past the wire instead of ending two metres beyond it.
+    # The ground is a stack of flat layers covering the same kilometre, so the
+    # gaps between them are the whole margin the depth buffer has to work with.
+    # They used to sit within six centimetres of one another and fought all the
+    # way to the horizon; these are spaced far enough apart to resolve at range
+    # and still far too close to see as steps.
     cube('ExteriorGrass', (0, -.30, 0), (30, .30, 34), grass, edge=.10)
     # The skirt has to reach the town now, because there is a road running out
     # to it. One quad: at this range the fog and the haze do the work, and the
     # alternative is a horizon that stops five hundred metres short of where
     # the player can see.
-    cube('ExteriorSkirt', (0, -.38, 0), (460, .30, 560), grass, edge=.20)
+    cube('ExteriorSkirt', (0, -.62, 0), (460, .30, 560), grass, edge=.20)
     # Field boundaries out along the road, so the far country is not one flat
     # green. Berkshire is hedged fields, not prairie.
     random.seed(23)
@@ -516,8 +521,8 @@ def build_exterior_ground():
         fz = random.uniform(-260, 500)
         if abs(fx) < 34 and abs(fz) < 34:
             continue
-        cube(f'FarField_{i}', (fx, -.012, fz),
-             (random.uniform(28, 74), .018, random.uniform(28, 74)),
+        cube(f'FarField_{i}', (fx, -.20, fz),
+             (random.uniform(28, 74), .10, random.uniform(28, 74)),
              grass_dry if i % 2 else grass_dark,
              rotation=(0, random.uniform(0, 3.1), 0), edge=1.2)
 
@@ -533,7 +538,7 @@ def build_exterior_ground():
         (-46, 18, 20.0, 20.0, grass_dry), (38, 30, 24.0, 18.0, grass_dark),
     ]
     for index, (x, z, sx, sz, material) in enumerate(patches):
-        cube(f'GrassPatch_{index}', (x, -.005, z), (sx, .020, sz), material,
+        cube(f'GrassPatch_{index}', (x, -.02, z), (sx, .052, sz), material,
              rotation=(0, index * .27, 0), edge=.60)
 
     # Worn earth only where boots and wheels have actually killed the grass: a

@@ -121,6 +121,15 @@ let recovery = 0;
 let hatchOpen = false;
 let hurtFlash = 0;
 let recoil = 0;
+// Recoil used to move the model and nothing else, so a .44 and a suppressed
+// SMG aimed identically. A real kick throws the muzzle off the target and the
+// player has to bring it back: `recoilPitch` is how far up the sight has been
+// thrown, `recoilYaw` how far sideways, and `recoilSettle` is the part of it
+// the weapon recovers on its own once the shooter stops firing.
+let recoilPitch = 0;
+let recoilYaw = 0;
+let recoilSettlePitch = 0;
+let recoilSettleYaw = 0;
 let sprinting = false;
 let stamina = 1;
 let seated = null;
@@ -320,6 +329,7 @@ async function prepare() {
         slot: (index) => selectSlot(index),
         cycle: (step = 1) => cycleWeapon(step),
         scoped: () => scoped,
+        aim2: () => ({ yaw, pitch }),
         time: (value) => { game.sky?.setTimeOfDay(value); updateStats(); },
         weather: (value) => { game.sky?.setWeather(value); },
         sky: () => ({ ...game.sky?.state }),
@@ -956,6 +966,7 @@ function fire() {
   weaponFireSound(weapon);
   muzzleFlash(weapon);
   recoil = weapon.recoil ?? .18;
+  kick(weapon);
 
   // fire() runs from an input event, so the camera still holds last frame's
   // matrix. Aiming off by a frame of mouse movement is a miss at range.
@@ -1099,6 +1110,44 @@ function updateReload(dt) {
 }
 
 const slotsEl = document.getElementById('weaponSlots');
+
+/**
+ * Throw the sight off the target.
+ *
+ * Vertical kick is most of it and is consistent, so it can be learned and
+ * pulled down against; the horizontal component is smaller and random, so a
+ * long burst wanders. Aiming down the sights braces the weapon and cuts both.
+ * Most of the throw settles back on its own, which is what lets a semi-
+ * automatic be fired quickly without the aim climbing away entirely.
+ */
+function kick(spec) {
+  const base = spec?.recoil ?? 0.18;
+  const braced = aiming ? 0.62 : 1;
+  const up = base * 0.055 * braced * (0.85 + Math.random() * 0.3);
+  const side = base * 0.022 * braced * (Math.random() * 2 - 1);
+  recoilPitch += up;
+  recoilYaw += side;
+  // Three quarters of it comes back by itself; the rest is the player's to
+  // correct, which is what makes a heavy weapon feel heavy.
+  recoilSettlePitch += up * 0.75;
+  recoilSettleYaw += side * 0.75;
+  pitch = Math.min(1.15, pitch + up);
+  yaw += side;
+}
+
+function updateRecoil(dt) {
+  if (recoilSettlePitch === 0 && recoilSettleYaw === 0) return;
+  // Recovery is a damped return of the portion the weapon takes back, applied
+  // to the look angles so the sight physically walks back down.
+  const nextPitch = THREE.MathUtils.damp(recoilSettlePitch, 0, 7.5, dt);
+  const nextYaw = THREE.MathUtils.damp(recoilSettleYaw, 0, 7.5, dt);
+  pitch -= recoilSettlePitch - nextPitch;
+  yaw -= recoilSettleYaw - nextYaw;
+  recoilSettlePitch = Math.abs(nextPitch) < 1e-5 ? 0 : nextPitch;
+  recoilSettleYaw = Math.abs(nextYaw) < 1e-5 ? 0 : nextYaw;
+  recoilPitch = THREE.MathUtils.damp(recoilPitch, 0, 6, dt);
+  recoilYaw = THREE.MathUtils.damp(recoilYaw, 0, 6, dt);
+}
 
 function updateAmmo() {
   const nameEl = document.getElementById('weaponName');
@@ -1860,6 +1909,7 @@ function simulate(dt) {
   updatePrompt();
   game.update(dt, currentWorld, game.player.position);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
+  updateRecoil(dt);
   if (shotCooldown > 0) shotCooldown = Math.max(0, shotCooldown - dt);
   // Held fire runs the automatics only. Everything else in the collection is
   // one round per pull, which is what makes the revolver feel like a revolver.
@@ -1916,10 +1966,21 @@ function loop() {
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);
   // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
   // where there are no bright practicals to bleed.
+  // Exhaustion desaturates and tightens the frame. These are driven off
+  // stamina, which regenerates continuously, so writing them raw every frame
+  // walks the vignette radius and the aberration offset by a fraction of a
+  // pixel each time — which resamples the whole image and reads as concentric
+  // bands crawling over everything. Quantising the input holds the frame still
+  // between real changes in the player's condition.
   const spent = 1 - stamina;
   gradePass.uniforms.vignette.value = 0.44 + spent * 0.16;
   gradePass.uniforms.saturation.value = 0.96 - spent * 0.14;
-  gradePass.uniforms.aberration.value = 0.0012 + spent * 0.001;
+  // Aberration is fixed. Vignette and saturation only scale what is already
+  // there, but aberration resamples the frame at an offset — so driving it off
+  // a stamina bar that is always creeping back up shifted every pixel by a
+  // fraction each frame, and the whole image crawled in concentric bands. It
+  // is a property of the lens, not of how tired the player is.
+  gradePass.uniforms.aberration.value = 0.0012;
   bloomPass.strength = currentWorld === 'outside' ? 0.12 : 0.2;
   composer.render();
 }

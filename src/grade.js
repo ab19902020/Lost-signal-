@@ -54,7 +54,12 @@ export const GradeShader = {
       float falloff = smoothstep(1.05, 0.32, radius);
       color *= mix(1.0, falloff, vignette);
 
-      float noise = hash(vUv * vec2(1024.0, 768.0) + fract(time) * 91.7) - 0.5;
+      // Fixed-pattern grain. Re-rolling the noise every frame put a sizzle over
+      // the whole image that, on a dark surface at night, read as the entire
+      // world flickering — and it was the largest single source of change
+      // between two frames of a completely static scene. Seeded from the pixel
+      // alone it is sensor noise: still texture, no shimmer.
+      float noise = hash(vUv * vec2(1024.0, 768.0)) - 0.5;
       color += noise * grain * (0.35 + luma * 0.9);
 
       // Injury tint pulls the frame red and dark at the edges.

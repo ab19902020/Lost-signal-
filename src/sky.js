@@ -123,7 +123,7 @@ const FRAGMENT = /* glsl */`
  * own clock already runs a day in four minutes, and the sky is driven off the
  * same elapsed time so the HUD's DAY counter and the sun agree.
  */
-export function createSky({ scene, dayLength = 240, startAt = 0.30 }) {
+export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   const uniforms = {
     zenith: { value: new THREE.Color(0x05070e) },
     horizon: { value: new THREE.Color(0x0b1017) },
@@ -153,7 +153,14 @@ export function createSky({ scene, dayLength = 240, startAt = 0.30 }) {
 
   const sun = new THREE.DirectionalLight(0xfff4e2, 0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  // A moving sun re-renders the shadow map every frame, so any coarseness in
+  // it reads as a crawl along every edge in the compound rather than as a soft
+  // edge. Twice the resolution and a normal bias stop the shimmer; the map is
+  // still one 2K texture for the whole surface.
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.normalBias = 0.045;
+  sun.shadow.bias = -0.0004;
+
   sun.shadow.camera.left = -46;
   sun.shadow.camera.right = 46;
   sun.shadow.camera.top = 46;
@@ -234,6 +241,12 @@ export function createSky({ scene, dayLength = 240, startAt = 0.30 }) {
     sun.color.copy(lightColour);
     sun.intensity = Math.max(0, dayFactor) * 3.6 * weatherDim;
     sun.visible = sun.intensity > 0.01;
+    // The shadow map is left on its automatic per-frame refresh. Holding it
+    // and stepping it when the sun had moved a set amount traded a crawl for a
+    // jump, and a jump across the whole compound is far more obvious than the
+    // crawl was — the sun being seven times slower, the map being 2K with a
+    // normal bias, and the far ground no longer asking for shadows deal with
+    // the crawl on their own.
 
     moon.position.copy(_moonDir).multiplyScalar(120);
     moon.intensity = Math.max(0, 1 - dayFactor) * 2.4 * (1 - cloud * 0.55);
