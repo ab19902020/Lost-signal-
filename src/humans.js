@@ -45,7 +45,7 @@ function tuneMaterial(material, role, palette) {
   const colour = palette[role];
   if (colour !== undefined && material.color) material.color.setHex(colour);
   material.metalness = 0;
-  material.envMapIntensity = role === 'eyes' ? 1.15 : .72;
+  material.envMapIntensity = role === 'eyes' ? .58 : .72;
 
   if (role === 'skin') {
     material.roughness = .48;
@@ -54,11 +54,20 @@ function tuneMaterial(material, role, palette) {
       material.clearcoatRoughness = .48;
     }
   } else if (role === 'eyes') {
-    material.roughness = .14;
+    material.roughness = .19;
     if ('clearcoat' in material) {
-      material.clearcoat = .48;
-      material.clearcoatRoughness = .12;
+      material.clearcoat = .36;
+      material.clearcoatRoughness = .18;
     }
+    // MakeHuman's high-poly eyeballs use the texture alpha and a two-sided
+    // corneal surface. Treating them like opaque clothing reveals the inner
+    // sclera over the iris at conversation distance, producing glowing white
+    // eyes under the armory key light. Preserve that specialised layering.
+    material.transparent = true;
+    material.alphaTest = 0;
+    material.depthWrite = false;
+    material.opacity = 1;
+    material.side = THREE.DoubleSide;
   } else if (role === 'teeth') {
     material.roughness = .27;
   } else if (role === 'shoes') {
@@ -76,7 +85,7 @@ function tuneMaterial(material, role, palette) {
     material.roughness = .84;
   }
 
-  if (!['hair', 'eyebrows', 'eyelashes'].includes(role)) {
+  if (!['hair', 'eyebrows', 'eyelashes', 'eyes'].includes(role)) {
     material.transparent = false;
     material.alphaTest = 0;
     material.depthWrite = true;
