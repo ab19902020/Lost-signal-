@@ -33,11 +33,10 @@ const bunkerUrls = {
   wallCamera: `${BASE}assets/blender/wall_camera_v3.glb`,
 };
 
-// User-supplied Quaternius assets. These GLBs already use glTF's Y-up
-// convention, unlike the earliest Lost Signal Blender exports, so they must
-// not pass through the legacy quarter-turn correction.
+// User-supplied weapon assets. These GLBs already use glTF's Y-up convention,
+// unlike the earliest Lost Signal Blender exports, so they must not pass
+// through the legacy quarter-turn correction.
 const suppliedUrls = {
-  adventurer: `${BASE}assets/supplied/adventurer.glb`,
   // The armoury is built rather than bought. The pack models were 240 to
   // 5,000 triangles and this is the geometry the player looks at more than any
   // other in the game; these are 5,600 to 16,600, with rails, irons, brakes,
@@ -68,6 +67,16 @@ const suppliedUrls = {
   armorySmg01: `${BASE}assets/blender/weapon_smg_01_v1.glb`,
   armorySmg02: `${BASE}assets/blender/weapon_smg_02_v1.glb`,
   armoryTripod: `${BASE}assets/supplied/tripod.glb`,
+};
+
+// The visible human foundation. These are continuous, deformation-ready
+// basemeshes rather than assembled primitives: 43,666 / 45,782 triangles,
+// 53-bone rigs, coordinated body morphs, full facial/hand geometry, embedded
+// material maps and authored Idle/Walk/Wave clips. Every resident, crowd
+// member, sentry and quartermaster is derived from one of these two assets.
+const humanUrls = {
+  humanMale: `${BASE}assets/characters/resident_male_high_v1.glb`,
+  humanFemale: `${BASE}assets/characters/resident_female_high_v1.glb`,
 };
 
 // The supplied model packs, converted from their FBX/OBJ sources by
@@ -102,8 +111,8 @@ const packUrls = {
   propTrashBags: `${BASE}assets/supplied/prop_trash_bags.glb`,
   propChest: `${BASE}assets/supplied/prop_chest.glb`,
   propTruck: `${BASE}assets/supplied/prop_truck.glb`,
-  // The two people left on the surface roster.
-  soldier: `${BASE}assets/supplied/soldier.glb`,
+  // The working dog left on the surface roster. Human roles now use the
+  // deformation-ready character foundation above.
   germanShepherd: `${BASE}assets/supplied/german_shepherd.glb`,
   // The medical bay and its stores.
   survivalFirstAid: `${BASE}assets/supplied/survival_first_aid_kit.glb`,
@@ -149,21 +158,6 @@ const siloUrls = {
   habSump: `${BASE}assets/blender/hab_sump_v5.glb`,
   habTunnel: `${BASE}assets/blender/hab_tunnel_v6.glb`,
   habBulkheadDoor: `${BASE}assets/blender/hab_bulkhead_door_v6.glb`,
-  // Six revision-six people: denser silhouettes, readable faces, hands and
-  // footwear. Twenty residents still rotate through all six builds and the
-  // runtime palette, so the added detail never turns into clone repetition.
-  residentA: `${BASE}assets/blender/resident_a_v6.glb`,
-  residentB: `${BASE}assets/blender/resident_b_v6.glb`,
-  residentC: `${BASE}assets/blender/resident_c_v6.glb`,
-  residentD: `${BASE}assets/blender/resident_d_v6.glb`,
-  residentE: `${BASE}assets/blender/resident_e_v6.glb`,
-  residentF: `${BASE}assets/blender/resident_f_v6.glb`,
-  residentStillA: `${BASE}assets/blender/resident_still_a_v6.glb`,
-  residentStillB: `${BASE}assets/blender/resident_still_b_v6.glb`,
-  residentStillC: `${BASE}assets/blender/resident_still_c_v6.glb`,
-  residentStillD: `${BASE}assets/blender/resident_still_d_v6.glb`,
-  residentStillE: `${BASE}assets/blender/resident_still_e_v6.glb`,
-  residentStillF: `${BASE}assets/blender/resident_still_f_v6.glb`,
   accessHatch: `${BASE}assets/blender/access_hatch_v3.glb`,
   siloCache: `${BASE}assets/blender/silo_cache_v3.glb`,
 };
@@ -318,6 +312,16 @@ async function loadModel(url, options = {}) {
   const gltf = await loader.loadAsync(url);
   gltf.scene = options.legacyOrientation === false ? gltf.scene : orientToYUp(gltf.scene);
   prepare(gltf.scene, options);
+  if (options.fitHeight) {
+    // Height fitting changes the content transform. Keep that transform on an
+    // inner node so gameplay can put the returned root at an exact floor point
+    // without overwriting the correction that put the character's soles at 0.
+    const content = fitToHeight(gltf.scene, options.fitHeight);
+    const fitted = new THREE.Group();
+    fitted.name = 'LS_FittedHumanRoot';
+    fitted.add(content);
+    gltf.scene = fitted;
+  }
   return gltf;
 }
 
@@ -334,7 +338,9 @@ export async function loadGameAssets(onProgress = () => {}) {
   const bunkerEntries = Object.entries(bunkerUrls);
   const exteriorEntries = Object.entries(exteriorUrls);
   const suppliedEntries = Object.entries(suppliedUrls);
-  const total = bunkerEntries.length + exteriorEntries.length + suppliedEntries.length;
+  const humanEntries = Object.entries(humanUrls);
+  const total = bunkerEntries.length + exteriorEntries.length + suppliedEntries.length
+    + humanEntries.length;
   let loaded = 0;
   const tick = (key) => {
     loaded += 1;
@@ -347,7 +353,16 @@ export async function loadGameAssets(onProgress = () => {}) {
     loadSet(bunkerEntries, assets, tick),
     loadSet(exteriorEntries, assets, tick),
     loadSet(suppliedEntries, assets, tick, { legacyOrientation: false, retile: false }),
+    loadSet(humanEntries, assets, tick,
+      { legacyOrientation: false, retile: false, fitHeight: 1.82 }),
   ]);
+
+  // Existing gameplay systems keep their role keys, but the visible model and
+  // animation source now come from the high-detail human foundation. Aliasing
+  // avoids downloading and parsing the same multi-megabyte GLB more than once.
+  assets.adventurer = assets.humanMale;
+  assets.soldier = assets.humanMale;
+  assets.infected = assets.humanMale;
 
   await Promise.all([
     ...Object.entries({ ...creatureUrls, ...siloUrls }).map(async ([key, url]) => {

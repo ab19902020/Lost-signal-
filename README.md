@@ -23,6 +23,11 @@ from the heavier WebGL scene. The emergency track lives at
 - Required runtime models live under `public/assets/` and are requested from the same origin as the game.
 - GitHub Actions runs the Blender generators in `blender/` and commits the GLBs they produce.
 - The bunker loads as the priority scene; the surface, silo, CCTV, animated people, armoury and weapon all use repository assets.
+- Every visible human role uses the high-density character foundation under
+  `public/assets/characters/`: 43,666–45,782 triangles, 53 deform bones,
+  continuous joint-loop topology, embedded material maps, three coordinated
+  body morphs and authored Idle/Walk/Wave clips. Six resident builds vary that
+  foundation without dropping to a low-poly fallback.
 
 ### Coordinates
 

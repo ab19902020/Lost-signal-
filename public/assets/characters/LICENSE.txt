@@ -1,0 +1,18 @@
+HUMAN FORGE CHARACTER ASSET LICENSE
+
+Aiden and Maya, including the GLB, FBX, Blender source, textures, rig,
+animations, and morph targets in this package, are released under CC0 1.0.
+
+You may copy, modify, redistribute, animate, and use these character assets
+for commercial or non-commercial projects without attribution.
+
+Generated with the MakeHuman / MPFB character system and MakeHuman System
+Assets, whose exported character content is made available under CC0.
+
+Official licensing references:
+https://static.makehumancommunity.org/oldsite/faq/can_i_sell_models_created_with_makehuman.html
+https://static.makehumancommunity.org/makehuman/faq/are_makehuman_files_free.html
+https://static.makehumancommunity.org/mpfb/faq/use_in_closed_source.html
+
+CC0 1.0 legal text:
+https://creativecommons.org/publicdomain/zero/1.0/legalcode

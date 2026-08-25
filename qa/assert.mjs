@@ -51,9 +51,9 @@ if (physics.armory?.present) {
   check(physics.armory.staticColliders >= 15,
     `the armoury exposes only ${physics.armory.staticColliders} solid fittings`);
   check(physics.armory.character && physics.armory.characterHeight > 1.7,
-    'the supplied full-height Adventurer character is missing');
-  check(physics.armory.characterAnimations >= 24,
-    'the supplied Adventurer animation set is not active');
+    'the full-height high-density quartermaster is missing');
+  check(physics.armory.characterAnimations >= 3,
+    'the quartermaster Idle/Walk/Wave animation set is not active');
   check(physics.armory.characterCollision >= .64,
     `the player passed through the quartermaster (${physics.armory.characterCollision} m)`);
   check(physics.armory.rifleIssued && !physics.armory.rifleVisibleOnRack,
@@ -176,6 +176,10 @@ check(combat.residentLines === combat.residents, 'a resident has nothing to say'
 // so the silo has to be drawing them from more than one build.
 check(combat.residentBuilds >= 6,
   `residents are drawn from ${combat.residentBuilds} body build(s), expected 6`);
+check(combat.residentRigged === combat.residents,
+  `${combat.residents - combat.residentRigged} resident(s) fell back to an unrigged model`);
+check(combat.residentTriangleRange?.[0] >= 43000,
+  `resident topology fell to ${combat.residentTriangleRange?.[0]} triangles; expected at least 43,000`);
 check(combat.speakPrompt, 'standing beside a resident offered no way to speak to them');
 check(combat.residentCollision?.distance >= combat.residentCollision?.minimum - .03,
   `the player passed through a resident (${combat.residentCollision?.distance} m separation)`);
