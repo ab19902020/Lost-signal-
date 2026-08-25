@@ -646,6 +646,23 @@ export function createGameWorld(assets) {
   let heldKey = null;
 
   // Scratch working space for measuring the held model.
+  // How long each class of weapon is held at, in metres down the firing line.
+  // A viewmodel is deliberately larger than life — that is standard — but it
+  // has to be consistently so, and the per-model scales guessed at conversion
+  // time were not: they left the Mossberg at two fifths the size of the other
+  // shotguns and the AKM short of every other rifle.
+  const HELD_LENGTH = {
+    rifle: 0.86, smg: 0.74, shotgun: 0.95, sniper: 1.15,
+    pistol: 0.40, revolver: 0.40, blade: 0.36,
+  };
+  // Where the centre of the held model sits relative to the rig point. A long
+  // gun is carried further forward so its butt does not swing through the
+  // camera; a handgun is held closer in.
+  const HELD_NUDGE = {
+    rifle: [0, 0.09, -0.10], smg: [0, 0.08, -0.08], shotgun: [0, 0.09, -0.12],
+    sniper: [0, 0.09, -0.16], pistol: [0, 0.02, -0.02], revolver: [0, 0.02, -0.02],
+    blade: [0.01, 0.03, -0.02],
+  };
   const _weaponBox = new THREE.Box3();
   const _weaponSize = new THREE.Vector3();
   const _weaponCentre = new THREE.Vector3();
@@ -665,47 +682,45 @@ export function createGameWorld(assets) {
    * Returns a unit vector along the model's own axes, or null if the model has
    * no usable geometry.
    */
-  function muzzleAxis(model) {
+  /**
+   * Where the weight sits along the firing line, as a signed fraction of the
+   * model's length: positive means the mass is behind the middle, which is
+   * what a correctly-pointed weapon looks like.
+   *
+   * Falls back to which half is deeper — the back of a weapon carries a stock
+   * or a grip hanging off the line of the barrel, the muzzle end is just
+   * barrel — for models too symmetric along their length to read, which is
+   * most handguns.
+   */
+  function massBias(model) {
     model.updateWorldMatrix(true, true);
     _weaponBox.setFromObject(model);
     _weaponBox.getSize(_weaponSize);
     _weaponBox.getCenter(_weaponCentre);
-    const axis = _weaponSize.x >= _weaponSize.z ? 'x' : 'z';
-    const span = _weaponSize[axis];
-    if (span < 1e-5) return null;
+    const span = _weaponSize.z;
+    if (span < 1e-5) return 1;
 
     let total = 0;
     let sum = 0;
-    // ...and how deep each half is. The back of a weapon carries a stock or a
-    // grip hanging off the line of the barrel; the muzzle end is just barrel.
-    let lowHeight = 0;
-    let highHeight = 0;
+    let lowDepth = 0;
+    let highDepth = 0;
     for (const mesh of collectMeshes(model)) {
       const position = mesh.geometry?.attributes?.position;
       if (!position) continue;
-      // A few hundred vertices are plenty to find a centre of mass, and keep a
-      // weapon swap off the frame budget.
       const stride = Math.max(1, Math.floor(position.count / 400));
       for (let i = 0; i < position.count; i += stride) {
         _vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
-        sum += _vertex[axis];
+        sum += _vertex.z;
         total++;
         const drop = Math.abs(_vertex.y - _weaponCentre.y);
-        if (_vertex[axis] < _weaponCentre[axis]) lowHeight = Math.max(lowHeight, drop);
-        else highHeight = Math.max(highHeight, drop);
+        if (_vertex.z < _weaponCentre.z) lowDepth = Math.max(lowDepth, drop);
+        else highDepth = Math.max(highDepth, drop);
       }
     }
-    if (!total) return null;
-    const bias = (sum / total - _weaponCentre[axis]) / span;
-    // A pistol is near enough symmetric along its length for the weighing to
-    // say nothing, so fall back to which half is deeper.
-    const heavyEnd = Math.abs(bias) >= 0.02
-      ? Math.sign(bias)
-      : Math.sign(highHeight - lowHeight);
-    if (!heavyEnd) return null;
-    const direction = new THREE.Vector3();
-    direction[axis] = -heavyEnd;
-    return direction;
+    if (!total) return 1;
+    const bias = (sum / total - _weaponCentre.z) / span;
+    if (Math.abs(bias) >= 0.02) return bias;
+    return (highDepth - lowDepth) || 1;
   }
 
   function collectMeshes(root) {
@@ -787,27 +802,88 @@ export function createGameWorld(assets) {
     const model = cloneGLTF(source);
     const view = WEAPONS[heldKey]?.view
       || { scale: armory?.weaponAsset ? .16 : .78, offset: [armory?.weaponAsset ? -.04 : 0, armory?.weaponAsset ? -.08 : -.02, 0] };
-    // Point the barrel where the crosshair points, both which axis it lies on
-    // and which way along it. `flip` stays as a last-resort override for a
-    // model the weighing cannot read.
+    // Four packs, four conventions, and some models carry a residual rotation
+    // from conversion. Rather than a table of per-weapon fudges, the model is
+    // measured and turned until it is held the way a weapon is held: barrel
+    // down the firing line, sights up, and the same size as everything else in
+    // its class.
+    // The packs disagree about which axis a weapon lies on, which way along it
+    // the muzzle is, which way is up, and how big a unit is — and some models
+    // carry a residual rotation from conversion on top of that. Rather than a
+    // table of per-weapon fudges, the model is measured and turned until it is
+    // held the way a weapon is held.
     model.rotation.set(0, 0, 0);
-    const muzzle = muzzleAxis(model);
-    const alongX = _weaponSize.x >= _weaponSize.z;
-    // Turn the muzzle direction onto camera -Z.
-    let yaw;
-    if (muzzle) {
-      yaw = Math.atan2(muzzle.x, -muzzle.z);
-    } else {
-      yaw = alongX ? Math.PI / 2 : Math.PI;
+    model.scale.setScalar(1);
+    // These four steps each assume the ones before it have already happened,
+    // so they have to compose in that order. Three.js's default XYZ Euler
+    // applies Z first, which meant the roll in step 3 was being applied before
+    // the yaw in step 2 — and the combat knife came out pointing at the sky,
+    // three metres tall, whatever the steps said. ZYX applies X, then Y, then
+    // Z, which is the order they are written in.
+    model.rotation.order = 'ZYX';
+
+    // 1. Put the longest axis on the firing line, whichever it started on.
+    //    The combat knife's is vertical, which no amount of yaw would fix.
+    measureHeld(model);
+    if (_weaponSize.x >= _weaponSize.y && _weaponSize.x >= _weaponSize.z) {
+      model.rotation.y = Math.PI / 2;
+    } else if (_weaponSize.y >= _weaponSize.x && _weaponSize.y >= _weaponSize.z) {
+      model.rotation.x = -Math.PI / 2;
     }
-    if (view.flip) yaw += Math.PI;
-    model.rotation.set(0, yaw, 0);
-    model.scale.setScalar(view.scale);
-    model.position.set(...view.offset);
+    measureHeld(model);
+
+    // 2. Point it away. Every firearm is back-heavy — stock, grip, magazine
+    //    and action all sit behind the barrel — and a blade's handle outweighs
+    //    its blade, so the light end is the end that goes downrange. `flip`
+    //    remains a last-resort override for a model too symmetric to read.
+    const backHeavy = massBias(model);
+    if ((backHeavy < 0) !== !!view.flip) model.rotation.y += Math.PI;
+    measureHeld(model);
+
+    // 3. Roll: a weapon is taller than it is wide, so anything measuring wider
+    //    than tall is lying on its side. Rolling about the firing line cannot
+    //    disturb what steps 1 and 2 established.
+    if (_weaponSize.x > _weaponSize.y * 1.15) {
+      model.rotation.z = Math.PI / 2;
+      measureHeld(model);
+    }
+
+    // 4. Scale to the length its class is held at, rather than to a number
+    //    guessed per model at conversion time — that guess had the Mossberg at
+    //    two fifths the size of the other shotguns. Two passes so it lands
+    //    exactly whatever scale the model arrived with.
+    const family = WEAPONS[heldKey]?.family;
+    const wanted = HELD_LENGTH[family];
+    if (wanted) {
+      for (let pass = 0; pass < 2 && _weaponSize.z > 1e-4; pass++) {
+        model.scale.multiplyScalar(wanted / _weaponSize.z);
+        measureHeld(model);
+      }
+    } else {
+      model.scale.setScalar(view.scale);
+    }
+
+    // 5. Sit it on the rig point. With every weapon now scaled to its class,
+    //    the per-model offsets guessed alongside the old per-model scales no
+    //    longer meant anything — they left the AKM and the scout rifle half
+    //    out of frame while the Mossberg sat square. Centring the measured
+    //    model and nudging by class frames all twenty-six the same way.
+    _weaponBox.getCenter(_weaponCentre);
+    const nudge = HELD_NUDGE[family] || HELD_NUDGE.rifle;
+    model.position.set(nudge[0] - _weaponCentre.x, nudge[1] - _weaponCentre.y,
+      nudge[2] - _weaponCentre.z);
     model.name = `Equipped_${heldKey || 'Rifle'}`;
     weaponAction.add(model);
     heldModel = model;
     return model;
+  }
+
+  /** The model's extents in the rig's own frame, with its current transform. */
+  function measureHeld(model) {
+    model.updateWorldMatrix(true, true);
+    _weaponBox.setFromObject(model);
+    _weaponBox.getSize(_weaponSize);
+    return _weaponSize;
   }
   setWeapon(DEFAULT_WEAPON);
 

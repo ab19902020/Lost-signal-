@@ -127,8 +127,13 @@ if (physics.silo.present) {
   // The exact yaw is the viewmodel's business — it is measured from the model
   // now, not assumed — but the weapon still has to be turned onto the firing
   // line rather than lying across the bottom of the screen.
-  check(Math.abs(Math.abs(physics.silo.aim.rifleYaw) - Math.PI / 2) < .03,
-    `rifle is still sideways (${physics.silo.aim.rifleYaw} rad yaw)`);
+  // Which Euler angle the rifle ends up at is no longer meaningful: the
+  // viewmodel measures each model and derives the rotation that points it
+  // downrange, so a quarter turn either way is equally correct. What the
+  // weapon is actually doing is checked properly in qa/weapons.mjs, against
+  // every weapon in the collection rather than this one.
+  check(Math.abs(physics.silo.aim.rifleYaw) > 0.01,
+    'the held rifle was left at its authored orientation');
   check(/^Equipped_armory/.test(physics.silo.aim.rifleName || ''),
     `the held model is ${physics.silo.aim.rifleName}, not a weapon off the armoury wall`);
   check(physics.silo.tunnelEntry.closedBlocked, 'the closed arched bulkhead has no collision');
@@ -215,6 +220,32 @@ check(weapons.sameModel.length === 0,
 check(weapons.backwards.length === 0,
   `these weapons are held pointing backwards: ${weapons.backwards.join('; ')}`);
 check(weapons.fired.length === 0, `a weapon fired blanks: ${weapons.fired.join('; ')}`);
+check(weapons.rolled.length === 0,
+  `these weapons are held on their side: ${weapons.rolled.join('; ')}`);
+check(weapons.stubby.length === 0,
+  `these weapons are not held along their long axis: ${weapons.stubby.join('; ')}`);
+// Everything in a class is carried at the same size. Per-model scales guessed
+// at conversion time had the Mossberg at two fifths the size of the other
+// shotguns and the AKM short of every other rifle.
+{
+  const byLength = new Map();
+  for (const [key, length] of weapons.lengths || []) byLength.set(key, length);
+  const classes = {
+    rifle: ['armoryAssault01', 'armoryAssault02', 'armoryAssault03', 'armoryBullpup', 'armoryAkm'],
+    shotgun: ['armoryShotgun01', 'armoryShotgun02', 'armoryShotgunShort',
+      'armoryShotgunSawed', 'armoryMossberg'],
+    sniper: ['armorySniper01', 'armorySniper02', 'armorySniper03', 'armorySniper04'],
+    handgun: ['armoryPistol01', 'armoryPistol02', 'armoryPistol03', 'armoryPistol04',
+      'armoryGlock', 'armoryRevolver01', 'armoryRevolver02', 'armoryRevolver03'],
+  };
+  for (const [name, keys] of Object.entries(classes)) {
+    const lengths = keys.map((key) => byLength.get(key)).filter((v) => v != null);
+    if (lengths.length < 2) continue;
+    const spread = Math.max(...lengths) - Math.min(...lengths);
+    check(spread < 0.08,
+      `${name}s are carried at lengths ${Math.min(...lengths)}–${Math.max(...lengths)} m`);
+  }
+}
 check(weapons.noDecal.length === 0,
   `these weapons left no mark on the wall they hit: ${weapons.noDecal.join(', ')}`);
 check(weapons.badReload.length === 0, `a weapon failed to reload: ${weapons.badReload.join('; ')}`);

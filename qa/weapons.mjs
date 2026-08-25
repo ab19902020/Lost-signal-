@@ -47,7 +47,7 @@ await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, nu
 const results = await page.evaluate(async ({ keys, catalogue }) => {
   const ls = globalThis.__ls;
   const THREE = ls.THREE;
-  const out = { racked: [], fired: [], sameModel: [], backwards: [], noDecal: [],
+  const out = { racked: [], fired: [], sameModel: [], backwards: [], rolled: [], stubby: [], lengths: [], noDecal: [],
     badReload: [], names: [] };
 
   // --- the racks: every usable model has to be a real interaction ----------
@@ -114,6 +114,19 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
       // Below a couple of per cent the model is symmetric enough that the sign
       // means nothing; only a clear lean the wrong way is a fault.
       if (bias < -0.02) out.backwards.push(`${key}: ${bias.toFixed(3)}`);
+
+      // Held the way a weapon is held: longest down the firing line, and
+      // taller than it is wide. Wider than tall means it is lying on its side,
+      // which is how the combat knife was carried for three releases.
+      if (size.x > size.y * 1.15) {
+        out.rolled.push(`${key}: ${size.x.toFixed(2)}w x ${size.y.toFixed(2)}h`);
+      }
+      if (size.z < Math.max(size.x, size.y)) {
+        out.stubby.push(`${key}: ${size.z.toFixed(2)} long vs ${Math.max(size.x, size.y).toFixed(2)}`);
+      }
+      // ...and the same size as everything else in its class, so a Mossberg is
+      // not carried at two fifths the size of the other shotguns.
+      out.lengths.push([key, +size.z.toFixed(3)]);
     }
 
     // Point at the shelter's back wall and pull the trigger.
