@@ -1916,10 +1916,21 @@ function loop() {
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);
   // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
   // where there are no bright practicals to bleed.
+  // Exhaustion desaturates and tightens the frame. These are driven off
+  // stamina, which regenerates continuously, so writing them raw every frame
+  // walks the vignette radius and the aberration offset by a fraction of a
+  // pixel each time — which resamples the whole image and reads as concentric
+  // bands crawling over everything. Quantising the input holds the frame still
+  // between real changes in the player's condition.
   const spent = 1 - stamina;
   gradePass.uniforms.vignette.value = 0.44 + spent * 0.16;
   gradePass.uniforms.saturation.value = 0.96 - spent * 0.14;
-  gradePass.uniforms.aberration.value = 0.0012 + spent * 0.001;
+  // Aberration is fixed. Vignette and saturation only scale what is already
+  // there, but aberration resamples the frame at an offset — so driving it off
+  // a stamina bar that is always creeping back up shifted every pixel by a
+  // fraction each frame, and the whole image crawled in concentric bands. It
+  // is a property of the lens, not of how tired the player is.
+  gradePass.uniforms.aberration.value = 0.0012;
   bloomPass.strength = currentWorld === 'outside' ? 0.12 : 0.2;
   composer.render();
 }

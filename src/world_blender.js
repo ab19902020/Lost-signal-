@@ -34,7 +34,13 @@ export function createGameWorld(assets) {
   // nothing beyond its fence. It now has to reach a sky and a town on the
   // horizon, so it goes out to nine hundred; the near plane comes back a
   // fraction to keep the depth buffer's ratio sane.
-  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 900);
+  // Near plane at 0.05 with a far plane at 900 is an eighteen-thousand to one
+  // depth range, and the precision that leaves at three hundred metres is
+  // measured in metres — so every flat layer of ground fought every other one
+  // and the whole surface strobed. The viewmodel's nearest point sits about
+  // 0.17 m from the eye, so 0.15 is as far out as the near plane can go, and
+  // it buys three times the precision everywhere.
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.15, 900);
   const _cullPoint = new THREE.Vector3();   // reused: light culling runs every frame
   const _interactionPoint = new THREE.Vector3();
   const _interactionCamera = new THREE.Vector3();
@@ -255,12 +261,28 @@ export function createGameWorld(assets) {
   // ---------------------------------------------------------------------------
   // EXTERIOR — ALSO BLENDER VISIBLE GEOMETRY
   // ---------------------------------------------------------------------------
-  place(assets.exteriorGround, outside, [0,0,0], [0,0,0], 1, { collide: false });
+  const groundRoot = place(assets.exteriorGround, outside, [0,0,0], [0,0,0], 1, { collide: false });
+  // The sun's shadow camera covers ninety metres of compound. The skirt and the
+  // far fields run to five hundred, so most of their area lies outside that
+  // frustum entirely — where the shadow lookup clamps and the result crawls
+  // across acres of flat ground as the light moves. Nothing that far out can
+  // receive a shadow worth having, so it does not ask for one.
+  groundRoot.traverse((part) => {
+    if (!part.isMesh) return;
+    if (/^(ExteriorSkirt|FarField_)/.test(part.name)) part.receiveShadow = false;
+    // Flat ground never casts anything either; only the props on it do.
+    part.castShadow = false;
+  });
   place(assets.exteriorEntrance, outside, [0,0,-17], [0,0,0], 1, { shrink: 0.12 });
 
   // Sun, moon, stars, cloud and rain, all on the shelter's own clock. The
   // surface used to be one fixed night with a single hard moonlight in it.
-  const sky = createSky({ scene: outside, dayLength: 240, startAt: 0.30 });
+  // Thirty minutes to the day. At four the sun crossed the sky fast enough to
+  // watch: shadows crawled across the yard while the player stood still, and
+  // every edge in the compound shimmered as the shadow map chased it. Half an
+  // hour still gets you dawn, noon, dusk and night in one sitting without the
+  // surface being visibly in motion when nothing is moving.
+  const sky = createSky({ scene: outside, dayLength: 1800, startAt: 0.30 });
 
   // The perimeter. Four-metre bays of security fence: footings, line posts,
   // top rail, tension wire, chain link and three strands of barbed wire on
@@ -966,7 +988,10 @@ export function createGameWorld(assets) {
 
     // Weather. The rain is the sky's, not a permanent fixture of the surface.
     if (world === 'outside') {
-      rain.visible = sky.state.rain > 0.02;
+      // Two per cent of a rainstorm is not rain, it is three hundred streaks
+      // twitching over a dry compound. Hold the rain back until there is
+      // actually weather to show.
+      rain.visible = sky.state.rain > 0.12;
       rainMat.opacity = 0.05 + sky.state.rain * 0.20;
       // Compound lighting is on a photocell, like every real yard light: it
       // burns through the night and shuts off when there is daylight to see by.
