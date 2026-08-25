@@ -269,6 +269,48 @@ results.audio = await page.evaluate(async (keys) => {
   return readings;
 }, USABLE_WEAPON_KEYS);
 
+// Recoil. One number scaled by a catalogue entry gave twenty-six weapons the
+// same move at different sizes; this checks each one actually behaves like
+// itself — a suppressed SMG barely lifts, a sawn-off throws the sight, the AKM
+// pulls consistently to one side, and none of them hands the aim back for free.
+results.recoil = await page.evaluate((keys) => {
+  const ls = globalThis.__ls;
+  const out = {};
+  for (const key of keys) {
+    ls.arm(key);
+    ls.world('bunker');
+    ls.moveTo(0, 2);
+    ls.look(Math.PI, 0);
+    ls.simulate(10);
+    const before = ls.aim2();
+    ls.fire();
+    ls.simulate(1);
+    const kicked = ls.aim2();
+    // Let the weapon take back whatever it takes back.
+    ls.simulate(150);
+    const settled = ls.aim2();
+    // Eight rounds, and how far the sight has walked by the end of them.
+    ls.look(Math.PI, 0);
+    ls.simulate(6);
+    const burstStart = ls.aim2();
+    let drift = 0;
+    for (let i = 0; i < 8; i++) {
+      ls.fire();
+      ls.simulate(6);
+      drift += ls.aim2().yaw - burstStart.yaw;
+    }
+    const burst = ls.aim2();
+    ls.simulate(200);
+    out[key] = {
+      rise: +(kicked.pitch - before.pitch).toFixed(5),
+      left: +(settled.pitch - before.pitch).toFixed(5),
+      climb: +(burst.pitch - burstStart.pitch).toFixed(5),
+      pull: +(drift / 8).toFixed(5),
+    };
+  }
+  return out;
+}, USABLE_WEAPON_KEYS.filter((k) => k !== 'armoryBayonet' && k !== 'armoryCombatKnife'));
+
 results.expected = USABLE_WEAPON_KEYS.length;
 console.log(JSON.stringify(results, null, 1));
 if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));

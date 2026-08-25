@@ -271,6 +271,30 @@ check(weapons.quartermaster?.down, 'the quartermaster cannot be brought down');
 check(weapons.quartermaster?.tipped > 1.4,
   `the downed quartermaster tipped only ${weapons.quartermaster?.tipped} rad`);
 
+// Recoil. Every firearm has to move the sight, none of them the same amount,
+// and none of them may hand the whole thing back for free.
+const kicks = Object.entries(weapons.recoil || {});
+check(kicks.length > 20, `only ${kicks.length} weapons reported a recoil profile`);
+for (const [key, r] of kicks) {
+  check(r.rise > 0.0008, `${key} barely moves the sight (${r.rise})`);
+  // The weapon returns most of it; what is left is the player's to correct.
+  check(r.left > 0.0002 && r.left < r.rise,
+    `${key} leaves ${r.left} of ${r.rise} for the player to correct`);
+}
+const rises = kicks.map(([, r]) => r.rise);
+check(Math.max(...rises) / Math.min(...rises) > 6,
+  `the whole armoury recoils within ${(Math.max(...rises) / Math.min(...rises)).toFixed(1)}x of itself`);
+// The suppressed SMG is the softest thing in the collection and the .50 the
+// hardest; if that has inverted, the profiles have been shuffled.
+const softest = kicks.reduce((a, b) => (a[1].rise <= b[1].rise ? a : b))[0];
+const hardest = kicks.reduce((a, b) => (a[1].rise >= b[1].rise ? a : b))[0];
+check(softest === 'armorySmg02', `${softest} is now the softest-recoiling weapon`);
+check(hardest === 'armorySniper04' || hardest === 'armoryShotgunSawed',
+  `${hardest} is now the hardest-recoiling weapon`);
+// The AKM's character is that it goes the same way every time.
+const akm = weapons.recoil?.armoryAkm;
+check(akm && Math.abs(akm.pull) > 0.0002, `the AKM has no consistent pull (${akm?.pull})`);
+
 // Gore. A round through a person throws blood downrange and marks what was
 // stood behind them; it used to produce seven small cubes and nothing else.
 const gore = weapons.gore || {};

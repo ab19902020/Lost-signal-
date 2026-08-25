@@ -155,6 +155,55 @@ const BLADE_VOICE = () => voice({
   snapHz: 3200, snapLevel: 0.45,
 });
 
+// --- Recoil -----------------------------------------------------------------
+// One number per weapon was never going to be enough. What separates an AKM
+// from a carbine is not how far the sight moves, it is the shape of the move:
+// how much of it is climb and how much is sideways, whether the sideways is
+// random or a consistent pull, how much the fifth round of a burst adds to the
+// first, and how much of it the weapon takes back on its own.
+//
+//   rise      degrees of muzzle climb per round
+//   swing     random horizontal, either way
+//   bias      consistent horizontal pull; sign is the direction
+//   climb     how much each round in a burst compounds the last
+//   settle    the share the weapon returns by itself; the rest is the player's
+//   recover   how fast that share comes back
+//   braced    what shouldering it is worth
+//   punch     how hard the weapon itself is thrown back in the hands
+//   shove     camera roll, which is what a big cartridge does to a shooter
+const recoil = ({ rise, swing, bias = 0, climb = .11, settle = .74, recover = 7.5,
+  braced = .62, punch = 1, shove = .5, cap = 9 }) =>
+  ({ rise, swing, bias, climb, settle, recover, braced, punch, shove, cap });
+
+// Families. A weapon that does not name its own recoil gets its family's.
+const RIFLE_KICK = (scale = 1, bias = 0) => recoil({
+  rise: .0058 * scale, swing: .0021 * scale, bias: .0007 * bias,
+  climb: .13, settle: .76, recover: 7.8, punch: 1.0, shove: .45,
+});
+const SMG_KICK = (scale = 1, bias = 0) => recoil({
+  rise: .0034 * scale, swing: .0026 * scale, bias: .0005 * bias,
+  climb: .16, settle: .82, recover: 9.5, punch: .7, shove: .3, cap: 12,
+});
+const SHOTGUN_KICK = (scale = 1) => recoil({
+  rise: .0175 * scale, swing: .0042 * scale, bias: 0,
+  climb: .04, settle: .60, recover: 5.0, braced: .70, punch: 2.1, shove: 1.4, cap: 3,
+});
+const SNIPER_KICK = (scale = 1) => recoil({
+  rise: .0205 * scale, swing: .0030 * scale, bias: 0,
+  climb: .03, settle: .55, recover: 4.2, braced: .74, punch: 2.4, shove: 1.6, cap: 2,
+});
+const PISTOL_KICK = (scale = 1) => recoil({
+  rise: .0068 * scale, swing: .0030 * scale, bias: 0,
+  climb: .09, settle: .80, recover: 9.0, braced: .70, punch: .9, shove: .35, cap: 5,
+});
+const REVOLVER_KICK = (scale = 1) => recoil({
+  rise: .0138 * scale, swing: .0034 * scale, bias: 0,
+  climb: .05, settle: .64, recover: 5.6, braced: .72, punch: 1.7, shove: 1.0, cap: 3,
+});
+const BLADE_KICK = () => recoil({
+  rise: .0018, swing: .0016, climb: 0, settle: .95, recover: 12, punch: .5, shove: .1, cap: 2,
+});
+
 // `view` is how the model hangs off the camera: scale, then a small local
 // offset. The scene code measures which way each model lies and turns its long
 // axis onto the firing line; `flip` is for the handful that then point the
@@ -178,6 +227,7 @@ export const WEAPONS = {
     magazine: 30, reserve: 90, damage: 34, headshot: 2.6, rpm: 700,
     reloadTime: 2.1, spread: 0.011, adsSpread: 0.0035, range: 90, recoil: 0.18,
     view: view(0.16, -0.04, -0.08, 0),
+    kick: RIFLE_KICK(1.00, 0.4),
     audio: { fire: RIFLE_VOICE(1.00), reload: magazineReload(1.00, 2.1) },
   },
   armoryAssault02: {
@@ -185,6 +235,7 @@ export const WEAPONS = {
     magazine: 30, reserve: 120, damage: 29, headshot: 2.6, rpm: 820,
     reloadTime: 1.95, spread: 0.013, adsSpread: 0.004, range: 80, recoil: 0.15,
     view: view(0.155, -0.03, -0.075, 0),
+    kick: RIFLE_KICK(0.86, 0.3),
     audio: { fire: RIFLE_VOICE(1.14, 0.46), reload: magazineReload(1.12, 1.95) },
   },
   armoryAssault03: {
@@ -192,6 +243,7 @@ export const WEAPONS = {
     magazine: 20, reserve: 80, damage: 44, headshot: 2.5, rpm: 580,
     reloadTime: 2.45, spread: 0.014, adsSpread: 0.0045, range: 100, recoil: 0.26,
     view: view(0.17, -0.05, -0.085, 0),
+    kick: RIFLE_KICK(1.46, -0.5),
     audio: { fire: RIFLE_VOICE(0.82, 0.58), reload: magazineReload(0.86, 2.45) },
   },
   armoryBullpup: {
@@ -199,6 +251,7 @@ export const WEAPONS = {
     magazine: 32, reserve: 128, damage: 31, headshot: 2.6, rpm: 780,
     reloadTime: 1.85, spread: 0.010, adsSpread: 0.003, range: 88, recoil: 0.16,
     view: view(0.16, -0.02, -0.08, 0),
+    kick: RIFLE_KICK(0.92, 0.2),
     audio: { fire: RIFLE_VOICE(1.07, 0.48), reload: magazineReload(1.22, 1.85) },
   },
 
@@ -207,6 +260,7 @@ export const WEAPONS = {
     magazine: 30, reserve: 120, damage: 38, headshot: 2.5, rpm: 600,
     reloadTime: 2.3, spread: 0.016, adsSpread: 0.0055, range: 85, recoil: 0.24,
     view: view(0.155, -0.03, -0.08, 0),
+    kick: RIFLE_KICK(1.38, 1.6),
     audio: { fire: RIFLE_VOICE(0.90, 0.56), reload: magazineReload(0.94, 2.3) },
   },
 
@@ -216,6 +270,7 @@ export const WEAPONS = {
     magazine: 8, reserve: 32, damage: 17, headshot: 1.5, rpm: 95, pellets: 8,
     reloadTime: 3.0, spread: 0.055, adsSpread: 0.038, range: 34, recoil: 0.42,
     view: view(0.165, -0.04, -0.085, 0),
+    kick: SHOTGUN_KICK(1.00),
     audio: { fire: SHOTGUN_VOICE(1.00), reload: pumpReload(1.00, 4, 3.0) },
   },
   armoryShotgun02: {
@@ -223,6 +278,7 @@ export const WEAPONS = {
     magazine: 6, reserve: 30, damage: 16, headshot: 1.5, rpm: 80, pellets: 9,
     reloadTime: 2.8, spread: 0.062, adsSpread: 0.044, range: 30, recoil: 0.45,
     view: view(0.165, -0.04, -0.085, 0),
+    kick: SHOTGUN_KICK(1.08),
     audio: { fire: SHOTGUN_VOICE(0.92, 0.66), reload: pumpReload(0.9, 3, 2.8) },
   },
   armoryShotgunShort: {
@@ -230,6 +286,7 @@ export const WEAPONS = {
     magazine: 5, reserve: 25, damage: 18, headshot: 1.5, rpm: 105, pellets: 9,
     reloadTime: 2.6, spread: 0.070, adsSpread: 0.052, range: 26, recoil: 0.48,
     view: view(0.175, -0.02, -0.08, 0),
+    kick: SHOTGUN_KICK(1.22),
     audio: { fire: SHOTGUN_VOICE(1.10, 0.60), reload: pumpReload(1.15, 3, 2.6) },
   },
   armoryShotgunSawed: {
@@ -237,6 +294,7 @@ export const WEAPONS = {
     magazine: 2, reserve: 20, damage: 15, headshot: 1.4, rpm: 160, pellets: 12,
     reloadTime: 2.2, spread: 0.098, adsSpread: 0.080, range: 18, recoil: 0.55,
     view: view(0.20, 0.02, -0.07, 0),
+    kick: SHOTGUN_KICK(1.62),
     audio: { fire: SHOTGUN_VOICE(1.22, 0.68), reload: pumpReload(1.3, 2, 2.2) },
   },
 
@@ -245,6 +303,7 @@ export const WEAPONS = {
     magazine: 9, reserve: 36, damage: 17, headshot: 1.5, rpm: 88, pellets: 8,
     reloadTime: 3.2, spread: 0.058, adsSpread: 0.040, range: 32, recoil: 0.44,
     view: view(0.15, -0.03, -0.08, 0),
+    kick: SHOTGUN_KICK(1.12),
     audio: { fire: SHOTGUN_VOICE(0.86, 0.70), reload: pumpReload(0.82, 5, 3.2) },
   },
 
@@ -254,6 +313,7 @@ export const WEAPONS = {
     magazine: 10, reserve: 40, damage: 72, headshot: 3.0, rpm: 210,
     reloadTime: 2.5, spread: 0.010, adsSpread: 0.0012, range: 160, recoil: 0.34,
     zoom: 48, scope: '4x', magnification: 4, view: view(0.16, -0.05, -0.085, 0),
+    kick: SNIPER_KICK(0.92),
     audio: { fire: SNIPER_VOICE(1.00), reload: magazineReload(0.9, 2.5) },
   },
   armorySniper02: {
@@ -261,6 +321,7 @@ export const WEAPONS = {
     magazine: 5, reserve: 30, damage: 115, headshot: 3.2, rpm: 45,
     reloadTime: 2.9, spread: 0.012, adsSpread: 0.0009, range: 190, recoil: 0.5,
     zoom: 48, scope: '6x', magnification: 6, view: view(0.165, -0.05, -0.09, 0),
+    kick: SNIPER_KICK(1.10),
     audio: { fire: SNIPER_VOICE(0.86, 0.76), reload: boltReload(0.9, 2.9) },
   },
   armorySniper03: {
@@ -268,6 +329,7 @@ export const WEAPONS = {
     magazine: 8, reserve: 32, damage: 80, headshot: 3.0, rpm: 180,
     reloadTime: 2.4, spread: 0.011, adsSpread: 0.0014, range: 150, recoil: 0.36,
     zoom: 48, scope: '5x', magnification: 5, view: view(0.16, -0.04, -0.085, 0),
+    kick: SNIPER_KICK(1.00),
     audio: { fire: SNIPER_VOICE(1.12, 0.68), reload: magazineReload(1.05, 2.4) },
   },
   armorySniper04: {
@@ -275,6 +337,7 @@ export const WEAPONS = {
     magazine: 5, reserve: 20, damage: 165, headshot: 2.6, rpm: 38,
     reloadTime: 3.4, spread: 0.014, adsSpread: 0.0011, range: 220, recoil: 0.7,
     zoom: 48, scope: '8x', magnification: 10, view: view(0.175, -0.06, -0.095, 0),
+    kick: SNIPER_KICK(1.85),
     audio: { fire: SNIPER_VOICE(0.66, 0.84), reload: boltReload(0.72, 3.4) },
   },
 
@@ -284,6 +347,7 @@ export const WEAPONS = {
     magazine: 32, reserve: 160, damage: 21, headshot: 2.2, rpm: 900,
     reloadTime: 1.7, spread: 0.017, adsSpread: 0.007, range: 55, recoil: 0.11,
     view: view(0.18, -0.01, -0.075, 0),
+    kick: SMG_KICK(1.00, 0.6),
     audio: { fire: SMG_VOICE(1.00), reload: magazineReload(1.25, 1.7) },
   },
   armorySmg02: {
@@ -291,6 +355,7 @@ export const WEAPONS = {
     magazine: 30, reserve: 150, damage: 19, headshot: 2.2, rpm: 950,
     reloadTime: 1.75, spread: 0.015, adsSpread: 0.006, range: 50, recoil: 0.09,
     quiet: true, view: view(0.18, -0.02, -0.075, 0),
+    kick: SMG_KICK(0.62, 0.2),
     audio: {
       // A can does not silence a gun, it removes the crack and shortens the
       // room. The mechanism is then the loudest part of the shot.
@@ -314,6 +379,7 @@ export const WEAPONS = {
     magazine: 15, reserve: 60, damage: 26, headshot: 2.4, rpm: 380,
     reloadTime: 1.55, spread: 0.016, adsSpread: 0.006, range: 45, recoil: 0.14,
     view: view(0.19, 0.02, -0.05, 0),
+    kick: PISTOL_KICK(1.00),
     audio: { fire: PISTOL_VOICE(1.00), reload: magazineReload(1.4, 1.55) },
   },
   armoryPistol02: {
@@ -321,6 +387,7 @@ export const WEAPONS = {
     magazine: 12, reserve: 48, damage: 24, headshot: 2.4, rpm: 420,
     reloadTime: 1.45, spread: 0.019, adsSpread: 0.008, range: 38, recoil: 0.13,
     view: view(0.20, 0.03, -0.05, 0),
+    kick: PISTOL_KICK(0.88),
     audio: { fire: PISTOL_VOICE(1.16, 0.40), reload: magazineReload(1.52, 1.45) },
   },
   armoryPistol03: {
@@ -328,6 +395,7 @@ export const WEAPONS = {
     magazine: 17, reserve: 68, damage: 27, headshot: 2.4, rpm: 360,
     reloadTime: 1.6, spread: 0.015, adsSpread: 0.0055, range: 48, recoil: 0.15,
     view: view(0.19, 0.02, -0.05, 0),
+    kick: PISTOL_KICK(1.06),
     audio: { fire: PISTOL_VOICE(0.92, 0.46), reload: magazineReload(1.3, 1.6) },
   },
   armoryPistol04: {
@@ -335,6 +403,7 @@ export const WEAPONS = {
     magazine: 8, reserve: 40, damage: 48, headshot: 2.5, rpm: 260,
     reloadTime: 1.8, spread: 0.021, adsSpread: 0.008, range: 52, recoil: 0.3,
     view: view(0.20, 0.02, -0.05, 0),
+    kick: PISTOL_KICK(1.42),
     audio: { fire: PISTOL_VOICE(0.74, 0.56), reload: magazineReload(1.1, 1.8) },
   },
 
@@ -343,6 +412,7 @@ export const WEAPONS = {
     magazine: 15, reserve: 75, damage: 25, headshot: 2.4, rpm: 440,
     reloadTime: 1.4, spread: 0.017, adsSpread: 0.0058, range: 42, recoil: 0.12,
     view: view(0.205, 0.02, -0.05, 0),
+    kick: PISTOL_KICK(0.94),
     audio: { fire: PISTOL_VOICE(1.08, 0.42), reload: magazineReload(1.46, 1.4) },
   },
 
@@ -352,6 +422,7 @@ export const WEAPONS = {
     magazine: 6, reserve: 36, damage: 60, headshot: 2.6, rpm: 200,
     reloadTime: 2.6, spread: 0.018, adsSpread: 0.006, range: 60, recoil: 0.34,
     view: view(0.20, 0.02, -0.05, 0),
+    kick: REVOLVER_KICK(1.00),
     audio: { fire: REVOLVER_VOICE(1.00), reload: cylinderReload(1.00, 2.6) },
   },
   armoryRevolver02: {
@@ -359,6 +430,7 @@ export const WEAPONS = {
     magazine: 5, reserve: 30, damage: 52, headshot: 2.6, rpm: 230,
     reloadTime: 2.4, spread: 0.025, adsSpread: 0.010, range: 34, recoil: 0.32,
     view: view(0.21, 0.03, -0.05, 0),
+    kick: REVOLVER_KICK(0.86),
     audio: { fire: REVOLVER_VOICE(1.18, 0.54), reload: cylinderReload(1.2, 2.4) },
   },
   armoryRevolver03: {
@@ -366,6 +438,7 @@ export const WEAPONS = {
     magazine: 6, reserve: 30, damage: 76, headshot: 2.7, rpm: 165,
     reloadTime: 2.8, spread: 0.020, adsSpread: 0.0065, range: 68, recoil: 0.44,
     view: view(0.205, 0.02, -0.052, 0),
+    kick: REVOLVER_KICK(1.55),
     audio: { fire: REVOLVER_VOICE(0.82, 0.66), reload: cylinderReload(0.86, 2.8) },
   },
 
@@ -375,6 +448,7 @@ export const WEAPONS = {
     automatic: false, magazine: 0, reserve: 0, damage: 68, headshot: 1.8,
     rpm: 140, reloadTime: 0.45, reach: 2.05, recoil: 0.12,
     view: view(0.30, 0.06, -0.10, 0.06),
+    kick: BLADE_KICK(),
     audio: { fire: BLADE_VOICE(), reload: sheathReload() },
   },
 
@@ -383,6 +457,7 @@ export const WEAPONS = {
     automatic: false, magazine: 0, reserve: 0, damage: 74, headshot: 1.9,
     rpm: 165, reloadTime: 0.4, reach: 2.2, recoil: 0.14,
     view: view(0.30, 0.05, -0.09, 0.05),
+    kick: BLADE_KICK(),
     audio: {
       fire: voice({
         level: 0.32,

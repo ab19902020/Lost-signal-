@@ -126,6 +126,7 @@ let recoil = 0;
 // player has to bring it back: `recoilPitch` is how far up the sight has been
 // thrown, `recoilYaw` how far sideways, and `recoilSettle` is the part of it
 // the weapon recovers on its own once the shooter stops firing.
+let recoilRecover = 7.5;
 let recoilPitch = 0;
 let recoilYaw = 0;
 let recoilSettlePitch = 0;
@@ -393,6 +394,13 @@ async function prepare() {
         slot: (index) => selectSlot(index),
         cycle: (step = 1) => cycleWeapon(step),
         scoped: () => scoped,
+        // What the sight is doing right now, so a harness can measure a
+        // weapon's recoil rather than trusting the catalogue.
+        recoil: () => ({
+          pitch: +recoilPitch.toFixed(5), yaw: +recoilYaw.toFixed(5),
+          burst: burstCount, punch: +recoilPunch.toFixed(3),
+          roll: +recoilRoll.toFixed(5),
+        }),
         // Driving, for the harness: get in, hold the pedals for a while, read
         // the speed off, get out.
         vehicles: () => (game.vehicles || []).map((v) => ({
@@ -1322,33 +1330,71 @@ const slotsEl = document.getElementById('weaponSlots');
  * Most of the throw settles back on its own, which is what lets a semi-
  * automatic be fired quickly without the aim climbing away entirely.
  */
+// How many rounds have gone in quick succession, and the punch the weapon
+// itself is still carrying. Burst count is what makes automatic fire feel like
+// automatic fire: the fifth round has to cost more than the first, or holding
+// the trigger is free.
+let burstCount = 0;
+let burstRest = 0;
+let recoilPunch = 0;
+let recoilRoll = 0;
+const FALLBACK_KICK = {
+  rise: .0058, swing: .0021, bias: 0, climb: .11, settle: .74,
+  recover: 7.5, braced: .62, punch: 1, shove: .5, cap: 9,
+};
+
 function kick(spec) {
-  const base = spec?.recoil ?? 0.18;
-  const braced = aiming ? 0.62 : 1;
-  const up = base * 0.055 * braced * (0.85 + Math.random() * 0.3);
-  const side = base * 0.022 * braced * (Math.random() * 2 - 1);
+  const k = spec?.kick || FALLBACK_KICK;
+  burstCount = Math.min(k.cap, burstCount + 1);
+  burstRest = 0.26;
+  // Each round in a burst stacks on the last, and the stack is what walks a
+  // rifle off the target.
+  const compound = 1 + (burstCount - 1) * k.climb;
+  const braced = aiming ? k.braced : 1;
+  const up = k.rise * compound * braced * (0.82 + Math.random() * 0.36);
+  // A consistent pull plus a random component. The pull is the character: an
+  // AKM goes right every time, a carbine wanders.
+  const side = (k.bias * compound + (Math.random() * 2 - 1) * k.swing) * braced;
+
   recoilPitch += up;
   recoilYaw += side;
-  // Three quarters of it comes back by itself; the rest is the player's to
+  // The share the weapon takes back on its own. The rest is the player's to
   // correct, which is what makes a heavy weapon feel heavy.
-  recoilSettlePitch += up * 0.75;
-  recoilSettleYaw += side * 0.75;
+  recoilSettlePitch += up * k.settle;
+  recoilSettleYaw += side * k.settle;
+  recoilRecover = k.recover;
   pitch = Math.min(1.15, pitch + up);
   yaw += side;
+
+  // What the shooter feels: the weapon driven back into the shoulder, and the
+  // whole picture rolled a little by a big cartridge.
+  recoilPunch = Math.min(2.6, recoilPunch + k.punch * braced);
+  recoilRoll += (Math.random() * 2 - 1) * k.shove * 0.010 * braced;
+  recoil = Math.min(1.4, recoil + k.punch * 0.24);
 }
 
 function updateRecoil(dt) {
+  // A burst is only a burst while the rounds keep coming. Let off the trigger
+  // and the weapon settles back to its first-round behaviour.
+  if (burstRest > 0) {
+    burstRest -= dt;
+    if (burstRest <= 0) burstCount = Math.max(0, burstCount - 1);
+    if (burstCount > 0 && burstRest <= 0) burstRest = 0.16;
+  }
+  recoilPunch = THREE.MathUtils.damp(recoilPunch, 0, 11, dt);
+  recoilRoll = THREE.MathUtils.damp(recoilRoll, 0, 8, dt);
   if (recoilSettlePitch === 0 && recoilSettleYaw === 0) return;
   // Recovery is a damped return of the portion the weapon takes back, applied
   // to the look angles so the sight physically walks back down.
-  const nextPitch = THREE.MathUtils.damp(recoilSettlePitch, 0, 7.5, dt);
-  const nextYaw = THREE.MathUtils.damp(recoilSettleYaw, 0, 7.5, dt);
+  const rate = recoilRecover || 7.5;
+  const nextPitch = THREE.MathUtils.damp(recoilSettlePitch, 0, rate, dt);
+  const nextYaw = THREE.MathUtils.damp(recoilSettleYaw, 0, rate, dt);
   pitch -= recoilSettlePitch - nextPitch;
   yaw -= recoilSettleYaw - nextYaw;
   recoilSettlePitch = Math.abs(nextPitch) < 1e-5 ? 0 : nextPitch;
   recoilSettleYaw = Math.abs(nextYaw) < 1e-5 ? 0 : nextYaw;
-  recoilPitch = THREE.MathUtils.damp(recoilPitch, 0, 6, dt);
-  recoilYaw = THREE.MathUtils.damp(recoilYaw, 0, 6, dt);
+  recoilPitch = THREE.MathUtils.damp(recoilPitch, 0, rate * 0.8, dt);
+  recoilYaw = THREE.MathUtils.damp(recoilYaw, 0, rate * 0.8, dt);
 }
 
 function updateAmmo() {
@@ -1688,7 +1734,8 @@ function updatePlayer(dt) {
     - body.landingImpact * 0.22;
   game.camera.position.x = Math.cos(bobPhase * 0.5) * bobAmount * 0.55;
   game.camera.rotation.z = Math.cos(bobPhase * 0.5) * bobAmount * 0.22
-    + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0);
+    + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0)
+    + recoilRoll;
 
   footsteps(dt, speedRatio, crouching);
 
@@ -2284,7 +2331,33 @@ function weaponFireSound(spec) {
     level: voice.level * voice.tailLevel, type: 'lowpass', sweepTo: voice.tailHz * .28,
   });
 
-  // 6. The mechanism: a bolt or a slide cycling behind the shot. On the
+  // 6. The sear letting go, a millisecond and a half before the primer. It is
+  //    tiny and nobody notices it consciously; take it out and every shot
+  //    starts a fraction too cleanly.
+  if (voice.actionLevel > 0) {
+    blastLayer(out, { at: Math.max(0, t - 0.0016), hz: voice.actionHz * 1.6, q: 5.0,
+      decay: 0.006, level: voice.level * 0.10 });
+  }
+
+  // 7. The bottom end. A big cartridge is felt before it is heard, and a
+  //    sine an octave under the blast is what carries that through a speaker
+  //    that cannot reproduce the real thing.
+  if (voice.level > 0.34) {
+    const thump = ac.createOscillator();
+    const thumpGain = ac.createGain();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(voice.bodyHz * 0.46 * vary, t);
+    thump.frequency.exponentialRampToValueAtTime(
+      Math.max(24, voice.bodyEndHz * 0.40), t + voice.bodyDecay * 1.6);
+    thumpGain.gain.setValueAtTime(voice.level * 0.5, t);
+    thumpGain.gain.exponentialRampToValueAtTime(.0008, t + voice.bodyDecay * 1.8);
+    thump.connect(thumpGain);
+    thumpGain.connect(out);
+    thump.start(t);
+    thump.stop(t + voice.bodyDecay * 1.9);
+  }
+
+  // 8. The mechanism: a bolt or a slide cycling behind the shot. On the
   //    suppressed SMG it is the loudest thing in the list.
   if (voice.actionLevel > 0) {
     const at = t + voice.actionAt;
@@ -2296,6 +2369,30 @@ function weaponFireSound(spec) {
       at: at + voice.actionSpread, hz: voice.actionHz * 0.62, q: 3.2, decay: 0.036,
       level: voice.level * voice.actionLevel * 0.7,
     });
+
+    // 9. The case. It leaves the port, turns over, and hits the deck about a
+    //    third of a second later, and then again, smaller. It is the most
+    //    recognisable sound a firearm makes after the shot itself, and no
+    //    amount of work on the blast substitutes for it.
+    const brass = 0.26 + Math.random() * 0.14;
+    for (let bounce = 0; bounce < 3; bounce++) {
+      const when = at + brass + bounce * (0.085 + Math.random() * 0.06);
+      const fade = 0.55 ** bounce;
+      blastLayer(out, {
+        at: when, hz: (2700 + Math.random() * 1400) * (1 + bounce * 0.18), q: 7.5,
+        decay: 0.055 * fade + 0.010, level: voice.level * 0.10 * fade,
+      });
+      const ring = ac.createOscillator();
+      const ringGain = ac.createGain();
+      ring.type = 'triangle';
+      ring.frequency.setValueAtTime((3200 + Math.random() * 900) * (1 + bounce * 0.2), when);
+      ringGain.gain.setValueAtTime(voice.level * 0.045 * fade, when);
+      ringGain.gain.exponentialRampToValueAtTime(.0004, when + 0.09 * fade + 0.02);
+      ring.connect(ringGain);
+      ringGain.connect(out);
+      ring.start(when);
+      ring.stop(when + 0.12);
+    }
   }
 }
 
@@ -2563,16 +2660,16 @@ function updateWeapon(dt) {
   weaponTarget.lerpVectors(weaponHip, weaponAim, blend);
   weaponTarget.x += Math.cos(bob * .5) * .014 * sway;
   weaponTarget.y += Math.sin(bob) * .011 * sway + Math.sin(breath * .8) * .004 + recoil * .07;
-  weaponTarget.z += recoil * .13 + (sprinting ? .05 : 0);
+  weaponTarget.z += recoil * .13 + recoilPunch * .022 + (sprinting ? .05 : 0);
   game.weaponView.position.x = THREE.MathUtils.damp(game.weaponView.position.x, weaponTarget.x, 15, dt);
   game.weaponView.position.y = THREE.MathUtils.damp(game.weaponView.position.y, weaponTarget.y, 15, dt);
   game.weaponView.position.z = THREE.MathUtils.damp(game.weaponView.position.z, weaponTarget.z, 15, dt);
   game.weaponView.rotation.x = THREE.MathUtils.damp(game.weaponView.rotation.x,
-    (aiming ? .13 : -.04) - recoil * .5 + (sprinting ? .22 : 0), 16, dt);
+    (aiming ? .13 : -.04) - recoil * .5 - recoilPunch * .085 + (sprinting ? .22 : 0), 16, dt);
   game.weaponView.rotation.y = THREE.MathUtils.damp(game.weaponView.rotation.y,
     (aiming ? 0 : -.08) + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0), 16, dt);
   game.weaponView.rotation.z = THREE.MathUtils.damp(game.weaponView.rotation.z,
-    sprinting ? .24 : 0, 16, dt);
+    (sprinting ? .24 : 0) + recoilPunch * .030, 16, dt);
   // Optics differ. A scoped rifle pulls the frame in much further than a
   // pistol at arm's length, so the sight picture comes out of the catalogue.
   // The optic does the magnifying now. The screen only eases in a little, so
