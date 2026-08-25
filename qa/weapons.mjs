@@ -239,6 +239,25 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
   }])),
 });
 
+// What each gun actually sounds like. The harness cannot listen, so every
+// weapon's shot is rendered offline and measured: a real report has a peak in
+// the first few milliseconds, carries energy, and rings for as long as the room
+// it was fired in. Two guns that measure identically are two guns that sound
+// identical.
+results.audio = await page.evaluate(async (keys) => {
+  const ls = globalThis.__ls;
+  const readings = {};
+  for (const key of keys) readings[key] = await ls.renderShot(key, 'bunker');
+  // The same rifle in all three spaces, to prove the room is doing something.
+  // Three seconds, so the silo's tail is not clipped by the render window.
+  readings.__spaces = {
+    bunker: await ls.renderShot(keys[0], 'bunker', 3.2),
+    silo: await ls.renderShot(keys[0], 'silo', 3.2),
+    outside: await ls.renderShot(keys[0], 'outside', 3.2),
+  };
+  return readings;
+}, USABLE_WEAPON_KEYS);
+
 results.expected = USABLE_WEAPON_KEYS.length;
 console.log(JSON.stringify(results, null, 1));
 if (errors.length) console.error('ERRORS:', [...new Set(errors)].join(' | '));

@@ -7,6 +7,7 @@ import { buildArmory } from './armory.js';
 import { buildGarrison } from './garrison.js';
 import { createRange } from './range.js';
 import { createSky } from './sky.js';
+import { createVehicle } from './vehicle.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -289,6 +290,11 @@ export function createGameWorld(assets) {
   // angled outriggers. It is not a new fence — fifteen years of weather and
   // whatever came through it have left bays leaning, torn and flat, and where
   // it is down is where anything gets in.
+  const GATE_Z = 17;
+  const GATE_SLIDE = 4.05;      // how far each leaf runs out behind the fence
+  let gateOpen = false;
+  let gateSlide = 0;
+  const gateLeaves = [];
   const BREACH = new Set(['N:-2', 'W:3', 'S:-4']);
   const LEANING = new Set(['N:2', 'E:-3', 'E:2', 'W:-2', 'S:3']);
   // One bay in five carries the warning plate, as a real run does.
@@ -302,14 +308,66 @@ export function createGameWorld(assets) {
     // A flattened bay is not a wall: leave the gap in the collision too.
     place(asset, outside, position, rotation, 1, { collide: !BREACH.has(key) });
   };
-  for (let i = -4; i <= 4; i++) fenceBay('N', i, [i * 4, 0, -27], [0, 0, 0]);
-  for (let i = -5; i <= 4; i++) {
+  // Four metres a bay, and the compound is forty by forty-four, so the runs
+  // close on each other at the corners instead of stopping a bay short. The
+  // yard used to be open at all four corners and either side of the gate: you
+  // could walk out of the compound without ever touching the fence.
+  for (let i = -5; i <= 4; i++) fenceBay('N', i, [i * 4 + 2, 0, -27], [0, 0, 0]);
+  for (let i = -5; i <= 5; i++) {
     fenceBay('W', i, [-20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
     fenceBay('E', i, [20, 0, i * 4 - 5], [0, Math.PI / 2, 0]);
   }
-  for (let i = -4; i <= -2; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
-  for (let i = 2; i <= 4; i++) fenceBay('S', i, [i * 4 - 2, 0, 18], [0, 0, 0]);
-  place(assets.gate,outside,[0,0,18],[0,0,0]);
+  // The south run closes on the gate posts at x = ±4.
+  for (let i = -5; i <= -2; i++) fenceBay('S', i, [i * 4 + 2, 0, GATE_Z], [0, 0, 0]);
+  for (let i = 2; i <= 5; i++) fenceBay('S', i, [i * 4 - 2, 0, GATE_Z], [0, 0, 0]);
+  buildGate();
+
+  // The gate. It is the only way out by road, so it opens: two cantilever
+  // leaves that run back behind the fence line, with their collision going
+  // with them. The posts stay solid whatever the leaves are doing.
+  function buildGate() {
+    const root = place(assets.gate, outside, [0, 0, GATE_Z], [0, 0, 0], 1, { collide: false });
+    root.name = 'Perimeter_Gate';
+    for (const x of [-4, 4]) {
+      colliders.outside.addOrientedBox({
+        cx: x, cz: GATE_Z, halfX: 0.34, halfZ: 0.34, minY: 0, maxY: 3.45,
+      });
+    }
+    for (const [tag, side] of [['L', -1], ['R', 1]]) {
+      const leaf = findNamed(root, `Gate_Leaf_${tag}`);
+      if (!leaf) continue;
+      gateLeaves.push({
+        leaf,
+        side,
+        rest: leaf.position.x,
+        collider: colliders.outside.addOrientedBox({
+          cx: leaf.position.x, cz: GATE_Z + leaf.position.z,
+          halfX: 1.99, halfZ: 0.16, minY: 0.12, maxY: 2.66,
+        }),
+      });
+    }
+    addInteraction(root, 'PERIMETER GATE — OPEN', 'outside', () => {
+      gateOpen = !gateOpen;
+      root.userData.interaction.name = `PERIMETER GATE — ${gateOpen ? 'CLOSE' : 'OPEN'}`;
+      window.dispatchEvent(new CustomEvent('lostsignal:gate', { detail: { open: gateOpen } }));
+    });
+  }
+
+  function updateGate(dt) {
+    if (!gateLeaves.length) return;
+    const target = gateOpen ? 1 : 0;
+    if (Math.abs(gateSlide - target) < 0.0005) {
+      gateSlide = target;
+      return;
+    }
+    // A powered gate runs at a fixed speed rather than easing in, so it is
+    // driven at a rate instead of damped toward the end stop.
+    gateSlide = THREE.MathUtils.clamp(gateSlide + Math.sign(target - gateSlide) * dt * 0.34, 0, 1);
+    for (const { leaf, side, rest, collider } of gateLeaves) {
+      leaf.position.x = rest + side * GATE_SLIDE * gateSlide;
+      collider.cx = leaf.position.x;
+    }
+  }
 
   // Exterior lighting fixtures are Blender models; only emitted light is runtime.
   const floodPositions=[[-14,0,-20],[14,0,-20],[-14,0,11],[14,0,11]];
@@ -418,18 +476,25 @@ export function createGameWorld(assets) {
   dress(assets.propPalletBroken, [[10.1, 11.0, 2.2]]);
   dress(assets.propWheels, [[12.4, 12.2, .3]]);
   dress(assets.propTrashBags, [[-10.4, 12.2, .9], [-11.2, 13.0, 2.6]], { collide: false });
-  dress(assets.propTownSign, [[0, 21.6, 0]], { shrink: 0.2 });
+  // On the verge, not in the road: it used to stand on the centre line just
+  // outside the gate, which is a bollard as far as anything driving out is
+  // concerned.
+  dress(assets.propTownSign, [[6.4, 21.2, 0.22]], { shrink: 0.2 });
 
   // Cars. Two wrecks that were abandoned in the yard, and one at the gate that
   // still has glass in it — the one that will eventually be worth the drive.
   dress(assets.estateCar, [[-12.2, 6.4, 1.42], [13.2, -6.8, 2.86]], { shrink: 0.05 });
-  const gateCar = assets.estateCar ? place(assets.estateCar, outside,
-    [2.8, 0, 16.2], [0, Math.PI * 0.02, 0], 1, { shrink: 0.05 }) : null;
-  if (gateCar) {
-    gateCar.name = 'Gate_Estate_Car';
-    addInteraction(gateCar, 'ESTATE CAR — NOT RUNNING', 'outside',
-      () => window.dispatchEvent(new CustomEvent('lostsignal:car')));
-  }
+  // The gate car is the one that still runs. It is a live vehicle, not a prop:
+  // its own body collides with the world, and it comes off the collision set
+  // the moment somebody is sitting in it.
+  const vehicles = [];
+  const gateCar = createVehicle({
+    scene: outside, colliders: colliders.outside, assets, place, addInteraction,
+    // Parked in the yard on the gate's centre line, nose to the gate.
+    position: [0, 0, 12.6], heading: Math.PI,
+    name: 'Gate_Estate_Car', label: 'ESTATE CAR',
+  });
+  if (gateCar) vehicles.push(gateCar);
 
   // --- The road out -------------------------------------------------------
   // A B-road running from the gate to the town, half a kilometre of it, laid as
@@ -1038,6 +1103,10 @@ export function createGameWorld(assets) {
     hatchOpen = !!open;
   }
 
+  // A parked car still gets stepped: it settles onto the ground and holds
+  // its collider in place. Nothing is asking it to move.
+  const IDLE_CONTROLS = Object.freeze({ throttle: 0, steer: 0, brake: false });
+
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position) {
     elapsed += dt;
@@ -1049,6 +1118,13 @@ export function createGameWorld(assets) {
       garrison?.update(dt);
     }
     if (world === 'outside') range?.update(dt);
+    updateGate(dt);
+    // Vehicles settle onto the ground and keep their collider in step whether
+    // anyone is driving or not, so a parked car is still something you have to
+    // walk around.
+    for (const vehicle of vehicles) {
+      if (world === 'outside' && !vehicle.state.occupied) vehicle.update(dt, IDLE_CONTROLS);
+    }
     // Time passes wherever the player is standing. The sky is a few dozen
     // sums and a handful of uniform writes, so it runs every frame and the
     // surface is never waiting at the moment you left it.
@@ -1118,7 +1194,8 @@ export function createGameWorld(assets) {
     weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
-    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,
+    gateIsOpen:()=>gateOpen,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
   };

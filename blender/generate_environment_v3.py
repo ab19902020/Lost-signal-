@@ -99,6 +99,22 @@ def world_uv(o, tile=2.2):
     return o
 
 
+def plan_uv(o, across, along):
+    """Plan-view UVs, in metres, for a surface that is read from above.
+
+    A box unwrap gives every face its own 0..1 island whatever its size, and the
+    runtime's retiler can only guess one repeat for both axes — between them
+    they turned a two-lane road's marking tile into eight lanes of it fanning
+    across the carriageway. A road knows its own width, so it maps itself.
+    """
+    me = o.data
+    uv = me.uv_layers.active or me.uv_layers.new()
+    for loop in me.loops:
+        co = me.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv = (co.x / across + .5, co.z / along)
+    return o
+
+
 def cube(name, loc, half, material, rotation=(0,0,0), edge=.035):
     bpy.ops.mesh.primitive_cube_add(location=loc, rotation=rotation)
     o = bpy.context.object
@@ -117,6 +133,19 @@ def cyl(name, loc, radius, depth, material, rotation=(0,0,0), verts=32, edge=.01
     o.data.materials.append(material)
     if edge: bevel(o, edge, 2)
     return o
+
+
+def post(name, loc, radius, height, material, verts=32, edge=.012):
+    """A cylinder that stands up.
+
+    Blender's cylinder primitive is authored along its own Z. These scripts
+    author the world Y-up, so an unrotated cylinder lies on its side — which is
+    how the floodlight masts, the gate posts, the dead trees and the town's
+    chimney all ended up flat on the ground. Anything vertical goes through
+    here; `cyl` stays for the discs and lenses that really do face down Z.
+    """
+    return cyl(name, loc, radius, height, material,
+               rotation=(math.pi / 2, 0, 0), verts=verts, edge=edge)
 
 
 def torus(name, loc, major, minor, material, rotation=(0,0,0), major_segments=40, minor_segments=12):
@@ -371,7 +400,7 @@ def build_electrical():
     cube('EmergencyIsolator',(.72,.88,-.10),(.34,.25,.20),YELLOW,edge=.06)
     cyl('IsolatorKnob',(.72,.88,-.34),.11,.08,RED,verts=28)
     for x in (-1.0,-.55,-.10,.36,.82,1.20):
-        cyl('ElecConduit'+str(x),(x,3.10,.10),.034,2.2,BRUSHED,verts=18)
+        post('ElecConduit'+str(x),(x,3.10,.10),.034,2.2,BRUSHED,verts=18)
     text_obj('ElecLabel','POWER DISTRIBUTION',(0,.28,-.27),.19,YELLOW,rotation=(0,math.pi,0),extrude=.004)
     export('electrical_wall_v3.glb')
 
@@ -427,16 +456,16 @@ def build_clutter():
         cyl(f'JerryCap_{i}',(x+.16,.72,z-.12),.045,.06,BRUSHED,rotation=(math.pi/2,0,0),verts=18)
     # gas cylinders
     for i,x in enumerate((.90,1.30)):
-        cyl(f'GasBottle_{i}',(x,.52,.10),.16,.88,BLUE if i else GREEN,verts=28,edge=.025)
+        post(f'GasBottle_{i}',(x,.52,.10),.16,.88,BLUE if i else GREEN,verts=28,edge=.025)
         torus(f'GasShoulder_{i}',(x,.95,.10),.13,.03,BRUSHED,rotation=(math.pi/2,0,0))
-        cyl(f'GasValve_{i}',(x,1.08,.10),.045,.15,BRUSHED,verts=16)
+        post(f'GasValve_{i}',(x,1.08,.10),.045,.15,BRUSHED,verts=16)
     # med box
     cube('MedCase',(-.05,.25,-.55),(.38,.24,.20),WHITE,edge=.055)
     cube('MedCrossV',(-.05,.25,-.765),(.055,.14,.012),RED,edge=.008)
     cube('MedCrossH',(-.05,.25,-.765),(.14,.055,.012),RED,edge=.008)
     # extinguisher
-    cyl('ExtinguisherBody',(1.72,.48,-.55),.15,.72,RED,verts=30,edge=.025)
-    cyl('ExtinguisherNeck',(1.72,.89,-.55),.06,.13,DARK,verts=18)
+    post('ExtinguisherBody',(1.72,.48,-.55),.15,.72,RED,verts=30,edge=.025)
+    post('ExtinguisherNeck',(1.72,.89,-.55),.06,.13,DARK,verts=18)
     between('ExtinguisherHose',(1.72,.91,-.55),(1.93,.60,-.68),.018,RUBBER,12)
     # ration crates
     for i in range(3):
@@ -494,10 +523,17 @@ def build_exterior_ground():
     track running up to the gate, with grass either side of it.
     """
     clear_scene()
-    grass = mat('MeadowGrass', (.105, .152, .078), 0, .96)
-    grass_dry = mat('DryGrass', (.185, .188, .112), 0, .97)
-    grass_dark = mat('RankGrass', (.072, .108, .058), 0, .96)
-    soil = mat('BareEarth', (.128, .116, .098), 0, .98)
+    # Painted surfaces, not flat colours. Untextured they were a patchwork of
+    # hard-edged coloured polygons across the whole compound — you could read
+    # every rectangle in the field from the gate.
+    def ground(name, tile):
+        return image_pbr(name, f'{tile}__Color.jpg',
+                         'concrete__Concrete034_1K_NormalGL.jpg',
+                         'concrete__Concrete034_1K_Roughness.jpg')
+    grass = ground('MeadowGrass', 'grass_meadow')
+    grass_dry = ground('DryGrass', 'grass_dry')
+    grass_dark = ground('RankGrass', 'grass_rank')
+    soil = ground('BareEarth', 'earth')
     asphalt = mat('WornAsphalt', (.115, .118, .116), 0, .93)
 
     # The field, and a wider skirt of it behind the fence so the ground runs
@@ -512,7 +548,7 @@ def build_exterior_ground():
     # to it. One quad: at this range the fog and the haze do the work, and the
     # alternative is a horizon that stops five hundred metres short of where
     # the player can see.
-    cube('ExteriorSkirt', (0, -.62, 0), (460, .30, 560), grass, edge=.20)
+    cube('ExteriorSkirt', (0, -.62, 0), (460, .30, 560), grass, edge=0)
     # Field boundaries out along the road, so the far country is not one flat
     # green. Berkshire is hedged fields, not prairie.
     random.seed(23)
@@ -562,6 +598,10 @@ def build_exterior_ground():
     export('exterior_ground_v3.glb')
 
 
+ROAD_WIDTH = 6.8      # kerb to kerb: two lanes of a British B-road
+ROAD_TILE = 8.0       # metres of carriageway per repeat of the marking tile
+
+
 def build_road():
     """A section of the B-road that runs from the gate toward the town.
 
@@ -578,9 +618,13 @@ def build_road():
     kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
 
     length = 20.0                       # half length: a 40 m section
-    cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04)
+    # ROAD_TILE metres of carriageway per repeat of the marking tile, which puts
+    # the dashes at about a metre with two metres between them.
+    plan_uv(cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04),
+            ROAD_WIDTH, ROAD_TILE)
     # A little camber, so the surface is not a perfectly flat plane.
-    cube('Road_Crown', (0, .075, 0), (2.1, .022, length), tarmac, edge=.06)
+    plan_uv(cube('Road_Crown', (0, .075, 0), (2.1, .022, length), tarmac, edge=.06),
+            ROAD_WIDTH, ROAD_TILE)
     for side in (-1, 1):
         cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
         cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
@@ -604,12 +648,13 @@ def build_road_damaged():
     kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
 
     length = 20.0
-    cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04)
+    plan_uv(cube('Road_Surface', (0, .045, 0), (3.4, .045, length), tarmac, edge=.04),
+            ROAD_WIDTH, ROAD_TILE)
     for side in (-1, 1):
         cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
         cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
     # A crater through one carriageway, with the spoil thrown out around it.
-    cyl('Road_Crater', (-1.1, .01, -4.0), 2.3, .10, rubble, verts=18, edge=.06)
+    post('Road_Crater', (-1.1, .01, -4.0), 2.3, .10, rubble, verts=18, edge=.06)
     for i in range(9):
         a = i * 0.7
         cube(f'Road_Spoil_{i}', (-1.1 + math.cos(a) * 2.7, .10, -4.0 + math.sin(a) * 2.7),
@@ -722,16 +767,16 @@ def build_distant_town():
              (4.2, h, 5.0), stone, edge=.30)
 
     # The mill chimney and the gasholder: the two things that survive.
-    cyl('Town_Chimney', (46.0, 18.0, 16.0), 1.5, 36.0, brick, verts=16, edge=.10)
-    cyl('Town_ChimneyCap', (46.0, 36.4, 16.0), 1.9, 1.2, stone, verts=16, edge=.08)
-    cyl('Town_Gasholder', (-64.0, 8.5, 14.0), 9.0, 17.0, steel, verts=24, edge=.10)
+    post('Town_Chimney', (46.0, 18.0, 16.0), 1.5, 36.0, brick, verts=16, edge=.10)
+    post('Town_ChimneyCap', (46.0, 36.4, 16.0), 1.9, 1.2, stone, verts=16, edge=.08)
+    post('Town_Gasholder', (-64.0, 8.5, 14.0), 9.0, 17.0, steel, verts=24, edge=.10)
     torus('Town_GasholderRing', (-64.0, 17.2, 14.0), 9.1, .35, steel,
           rotation=(math.pi / 2, 0, 0), major_segments=28)
 
     # A line of dead poplars along the road in, so the town does not sit on a
     # bare edge.
     for i in range(11):
-        cyl(f'Town_Poplar_{i}', (-8.0 + i * 11.0, 5.0, -22.0 - (i % 3) * 2.0),
+        post(f'Town_Poplar_{i}', (-8.0 + i * 11.0, 5.0, -22.0 - (i % 3) * 2.0),
             .35, 10.0, mat('TownTimber', (.205, .186, .158), 0, .95), verts=8, edge=.04)
 
     join_all('DistantTown')
@@ -780,15 +825,52 @@ def build_estate_car():
         for z in (-.55, .55):
             cube(f'Car_RackFoot_{side}_{z:.2f}', (side * .68, 1.58, z), (.05, .05, .05),
                  trim, edge=.01)
-    # Wheels.
+    # Wheels. Each one is joined on its own and has its origin set to the hub,
+    # so the game can steer the front pair and spin all four. The body is
+    # joined separately: a car joined into a single mesh is scenery.
+    wheel_names = []
     for sx in (-1, 1):
         for sz in (-1, 1):
             x = sx * .84
             z = sz * 1.46
-            cyl(f'Car_Tyre_{sx}_{sz}', (x, .34, z), .34, .21, tyre,
-                rotation=(0, 0, math.pi / 2), verts=20, edge=.02)
-            cyl(f'Car_Rim_{sx}_{sz}', (x + sx * .02, .34, z), .21, .19, rim,
-                rotation=(0, 0, math.pi / 2), verts=14, edge=.015)
+            tag = f'{"L" if sx < 0 else "R"}{"F" if sz < 0 else "R"}'
+            # A cylinder is authored along Z. The axle runs across the car, so
+            # it turns onto X — a quarter turn about Y, not about Z, which is
+            # what had the wheels mounted facing fore-and-aft like discs.
+            cyl(f'Wheel_Tyre_{tag}', (x, .34, z), .34, .21, tyre,
+                rotation=(0, math.pi / 2, 0), verts=20, edge=.02)
+            cyl(f'Wheel_Rim_{tag}', (x + sx * .02, .34, z), .21, .19, rim,
+                rotation=(0, math.pi / 2, 0), verts=14, edge=.015)
+            wheel_names.append((tag, x, z))
+
+    # Everything that is not a wheel becomes the shell.
+    bpy.ops.object.select_all(action='DESELECT')
+    body_parts = [o for o in bpy.context.scene.objects
+                  if o.type == 'MESH' and not o.name.startswith('Wheel_')]
+    for o in body_parts:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = body_parts[0]
+    bpy.ops.object.join()
+    bpy.context.object.name = 'Car_Shell'
+
+    # Then each wheel, with its origin moved to the hub so a rotation about the
+    # object's own X axis is the wheel turning rather than the wheel orbiting.
+    for tag, x, z in wheel_names:
+        bpy.ops.object.select_all(action='DESELECT')
+        parts = [o for o in bpy.context.scene.objects if o.name.startswith(f'Wheel_')
+                 and o.name.endswith(f'_{tag}')]
+        for o in parts:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = parts[0]
+        bpy.ops.object.join()
+        wheel = bpy.context.object
+        wheel.name = f'Car_Wheel_{tag}'
+        bpy.context.scene.cursor.location = (x, .34, z)
+        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+    bpy.context.scene.cursor.location = (0, 0, 0)
+    export('car_drivable_v1.glb')
+
+    # The static prop keeps its old single-mesh form: nothing steers a wreck.
     join_all('EstateCar')
     export('estate_car_v1.glb')
 
@@ -805,7 +887,7 @@ def build_entrance():
     text_obj('SurfaceLabel','SHELTER 47',(0,3.34,-4.02),.28,YELLOW,rotation=(0,math.pi,0),extrude=.006)
     # roof vents
     for x in (-2.8,2.8):
-        cyl('RoofVent'+str(x),(x,3.85,.60),.32,.78,DARK,verts=28)
+        post('RoofVent'+str(x),(x,3.85,.60),.32,.78,DARK,verts=28)
         torus('RoofVentCap'+str(x),(x,4.26,.60),.38,.08,BRUSHED,rotation=(math.pi/2,0,0))
     export('exterior_entrance_v3.glb')
 
@@ -945,58 +1027,99 @@ def build_fence_down():
 
 
 def build_gate():
-    """A pair of chain-link leaves in a proper gate frame.
+    """An eight-metre cantilever gate that actually opens.
 
-    Built to match the fence it hangs in: concrete-set gate posts with caps, a
-    welded tube frame per leaf, the same masked mesh, a top rail carrying the
-    barbed run across, and the motor and beacon on the drive side.
+    Built to the same bay grid as the fence it hangs in — the opening is two
+    bays wide, so the run either side of it closes on the gate posts instead of
+    stopping short and leaving a person-sized hole. The frame and the two
+    leaves export as separate objects: the game slides the leaves out behind
+    the fence line, which is what a cantilever gate does.
     """
     clear_scene()
-    for side in (-1, 1):
-        x = side * 2.3
-        cube(f'GateFooting{side}', (x, .16, 0), (.30, .18, .30), CONCRETE, edge=.04)
-        cyl(f'GatePost{side}', (x, 1.72, 0), .095, 3.10, STEEL, verts=18, edge=.012)
-        cyl(f'GatePostCap{side}', (x, 3.32, 0), .11, .09, BRUSHED, verts=18)
-        # The outriggers carry the barbed run straight over the opening.
-        between(f'GateArm{side}', (x, 3.26, 0), (x, 3.62, -.34), .026, STEEL, 8)
-    for k, (y, z) in enumerate(((3.34, -.10), (3.47, -.21), (3.60, -.33))):
-        between(f'GateBarb{k}', (-2.3, y, z), (2.3, y, z), .009, BRUSHED, 8)
+    POST = 4.0          # gate posts, one bay either side of centre
+    LEAF = 1.95         # half the width of a leaf
+    CENTRE = 2.0        # where each leaf sits when the gate is shut
+    RUNWAY = -.30       # the leaves track behind the fence line
 
+    # --- Frame -------------------------------------------------------------
     for side in (-1, 1):
-        cx = side * 1.15
+        x = side * POST
+        cube(f'GateFooting{side}', (x, .18, 0), (.36, .20, .36), CONCRETE, edge=.05)
+        post(f'GatePost{side}', (x, 1.76, 0), .12, 3.16, STEEL, verts=18, edge=.014)
+        post(f'GatePostCap{side}', (x, 3.40, 0), .14, .09, BRUSHED, verts=18)
+        # The outriggers carry the barbed run straight over the opening.
+        between(f'GateArm{side}', (x, 3.34, 0), (x, 3.70, -.34), .028, STEEL, 8)
+        # A guide roller at the top of each post, which is what a cantilever
+        # leaf actually runs through.
+        cube(f'GateGuide{side}', (x - side * .16, 2.62, RUNWAY / 2),
+             (.16, .09, .20), DARK, edge=.03)
+    for k, (y, z) in enumerate(((3.42, -.10), (3.55, -.21), (3.68, -.33))):
+        between(f'GateBarb{k}', (-POST, y, z), (POST, y, z), .009, BRUSHED, 8)
+
+    # The drive gear on the near post, and a beacon that means it is powered.
+    cube('GateMotor', (POST + .48, .54, .34), (.36, .54, .34), GREEN, edge=.07)
+    cube('GateMotorPlate', (POST + .48, .96, .00), (.30, .12, .04), BRUSHED, edge=.01)
+    post('GateBeacon', (POST + .48, 1.22, .34), .08, .16, RED_GLOW, verts=24)
+    cube('GateSign', (-POST, 2.10, -.14), (.46, .30, .015), YELLOW, edge=.008)
+    text_obj('GateSignText', 'RESTRICTED', (-POST, 2.10, -.17), .085, DARK, extrude=.004)
+    join_all('Gate_Frame')
+    # join_all leaves the origin on whichever part it merged into. Put it back
+    # on the gate's centre line so the game can reason about the thing.
+    bpy.context.scene.cursor.location = (0, 0, 0)
+    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+
+    # --- Leaves ------------------------------------------------------------
+    # Each one is built at the origin and moved into place afterwards, so its
+    # own origin is its centre and sliding it is one number.
+    for side, tag in ((-1, 'L'), (1, 'R')):
+        before = set(bpy.context.scene.objects)
         # Welded tube frame: stiles, rails and a diagonal brace, as a real
         # cantilever leaf has.
-        for sx in (-1.10, 1.10):
-            cyl(f'GateStile_{side}_{sx:.2f}', (cx + sx, 1.38, 0), .042, 2.46,
-                STEEL, verts=12, edge=.008)
+        for sx in (-LEAF, LEAF):
+            post(f'Leaf_Stile_{tag}_{sx:.2f}', (sx, 1.38, 0), .046, 2.46,
+                 STEEL, verts=12, edge=.008)
         for y in (.18, 1.38, 2.58):
-            between(f'GateRail_{side}_{y:.2f}', (cx - 1.10, y, 0), (cx + 1.10, y, 0),
-                    .038, STEEL, 10)
-        between(f'GateBrace_{side}', (cx - 1.06, .24, .03), (cx + 1.06, 2.52, .03),
-                .026, STEEL, 8)
+            between(f'Leaf_Rail_{tag}_{y:.2f}', (-LEAF, y, 0), (LEAF, y, 0),
+                    .042, STEEL, 10)
+        between(f'Leaf_Brace_{tag}', (-LEAF + .04, .24, .03), (LEAF - .04, 2.52, .03),
+                .028, STEEL, 8)
         # The same welded mesh as the panels either side of it.
-        for i in range(1, 19):
-            x = cx - 1.06 + i * (2.12 / 19)
-            cube(f'GateWire_{side}_{i}', (x, 1.38, -.05), (.0095, 1.16, .0095),
+        bars = 34
+        for i in range(1, bars):
+            x = -LEAF + i * (LEAF * 2 / bars)
+            cube(f'Leaf_Wire_{tag}_{i}', (x, 1.38, -.05), (.0095, 1.16, .0095),
                  BRUSHED, edge=.003)
         for j in range(1, 8):
             y = .22 + j * (2.32 / 8)
-            cube(f'GateMeshRail_{side}_{j}', (cx, y, -.065), (1.06, .0095, .0095),
+            cube(f'Leaf_MeshRail_{tag}_{j}', (0, y, -.065), (LEAF - .04, .0095, .0095),
                  BRUSHED, edge=.003)
-        cube(f'GateHazard_{side}', (cx, .42, -.09), (1.02, .16, .015), YELLOW, edge=.006)
+        cube(f'Leaf_Hazard_{tag}', (0, .42, -.09), (LEAF - .08, .16, .015), YELLOW, edge=.006)
 
-    cube('GateMotor', (2.78, .54, .34), (.36, .54, .34), GREEN, edge=.07)
-    cube('GateMotorPlate', (2.78, .96, .00), (.30, .12, .04), BRUSHED, edge=.01)
-    cyl('GateBeacon', (2.78, 1.22, .34), .08, .16, RED_GLOW, verts=24)
-    cube('GateSign', (-2.30, 2.10, -.14), (.46, .30, .015), YELLOW,
-         rotation=(0, 0, 0), edge=.008)
-    text_obj('GateSignText', 'RESTRICTED', (-2.30, 2.10, -.17), .085, DARK, extrude=.004)
+        parts = [o for o in bpy.context.scene.objects
+                 if o.type == 'MESH' and o not in before]
+        bpy.ops.object.select_all(action='DESELECT')
+        for o in parts:
+            o.select_set(True)
+        bpy.context.view_layer.objects.active = parts[0]
+        # Bake each part's own rotation first. Joining expresses everything in
+        # the active object's local space, so joining into a rotated stile
+        # would export the whole leaf lying on a quarter turn.
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+        bpy.ops.object.join()
+        leaf = bpy.context.object
+        leaf.name = f'Gate_Leaf_{tag}'
+        # The origin goes on the ground at the leaf's own centre line, so
+        # sliding it open is one number on one axis.
+        bpy.context.scene.cursor.location = (0, 0, 0)
+        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+        leaf.location = (side * CENTRE, 0, RUNWAY)
+
     export('perimeter_gate.glb')
 
 
 def build_floodlight():
     clear_scene()
-    cyl('FloodMast',(0,2.3,0),.075,4.6,DARK,verts=20)
+    post('FloodMast',(0,2.3,0),.075,4.6,DARK,verts=20)
     cube('FloodCrossbar',(0,4.58,0),(.70,.055,.055),BRUSHED,edge=.015)
     for x in (-.48,.48):
         cube('FloodHousing'+str(x),(x,4.45,-.16),(.30,.22,.13),DARK,rotation=(-.18,0,0),edge=.055)
@@ -1008,7 +1131,7 @@ def build_floodlight():
 def build_tree():
     clear_scene()
     bark=mat('DeadBark',(.095,.055,.028),0,.96)
-    cyl('TreeTrunk',(0,2.1,0),.28,4.2,bark,verts=14,edge=.015)
+    post('TreeTrunk',(0,2.1,0),.28,4.2,bark,verts=14,edge=.015)
     branches=[((0,3.3,0),(-1.5,4.5,.2)),((0,3.55,0),(1.35,4.8,-.15)),((-.75,4.05,.1),(-1.6,5.1,.35)),((.65,4.05,-.08),(1.65,5.35,-.45)),((0,4.0,0),(.2,5.8,.4))]
     for i,(a,b) in enumerate(branches): between('DeadBranch'+str(i),a,b,.10 if i<2 else .065,bark,10)
     export('dead_tree.glb')
@@ -1021,7 +1144,7 @@ def build_barrier():
     for i,x in enumerate((-.88,-.44,0,.44,.88)):
         cube('BarrierStripe'+str(i),(x,.60,-.535),(.18,.20,.018),YELLOW if i%2==0 else DARK,rotation=(0,0,-.18),edge=.004)
     for x in (-1.15,1.15):
-        cyl('Rebar'+str(x),(x,1.18,.10),.025,.60,STEEL,verts=10)
+        post('Rebar'+str(x),(x,1.18,.10),.025,.60,STEEL,verts=10)
     export('concrete_barrier_v3.glb')
 
 

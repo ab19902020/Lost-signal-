@@ -67,10 +67,21 @@ const sheathReload = () => [
  * numbers, so no two of them sound the same when you stand in the same corridor
  * and fire them one after another.
  */
+// A shot is five sounds, not one. `snap` is the two-millisecond transient that
+// makes the ear read an explosion rather than a tone; `body` is the muzzle
+// blast; `super` is the round going past, which only supersonic rounds have;
+// `tail` is the blast rolling away; `action` is the mechanism cycling behind
+// it. Everything but the body and tail defaults off, so a voice that does not
+// set them is simply the older, quieter gun it always was.
 const voice = ({ level, bodyHz, bodyEndHz, bodyDecay, crackHz, crackQ, crackDecay,
-  tailHz, tailDecay, tailLevel }) => ({
+  tailHz, tailDecay, tailLevel,
+  snapHz = 1500, snapLevel = 1.0,
+  superHz = 0, superLevel = 0, superAt = 0.008,
+  actionHz = 0, actionLevel = 0, actionAt = 0.05, actionSpread = 0.03 }) => ({
   level, bodyHz, bodyEndHz, bodyDecay, crackHz, crackQ, crackDecay,
   tailHz, tailDecay, tailLevel,
+  snapHz, snapLevel, superHz, superLevel, superAt,
+  actionHz, actionLevel, actionAt, actionSpread,
 });
 
 const RIFLE_VOICE = (pitch = 1, level = 0.5) => voice({
@@ -78,6 +89,9 @@ const RIFLE_VOICE = (pitch = 1, level = 0.5) => voice({
   bodyHz: 210 * pitch, bodyEndHz: 52 * pitch, bodyDecay: 0.13,
   crackHz: 2600 * pitch, crackQ: 1.0, crackDecay: 0.075,
   tailHz: 1100 * pitch, tailDecay: 0.34, tailLevel: 0.30,
+  snapHz: 1600 * pitch, snapLevel: 1.25,
+  superHz: 5200 * pitch, superLevel: 0.40,
+  actionHz: 1900 * pitch, actionLevel: 0.20, actionAt: 0.045,
 });
 
 const SMG_VOICE = (pitch = 1, level = 0.4) => voice({
@@ -85,13 +99,20 @@ const SMG_VOICE = (pitch = 1, level = 0.4) => voice({
   bodyHz: 260 * pitch, bodyEndHz: 84 * pitch, bodyDecay: 0.07,
   crackHz: 3200 * pitch, crackQ: 1.5, crackDecay: 0.045,
   tailHz: 1500 * pitch, tailDecay: 0.18, tailLevel: 0.20,
+  snapHz: 2000 * pitch, snapLevel: 1.0,
+  superHz: 5600 * pitch, superLevel: 0.24,
+  actionHz: 2400 * pitch, actionLevel: 0.28, actionAt: 0.030, actionSpread: 0.022,
 });
 
+// No supersonic crack: buckshot leaves the barrel below the speed of sound,
+// which is exactly why a shotgun is a boom and a rifle is a whipcrack.
 const SHOTGUN_VOICE = (pitch = 1, level = 0.62) => voice({
   level,
   bodyHz: 150 * pitch, bodyEndHz: 34 * pitch, bodyDecay: 0.22,
   crackHz: 1500 * pitch, crackQ: 0.6, crackDecay: 0.14,
   tailHz: 700 * pitch, tailDecay: 0.55, tailLevel: 0.42,
+  snapHz: 820 * pitch, snapLevel: 1.4,
+  actionHz: 1150 * pitch, actionLevel: 0.34, actionAt: 0.20, actionSpread: 0.10,
 });
 
 const SNIPER_VOICE = (pitch = 1, level = 0.7) => voice({
@@ -99,6 +120,10 @@ const SNIPER_VOICE = (pitch = 1, level = 0.7) => voice({
   bodyHz: 175 * pitch, bodyEndHz: 40 * pitch, bodyDecay: 0.18,
   crackHz: 3600 * pitch, crackQ: 0.8, crackDecay: 0.10,
   tailHz: 820 * pitch, tailDecay: 0.85, tailLevel: 0.5,
+  snapHz: 1250 * pitch, snapLevel: 1.5,
+  superHz: 4700 * pitch, superLevel: 0.55, superAt: 0.011,
+  // The bolt is worked after the shot, not with it.
+  actionHz: 1450 * pitch, actionLevel: 0.20, actionAt: 0.30, actionSpread: 0.14,
 });
 
 const PISTOL_VOICE = (pitch = 1, level = 0.44) => voice({
@@ -106,13 +131,20 @@ const PISTOL_VOICE = (pitch = 1, level = 0.44) => voice({
   bodyHz: 300 * pitch, bodyEndHz: 96 * pitch, bodyDecay: 0.08,
   crackHz: 2900 * pitch, crackQ: 1.3, crackDecay: 0.055,
   tailHz: 1300 * pitch, tailDecay: 0.24, tailLevel: 0.24,
+  snapHz: 1900 * pitch, snapLevel: 1.1,
+  superHz: 5000 * pitch, superLevel: 0.18,
+  actionHz: 2600 * pitch, actionLevel: 0.32, actionAt: 0.035, actionSpread: 0.026,
 });
 
+// A revolver has no slide and no bolt: after the shot there is nothing but the
+// room. It is the one firearm in the collection with no action noise at all.
 const REVOLVER_VOICE = (pitch = 1, level = 0.6) => voice({
   level,
   bodyHz: 190 * pitch, bodyEndHz: 46 * pitch, bodyDecay: 0.16,
   crackHz: 2100 * pitch, crackQ: 0.8, crackDecay: 0.11,
   tailHz: 900 * pitch, tailDecay: 0.62, tailLevel: 0.44,
+  snapHz: 1350 * pitch, snapLevel: 1.25,
+  superHz: 4200 * pitch, superLevel: 0.22,
 });
 
 const BLADE_VOICE = () => voice({
@@ -120,6 +152,7 @@ const BLADE_VOICE = () => voice({
   bodyHz: 520, bodyEndHz: 180, bodyDecay: 0.05,
   crackHz: 4200, crackQ: 2.6, crackDecay: 0.09,
   tailHz: 2600, tailDecay: 0.16, tailLevel: 0.14,
+  snapHz: 3200, snapLevel: 0.45,
 });
 
 // `view` is how the model hangs off the camera: scale, then a small local
@@ -266,6 +299,10 @@ export const WEAPONS = {
         bodyHz: 340, bodyEndHz: 130, bodyDecay: 0.05,
         crackHz: 1200, crackQ: 2.4, crackDecay: 0.035,
         tailHz: 620, tailDecay: 0.10, tailLevel: 0.12,
+        snapHz: 900, snapLevel: 0.42,
+        // No crack past the muzzle, and the bolt is now the loudest thing
+        // about it — which is exactly what a can does to a gun.
+        actionHz: 2500, actionLevel: 0.62, actionAt: 0.026, actionSpread: 0.02,
       }),
       reload: magazineReload(1.32, 1.75),
     },

@@ -268,6 +268,31 @@ check(weapons.quartermaster?.down, 'the quartermaster cannot be brought down');
 check(weapons.quartermaster?.tipped > 1.4,
   `the downed quartermaster tipped only ${weapons.quartermaster?.tipped} rad`);
 
+// Sound. Every weapon has to make its own noise, with a real transient on the
+// front of it, and the room it is fired in has to be audible in the result.
+const audio = weapons.audio || {};
+const spaces = audio.__spaces || {};
+const shots = Object.entries(audio).filter(([key]) => key !== '__spaces');
+check(shots.length === weapons.expected,
+  `only ${shots.length} of ${weapons.expected} weapons rendered a shot`);
+for (const [key, shot] of shots) {
+  if (!shot) { failures.push(`${key} rendered no shot at all`); continue; }
+  check(shot.peak > 0.02, `${key} fires almost silently (peak ${shot.peak})`);
+  check(shot.attack <= 0.02, `${key} has no transient (peak at ${shot.attack}s)`);
+  check(shot.tail > 0.08, `${key} stops dead (tail ${shot.tail}s)`);
+}
+const fingerprint = new Set(shots.map(([, s]) => s && `${s.peak}:${s.rms}:${s.tail}`));
+check(fingerprint.size >= shots.length - 1,
+  `${shots.length - fingerprint.size + 1} weapons render an identical shot`);
+check(spaces.silo && spaces.bunker && spaces.silo.tail > spaces.bunker.tail * 1.5,
+  'the silo does not ring longer than the shelter');
+check(spaces.outside && spaces.bunker && spaces.outside.tail > spaces.bunker.tail,
+  'the open compound does not carry further than the shelter');
+// Three rooms, three lengths of tail, in the order the geometry implies: a
+// concrete cell, then an open field, then sixty metres of steel shaft.
+check(spaces.silo && spaces.outside && spaces.silo.tail > spaces.outside.tail * 1.5,
+  'the silo does not ring longer than the open compound');
+
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed:`);
   for (const failure of failures) console.error(`  - ${failure}`);

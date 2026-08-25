@@ -184,6 +184,9 @@ const exteriorUrls = {
   wreckCar: `${BASE}assets/blender/wreck_car_v1.glb`,
   debrisField: `${BASE}assets/blender/debris_field_v1.glb`,
   estateCar: `${BASE}assets/blender/estate_car_v1.glb`,
+  // The same car with its wheels left as separate objects, hub origins and
+  // all, so one of them can be driven instead of parked.
+  carDrivable: `${BASE}assets/blender/car_drivable_v1.glb`,
 };
 
 // Assets exported before the up-axis fix carry the authored Y-up world rotated

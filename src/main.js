@@ -133,6 +133,10 @@ let recoilSettleYaw = 0;
 let sprinting = false;
 let stamina = 1;
 let seated = null;
+// The car, while you are in it. Driving replaces walking outright: the
+// capsule is parked at the seat, the weapon comes down and W/A/S/D go to
+// the pedals instead of the legs.
+let driving = null;
 let aiming = false;
 let jumpQueued = false;
 const touch = { sprint: false, crouch: false };
@@ -279,7 +283,7 @@ async function prepare() {
         start: () => { opening.hide(); beginGame({ restore: false }); },
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
-        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); },
+        world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); setShotSpace(name); },
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => { renderer.toneMappingExposure = v; },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
@@ -315,6 +319,61 @@ async function prepare() {
         decals: () => decals.count(),
         marks: () => decals.total(),
         reload: () => reload(),
+        // Render one shot into an offline context and measure it. A harness
+        // cannot listen, but it can prove every gun makes a distinct sound
+        // with a real transient on the front of it, in the room the player is
+        // actually standing in.
+        renderShot: async (key = weaponKey, world = currentWorld, seconds = 1.4) => {
+          const spec = WEAPONS[key];
+          if (!spec) return null;
+          const live = { ac, master, shotDry, shotConvolver, shotWet, shotNoise, currentWorld };
+          const rate = 44100;
+          const offline = new OfflineAudioContext(2, Math.ceil(rate * seconds), rate);
+          ac = offline;
+          master = offline.createGain();
+          master.gain.value = 1;
+          master.connect(offline.destination);
+          shotDry = null; shotConvolver = null; shotWet = null; shotNoise = null;
+          const spaces = [...shotSpaceCache.entries()];
+          shotSpaceCache.clear();
+          currentWorld = world;
+          let rendered;
+          try {
+            weaponFireSound(spec);
+            rendered = await offline.startRendering();
+          } finally {
+            ac = live.ac; master = live.master;
+            shotDry = live.shotDry; shotConvolver = live.shotConvolver;
+            shotWet = live.shotWet; shotNoise = live.shotNoise;
+            currentWorld = live.currentWorld;
+            shotSpaceCache.clear();
+            for (const [k, v] of spaces) shotSpaceCache.set(k, v);
+          }
+          const data = rendered.getChannelData(0);
+          let peak = 0;
+          let energy = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = Math.abs(data[i]);
+            if (v > peak) peak = v;
+            energy += data[i] * data[i];
+          }
+          let attack = 0;
+          for (let i = 0; i < data.length; i++) {
+            if (Math.abs(data[i]) >= peak * 0.9) { attack = i / rate; break; }
+          }
+          // Where the sound has fallen to a thousandth of its peak: how long
+          // the room holds on to it.
+          let tail = 0;
+          for (let i = data.length - 1; i >= 0; i--) {
+            if (Math.abs(data[i]) > peak * 0.001) { tail = i / rate; break; }
+          }
+          return {
+            peak: +peak.toFixed(4),
+            rms: +Math.sqrt(energy / data.length).toFixed(5),
+            attack: +attack.toFixed(4),
+            tail: +tail.toFixed(3),
+          };
+        },
         // Take a wound, so the infirmary has something to treat.
         hurt: (amount = 30) => {
           health = Math.max(0, health - amount);
@@ -329,6 +388,39 @@ async function prepare() {
         slot: (index) => selectSlot(index),
         cycle: (step = 1) => cycleWeapon(step),
         scoped: () => scoped,
+        // Driving, for the harness: get in, hold the pedals for a while, read
+        // the speed off, get out.
+        vehicles: () => (game.vehicles || []).map((v) => ({
+          name: v.root.name,
+          x: +v.state.x.toFixed(3), z: +v.state.z.toFixed(3),
+          heading: +v.state.heading.toFixed(4),
+          speed: +v.state.speed.toFixed(3),
+          occupied: v.state.occupied,
+        })),
+        drive: (index = 0) => enterVehicle((game.vehicles || [])[index]),
+        driving: () => (driving ? {
+          name: driving.root.name,
+          x: +driving.state.x.toFixed(3), z: +driving.state.z.toFixed(3),
+          heading: +driving.state.heading.toFixed(4),
+          speed: +driving.state.speed.toFixed(3),
+          steer: +driving.state.steer.toFixed(4),
+          spin: +driving.state.wheelSpin.toFixed(3),
+        } : null),
+        pedals: (throttle = 1, steer = 0, brake = false) => {
+          keys.KeyW = throttle > 0;
+          keys.KeyS = throttle < 0;
+          keys.KeyD = steer > 0;
+          keys.KeyA = steer < 0;
+          keys.Space = !!brake;
+        },
+        park: () => leaveVehicle(false),
+        // The perimeter gate, so a harness can drive out of the compound.
+        gate: (open) => {
+          const node = game.interactions.find((o) => o.name === 'Perimeter_Gate');
+          if (!node) return null;
+          if (open === undefined || !!open !== game.gateIsOpen()) node.userData.interaction.onUse();
+          return game.gateIsOpen();
+        },
         aim2: () => ({ yaw, pitch }),
         time: (value) => { game.sky?.setTimeOfDay(value); updateStats(); },
         weather: (value) => { game.sky?.setWeather(value); },
@@ -369,6 +461,18 @@ async function prepare() {
           cam.lookAt(tx, ty, tz);
           cam.fov = fov;
           cam.updateProjectionMatrix();
+        },
+        // Put the camera back on the player after a freecam look. Without this
+        // a harness that framed a shot could never film the game again.
+        play: () => {
+          const cam = game.camera;
+          cam.parent?.remove(cam);
+          game.player.add(cam);
+          cam.position.set(0, body.eyeHeight, 0);
+          cam.rotation.set(pitch, yaw, 0);
+          cam.fov = 70;
+          cam.updateProjectionMatrix();
+          started = true;
         },
       };
     }
@@ -531,6 +635,14 @@ function wireGameEvents() {
     flash(`${unit} — SEATED · USE AGAIN TO STAND`, 2600);
   });
 
+  addEventListener('lostsignal:gate', (e) => {
+    flash(e.detail.open ? 'PERIMETER GATE RUNNING BACK' : 'PERIMETER GATE CLOSING', 2400);
+  });
+
+  addEventListener('lostsignal:drive', (e) => {
+    enterVehicle(e.detail?.vehicle);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -613,6 +725,7 @@ const OBJECTIVES = [
   { id: 'secure', text: 'Find the secure unit on the top landing' },
   { id: 'hydroponics', text: 'Reach the hydroponics levels' },
   { id: 'cache', text: 'Find the silo stores at the bottom' },
+  { id: 'drive', text: 'Get the estate car at the gate running and drive it' },
 ];
 const completed = new Set();
 
@@ -645,6 +758,7 @@ function completeObjective(id) {
 // every time: reparent the player, drop the body at the new spawn, face them
 // the right way.
 function enterWorld(name, facing, tilt) {
+  leaveVehicle(false);
   seated = null;
   setAiming(false);
   currentWorld = name;
@@ -653,6 +767,52 @@ function enterWorld(name, facing, tilt) {
   yaw = facing;
   pitch = tilt;
   setOutdoorAudio(name === 'outside');
+  setShotSpace(name);
+}
+
+// --- Driving ---------------------------------------------------------------
+// Getting in parks the walking body under the car and hands W/A/S/D to the
+// pedals. Getting out looks for a doorstep that is not inside anything and
+// stands the player there.
+const _carPoint = new THREE.Vector3();
+
+function enterVehicle(vehicle) {
+  if (!vehicle || driving || currentWorld !== 'outside') return false;
+  driving = vehicle;
+  vehicle.occupied = true;
+  setAiming(false);
+  setScoped(false);
+  seated = null;
+  sprinting = false;
+  touch.sprint = false;
+  touch.crouch = false;
+  document.getElementById('sprintBtn').classList.remove('on');
+  document.getElementById('crouchBtn').classList.remove('on');
+  document.body.classList.add('driving');
+  // The chase camera starts behind the nose. The car's heading and the
+  // player's yaw are the same number: both are measured off -Z.
+  yaw = vehicle.heading;
+  pitch = CHASE_PITCH;
+  startEngineAudio();
+  flash(`${vehicle.label} — DRIVING · [ E ] TO GET OUT`, 3000);
+  completeObjective('drive');
+  return true;
+}
+
+function leaveVehicle(showMessage = true) {
+  if (!driving) return false;
+  const vehicle = driving;
+  const step = vehicle.doorstep();
+  driving = null;
+  vehicle.occupied = false;
+  document.body.classList.remove('driving');
+  stopEngineAudio();
+  body.teleport(step.x, step.y + 0.05, step.z);
+  game.player.position.copy(body.position);
+  game.camera.position.set(0, body.eyeHeight, 0);
+  pitch = -0.02;
+  if (showMessage) flash('OUT OF THE CAR');
+  return true;
 }
 
 function leaveSeat(showMessage = true) {
@@ -722,6 +882,7 @@ function nearestResident() {
 
 function use() {
   if (!started || modal || cctv) return;
+  if (leaveVehicle()) return;
   if (leaveSeat()) return;
   const interaction = game.nearestInteraction(currentWorld);
   if (interaction) {
@@ -765,7 +926,7 @@ function setScoped(value) {
 }
 
 function setAiming(value) {
-  const next = !!value && armed && !reloading && !modal && !cctv && !seated && !sprinting;
+  const next = !!value && armed && !reloading && !modal && !cctv && !seated && !driving && !sprinting;
   if (aiming === next) return aiming;
   aiming = next;
   document.body.classList.toggle('aiming', aiming);
@@ -775,7 +936,7 @@ function setAiming(value) {
 }
 
 function queueJump() {
-  if (!started || modal || cctv) return false;
+  if (!started || modal || cctv || driving) return false;
   if (seated) {
     leaveSeat();
     return false;
@@ -950,7 +1111,7 @@ function fireRound(world, spread, damage) {
 }
 
 function fire() {
-  if (!armed || reloading || modal || cctv || !started) return false;
+  if (!armed || reloading || modal || cctv || !started || driving) return false;
   if (shotCooldown > 0) return false;
   if (weapon.kind === 'melee') return swing();
   if (ammo <= 0) {
@@ -1414,6 +1575,11 @@ function updatePlayer(dt) {
   game.camera.rotation.y = yaw;
   game.camera.rotation.x = pitch;
 
+  if (driving) {
+    updateDriving(dt);
+    return;
+  }
+
   if (seated) {
     desiredVelocity.set(0, 0, 0);
     // A seat is itself solid. Keep the seated capsule at the authored pose
@@ -1489,6 +1655,101 @@ function updatePlayer(dt) {
   staminaBar.classList.toggle('on', stamina < 0.995);
 }
 
+// One frame behind the wheel. The car does the physics; this hands it the
+// pedals, rides the seat and shakes the picture in proportion to what the
+// suspension is doing.
+const driveControls = { throttle: 0, steer: 0, brake: false };
+const MPH = 2.23694;
+const CHASE_DISTANCE = 6.4;
+const CHASE_HEIGHT = 2.55;
+const CHASE_PITCH = -0.215;   // enough to hold the car and the road ahead
+const driveSpeedEl = document.getElementById('driveSpeed');
+const driveGearEl = document.getElementById('driveGear');
+let driveShake = 0;
+
+function updateDriving(dt) {
+  const vehicle = driving;
+  driveControls.throttle = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
+  driveControls.steer = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
+  driveControls.brake = !!keys.Space || touch.crouch;
+
+  const speed = vehicle.update(dt, driveControls);
+
+  // The walking body rides along under the car so that stepping out, saving
+  // and every distance test in the game keeps working on one position.
+  vehicle.position(_carPoint);
+  body.teleport(_carPoint.x, _carPoint.y, _carPoint.z);
+  body.velocity.set(0, 0, 0);
+  body.grounded = true;
+  game.player.position.copy(_carPoint);
+
+  // The camera rides behind the car. The shell has no modelled interior — it
+  // is a solid body, and a seat-height eye is inside it looking at backfaces —
+  // and a chase view puts the wheels, the steering and the body roll on screen
+  // where the driver can read them.
+  //
+  // The player's yaw is still the camera's, so the mouse swings it around the
+  // car; it drifts back behind the nose while the car is actually moving.
+  let drift = yaw - vehicle.heading;
+  drift -= Math.round(drift / (Math.PI * 2)) * Math.PI * 2;
+  yaw = vehicle.heading
+    + (Math.abs(speed) > 1.2 ? THREE.MathUtils.damp(drift, 0, 2.2, dt) : drift);
+  pitch = THREE.MathUtils.damp(pitch, CHASE_PITCH, 4, dt);
+
+  const bump = Math.min(1, Math.abs(speed) / vehicle.topSpeed);
+  driveShake = THREE.MathUtils.damp(driveShake, bump, 4, dt);
+  breath += dt * (1.2 + bump * 6);
+  // Pull the camera in if the wall behind the car is closer than the boom.
+  let boom = CHASE_DISTANCE;
+  const colliders = game.colliders.outside;
+  for (let step = 0; step < 3 && boom > 2.2; step++) {
+    const cx = _carPoint.x + Math.sin(yaw) * boom;
+    const cz = _carPoint.z + Math.cos(yaw) * boom;
+    if (!colliders.contains(cx, cz, 0.45, _carPoint.y + 1.2, _carPoint.y + 2.6)) break;
+    boom -= 1.4;
+  }
+  game.camera.position.set(
+    Math.sin(yaw) * boom + Math.sin(breath * 3.1) * 0.012 * driveShake,
+    CHASE_HEIGHT + Math.sin(breath * 4.7) * 0.018 * driveShake,
+    Math.cos(yaw) * boom);
+  game.camera.rotation.set(pitch, yaw, -vehicle.state.lean * 0.25);
+
+  // Hitting something is felt, not just heard.
+  const impact = vehicle.takeImpact();
+  if (impact > 1.4) {
+    crashSound(impact / vehicle.topSpeed);
+    pitch = THREE.MathUtils.clamp(pitch + impact * 0.008, -1.25, 1.15);
+    if (impact > 8) damage(Math.round(impact - 6));
+  }
+
+  engineAudio(Math.abs(speed) / vehicle.topSpeed, driveControls.throttle);
+
+  const mph = Math.round(Math.abs(speed) * MPH);
+  if (driveSpeedEl) driveSpeedEl.textContent = String(mph);
+  if (driveGearEl) {
+    driveGearEl.textContent = driveControls.brake ? 'BRK'
+      : speed < -0.2 ? 'R' : (speed > 0.2 ? 'D' : 'N');
+  }
+
+  sprinting = false;
+  stamina = Math.min(1, stamina + dt / 4);
+  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
+  staminaBar.classList.toggle('on', stamina < 0.995);
+}
+
+// One place that takes health off the player, so a crash, a bite and a night
+// without heat all leave through the same door.
+function damage(amount) {
+  if (amount <= 0) return health;
+  health = Math.max(0, health - amount);
+  hurtFlash = 1;
+  recovery = 0;
+  hurtSound();
+  updateHealth();
+  if (health <= 0) collapse();
+  return health;
+}
+
 // Footsteps fire on distance travelled so their rhythm always matches the legs.
 let nextStepAt = 0;
 function footsteps(dt, speedRatio, crouching) {
@@ -1502,6 +1763,7 @@ function footsteps(dt, speedRatio, crouching) {
 
 function updatePrompt() {
   if (!started || modal || cctv) { promptEl.classList.remove('on'); return; }
+  if(driving){promptEl.textContent=`${coarse?'USE':'[ E ]'}  GET OUT`;promptEl.classList.add('on');return}
   if(seated){promptEl.textContent=`${coarse?'USE':'[ E ]'}  STAND UP`;promptEl.classList.add('on');return}
   const interaction=game.nearestInteraction(currentWorld);
   if(interaction){promptEl.textContent=`${coarse?'USE':'[ E ]'}  ${interaction.name}`;promptEl.classList.add('on');return}
@@ -1583,6 +1845,114 @@ function updateAmbience() {
   }
 }
 
+// --- Engine ----------------------------------------------------------------
+// A four-cylinder that has been standing for fifteen years. Two detuned saws
+// through a low-pass make the block, a third an octave down makes the exhaust,
+// and a thread of filtered noise makes the induction. Load opens the filter and
+// lifts the noise; revs move all three together, dropping on each upshift so
+// it climbs through a gearbox instead of sirening straight to the top.
+let engine = null;
+
+function startEngineAudio() {
+  if (!ac || engine) return;
+  const out = ac.createGain();
+  out.gain.value = 0;
+  out.connect(master);
+
+  const filter = ac.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 420;
+  filter.Q.value = 3.2;
+  filter.connect(out);
+
+  const block = [0, 1].map((i) => {
+    const o = ac.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = 46;
+    o.detune.value = i ? 11 : -11;
+    const g = ac.createGain();
+    g.gain.value = 0.16;
+    o.connect(g); g.connect(filter);
+    o.start();
+    return o;
+  });
+  const exhaust = ac.createOscillator();
+  exhaust.type = 'square';
+  exhaust.frequency.value = 23;
+  const exhaustGain = ac.createGain();
+  exhaustGain.gain.value = 0.09;
+  exhaust.connect(exhaustGain); exhaustGain.connect(filter);
+  exhaust.start();
+
+  const induction = ac.createBufferSource();
+  induction.buffer = noiseBuffer(2);
+  induction.loop = true;
+  const inductionFilter = ac.createBiquadFilter();
+  inductionFilter.type = 'bandpass';
+  inductionFilter.frequency.value = 700;
+  inductionFilter.Q.value = 1.1;
+  const inductionGain = ac.createGain();
+  inductionGain.gain.value = 0;
+  induction.connect(inductionFilter);
+  inductionFilter.connect(inductionGain);
+  inductionGain.connect(out);
+  induction.start();
+
+  engine = { out, filter, block, exhaust, induction, inductionGain, revs: 0 };
+  out.gain.setTargetAtTime(0.5, ac.currentTime, 0.35);
+}
+
+function stopEngineAudio() {
+  if (!engine) return;
+  const dying = engine;
+  engine = null;
+  const t = ac.currentTime;
+  dying.out.gain.setTargetAtTime(0, t, 0.12);
+  setTimeout(() => {
+    for (const o of dying.block) { try { o.stop(); } catch { /* already stopped */ } }
+    try { dying.exhaust.stop(); } catch { /* already stopped */ }
+    try { dying.induction.stop(); } catch { /* already stopped */ }
+    dying.out.disconnect();
+  }, 600);
+}
+
+// Five gears, evenly spaced across the speed range. Revs run 0..1 within
+// whichever one the car is in, so the note falls every time it changes up.
+const GEARS = 5;
+
+function engineAudio(speedRatio, throttle) {
+  if (!engine || !ac) return;
+  const gear = Math.min(GEARS - 1, Math.floor(speedRatio * GEARS));
+  const within = speedRatio * GEARS - gear;
+  const revs = 0.22 + within * 0.78;
+  const load = Math.min(1, Math.abs(throttle) * 0.7 + speedRatio * 0.5);
+  const t = ac.currentTime;
+  const base = 44 + revs * 96;
+  for (const o of engine.block) o.frequency.setTargetAtTime(base, t, 0.08);
+  engine.exhaust.frequency.setTargetAtTime(base * 0.5, t, 0.08);
+  engine.filter.frequency.setTargetAtTime(300 + revs * 900 + load * 700, t, 0.09);
+  engine.inductionGain.gain.setTargetAtTime(0.012 + load * 0.05, t, 0.1);
+  engine.out.gain.setTargetAtTime(0.34 + load * 0.30, t, 0.1);
+}
+
+// Two tonnes of estate car into a fence post.
+function crashSound(strength = 1) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const level = THREE.MathUtils.clamp(strength, 0.15, 1);
+  noiseBurst({ at: t, hz: 180, q: 0.7, decay: 0.30 * level, level: 0.34 * level, type: 'lowpass' });
+  noiseBurst({ at: t + 0.005, hz: 2400, q: 1.2, decay: 0.13, level: 0.13 * level });
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(120 * level + 40, t);
+  o.frequency.exponentialRampToValueAtTime(38, t + 0.22);
+  g.gain.setValueAtTime(0.22 * level, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + 0.27);
+}
+
 function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.currentTime,.04)}
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
@@ -1649,28 +2019,203 @@ function noiseBurst({ at, hz, q, decay, level, type = 'bandpass' }) {
   source.stop(at + decay + .03);
 }
 
+// --- The room a shot happens in --------------------------------------------
+// Every gun in the game used to fire into a vacuum: a sawtooth and two filtered
+// noise bursts, ending the moment the envelope did. What makes a gunshot sound
+// real is mostly not the gun — it is the two-millisecond transient at the front
+// of it and the room behind it, and the shelter, the silo and the compound are
+// three completely different rooms.
+const SHOT_SPACES = {
+  // Concrete box, three metres to a wall. Short, hard, and it eats the top end.
+  bunker: { seconds: 0.9, decay: 3.6, damp: 2400, wet: 0.46,
+    taps: [[0.009, 0.55], [0.017, 0.44], [0.029, 0.34], [0.044, 0.22]] },
+  // Sixty metres of open shaft with steel walkways all the way down it.
+  silo: { seconds: 2.9, decay: 1.8, damp: 3600, wet: 0.66,
+    taps: [[0.031, 0.6], [0.068, 0.48], [0.113, 0.4], [0.181, 0.32], [0.27, 0.24]] },
+  // Nothing to reflect off but the fence, the shelter roof and the far
+  // treeline, so it is one long thin slap and then the field.
+  outside: { seconds: 1.7, decay: 5.4, damp: 1600, wet: 0.24,
+    taps: [[0.085, 0.34], [0.168, 0.22], [0.312, 0.13]] },
+};
+
+let shotDry = null;
+let shotConvolver = null;
+let shotWet = null;
+const shotSpaceCache = new Map();
+
+// A procedural impulse response: exponentially decaying noise, damped by a
+// one-pole low pass, with the early reflections written in as discrete taps.
+function impulseResponse({ seconds, decay, damp, taps }) {
+  const rate = ac.sampleRate;
+  const length = Math.max(1, Math.floor(rate * seconds));
+  const buffer = ac.createBuffer(2, length, rate);
+  // One-pole coefficient for the damping corner, so the tail loses its top end
+  // as it goes — which is what air and soft surfaces actually do to it.
+  const k = Math.exp(-2 * Math.PI * damp / rate);
+  for (let channel = 0; channel < 2; channel++) {
+    const data = buffer.getChannelData(channel);
+    let last = 0;
+    for (let i = 0; i < length; i++) {
+      const t = i / length;
+      const noise = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+      last = noise * (1 - k) + last * k;
+      data[i] = last;
+    }
+    for (const [at, level] of taps) {
+      const index = Math.floor(at * rate * (0.94 + Math.random() * 0.12));
+      if (index < length) data[index] += level * (channel ? -1 : 1);
+    }
+  }
+  return buffer;
+}
+
+function setShotSpace(world) {
+  if (!ac || !shotConvolver) return;
+  const space = SHOT_SPACES[world] || SHOT_SPACES.bunker;
+  if (!shotSpaceCache.has(world)) shotSpaceCache.set(world, impulseResponse(space));
+  shotConvolver.buffer = shotSpaceCache.get(world);
+  shotWet.gain.setTargetAtTime(space.wet, ac.currentTime, 0.2);
+}
+
+function ensureShotBus() {
+  if (shotDry || !ac) return;
+  shotDry = ac.createGain();
+  shotDry.gain.value = 1;
+  shotDry.connect(master);
+  shotConvolver = ac.createConvolver();
+  shotConvolver.normalize = true;
+  shotWet = ac.createGain();
+  shotWet.gain.value = 0.4;
+  shotConvolver.connect(shotWet);
+  shotWet.connect(master);
+  setShotSpace(currentWorld);
+}
+
+// One output per shot, fed to the room and to the direct path at once.
+function shotOut() {
+  const out = ac.createGain();
+  out.gain.value = 1;
+  out.connect(shotDry);
+  out.connect(shotConvolver);
+  return out;
+}
+
+// A soft-clip curve. An overdriven horn folds harmonics into the blast, and
+// that fold is the difference between a crack and a buzz.
+let shotShaper = null;
+function shaperCurve() {
+  if (shotShaper) return shotShaper;
+  shotShaper = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) {
+    const x = (i / 1023) * 2 - 1;
+    shotShaper[i] = Math.tanh(x * 2.6);
+  }
+  return shotShaper;
+}
+
+/**
+ * A filtered noise burst on the shot bus, optionally sweeping its filter down
+ * as it decays — which is how a blast rolls away rather than just stopping.
+ */
+function blastLayer(out, { at, hz, q, decay, level, type = 'bandpass', sweepTo = 0, hold = 0 }) {
+  const source = ac.createBufferSource();
+  source.buffer = shotNoiseBuffer();
+  source.loop = true;
+  const filter = ac.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.setValueAtTime(hz, at);
+  if (sweepTo) filter.frequency.exponentialRampToValueAtTime(Math.max(40, sweepTo), at + decay);
+  filter.Q.value = q;
+  const gain = ac.createGain();
+  // Two-stage decay: real blasts drop most of their energy at once and then
+  // trail. A single exponential reads as a synthesised whoosh.
+  gain.gain.setValueAtTime(Math.max(.0008, level), at);
+  if (hold) gain.gain.setValueAtTime(Math.max(.0008, level), at + hold);
+  gain.gain.exponentialRampToValueAtTime(Math.max(.0006, level * 0.18), at + hold + decay * 0.22);
+  gain.gain.exponentialRampToValueAtTime(.0005, at + hold + decay);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(out);
+  source.start(at, Math.random() * 1.4);
+  source.stop(at + hold + decay + .04);
+}
+
 function weaponFireSound(spec) {
   if (!ac || !master) return;
   const voice = spec?.audio?.fire;
   if (!voice) return;
+  ensureShotBus();
   const t = ac.currentTime;
+  const out = shotOut();
+  // No two rounds out of the same barrel are identical, and 950 rounds a
+  // minute of one recorded sample is the most obviously fake thing in a game.
+  const vary = 0.94 + Math.random() * 0.12;
 
+  // 1. The transient. Six milliseconds of barely-filtered noise: the part the
+  //    ear reads as "something exploded". Without it, everything below is a
+  //    tone with a filter on it.
+  if (voice.snapLevel > 0) {
+    blastLayer(out, {
+      at: t, hz: voice.snapHz * vary, q: 0.35, decay: 0.007,
+      level: voice.level * voice.snapLevel, type: 'highpass',
+    });
+  }
+
+  // 2. The muzzle blast, through a soft clip so the harmonics fold the way an
+  //    overdriven horn's do.
   const body = ac.createOscillator();
   body.type = 'sawtooth';
-  body.frequency.setValueAtTime(voice.bodyHz, t);
-  body.frequency.exponentialRampToValueAtTime(Math.max(20, voice.bodyEndHz), t + voice.bodyDecay);
+  body.frequency.setValueAtTime(voice.bodyHz * vary, t);
+  body.frequency.exponentialRampToValueAtTime(
+    Math.max(20, voice.bodyEndHz * vary), t + voice.bodyDecay);
+  const shaper = ac.createWaveShaper();
+  shaper.curve = shaperCurve();
+  shaper.oversample = '2x';
   const bodyGain = ac.createGain();
-  bodyGain.gain.setValueAtTime(voice.level * .78, t);
+  bodyGain.gain.setValueAtTime(voice.level * .82, t);
+  bodyGain.gain.exponentialRampToValueAtTime(voice.level * .12, t + voice.bodyDecay * .3);
   bodyGain.gain.exponentialRampToValueAtTime(.0008, t + voice.bodyDecay + .04);
-  body.connect(bodyGain);
-  bodyGain.connect(master);
+  body.connect(shaper);
+  shaper.connect(bodyGain);
+  bodyGain.connect(out);
   body.start(t);
   body.stop(t + voice.bodyDecay + .06);
 
-  noiseBurst({ at: t, hz: voice.crackHz, q: voice.crackQ,
-    decay: voice.crackDecay, level: voice.level });
-  noiseBurst({ at: t + .012, hz: voice.tailHz, q: .6,
-    decay: voice.tailDecay, level: voice.level * voice.tailLevel, type: 'lowpass' });
+  // 3. The muzzle crack proper.
+  blastLayer(out, {
+    at: t, hz: voice.crackHz * vary, q: voice.crackQ,
+    decay: voice.crackDecay, level: voice.level, sweepTo: voice.crackHz * .35,
+  });
+
+  // 4. The round going past — a supersonic bullet's own shock wave, a few
+  //    milliseconds behind the muzzle and much higher. Subsonic weapons and
+  //    anything with a can on it do not have one.
+  if (voice.superLevel > 0) {
+    blastLayer(out, {
+      at: t + voice.superAt, hz: voice.superHz * vary, q: 2.4,
+      decay: 0.028, level: voice.level * voice.superLevel, type: 'bandpass',
+    });
+  }
+
+  // 5. The blast rolling away, sweeping down as it goes.
+  blastLayer(out, {
+    at: t + .012, hz: voice.tailHz, q: .6, decay: voice.tailDecay,
+    level: voice.level * voice.tailLevel, type: 'lowpass', sweepTo: voice.tailHz * .28,
+  });
+
+  // 6. The mechanism: a bolt or a slide cycling behind the shot. On the
+  //    suppressed SMG it is the loudest thing in the list.
+  if (voice.actionLevel > 0) {
+    const at = t + voice.actionAt;
+    blastLayer(out, {
+      at, hz: voice.actionHz, q: 2.6, decay: 0.026,
+      level: voice.level * voice.actionLevel,
+    });
+    blastLayer(out, {
+      at: at + voice.actionSpread, hz: voice.actionHz * 0.62, q: 3.2, decay: 0.036,
+      level: voice.level * voice.actionLevel * 0.7,
+    });
+  }
 }
 
 // Steel at range: a bright ring, arriving late by however long the sound took
@@ -1698,10 +2243,14 @@ function weaponReloadSound(spec) {
   if (!ac || !master) return;
   const sequence = spec?.audio?.reload;
   if (!sequence) return;
+  ensureShotBus();
   const t0 = ac.currentTime;
+  // Reloading rings off the same walls the shot does. A magazine seated in the
+  // silo and one seated in the shelter should not sound identical.
+  const out = shotOut();
   for (const click of sequence) {
     const at = t0 + click.at;
-    noiseBurst({ at, hz: click.hz, q: click.q, decay: click.decay, level: click.level * .5 });
+    blastLayer(out, { at, hz: click.hz, q: click.q, decay: click.decay, level: click.level * .5 });
     if (!click.tone) continue;
     // The metal underneath the click. A magazine catch and a cylinder latch
     // differ mostly in this, not in the noise on top of it.
@@ -1713,7 +2262,7 @@ function weaponReloadSound(spec) {
     gain.gain.setValueAtTime(click.level * .16, at);
     gain.gain.exponentialRampToValueAtTime(.0005, at + click.decay);
     osc.connect(gain);
-    gain.connect(master);
+    gain.connect(out);
     osc.start(at);
     osc.stop(at + click.decay + .03);
   }
@@ -1924,6 +2473,7 @@ function simulate(dt) {
     updateHealth();
     if (health <= 0) collapse();
   }
+
   if (tick.dayChanged) {
     updateStats();
     flash(`DAY ${survival.day} IN SHELTER 47`, 2600);
