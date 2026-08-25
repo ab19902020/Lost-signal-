@@ -35,6 +35,13 @@ STAIR_COLUMN = 1.2       # a slim service core, not a drum filling the well
 STAIR_STEPS = 36         # a full turn per level, so every landing is above the last
 APARTMENT_BACK = 29.6    # rear wall of every home: ten metres deep
 DOOR_HALF = .84          # 1.68 m clear opening; comfortable for a player capsule
+# The tunnel's own front wall — haunches plus spandrel — is this wide either
+# side of the bay's centre line. The bay is 5.31 m, so the ring has to fill the
+# rest of it: without that the player is looking through a two-metre slot at
+# the concrete shell twelve metres behind the wall, on all eight levels.
+TUNNEL_WALL_HALF = 3.44
+TUNNEL_WALL_DEPTH = .30
+
 TUNNEL_BAY = 6           # the bay whose facade is left out of the level ring,
                          # so the arched tunnel has an opening to stand in. The
                          # ring is one mesh placed on every level, so this has
@@ -571,6 +578,33 @@ def build_level():
                            .16, .05, span, WHITELIGHT, edge=.015)
                 ring_piece(f'StripHood_{i}_{si}', a, rad, 0, LEVEL_HEIGHT - .33,
                            .22, .08, span + .10, DARK, edge=.02)
+
+            # Close the bay either side of the arch. The tunnel kit's own wall
+            # only reaches 3.44 m from the centre line and the bay is 5.31, so
+            # this used to be a two-metre-wide slot straight through to the
+            # shell — the "walls you can see through to the floor". Same chord
+            # plane and same depth as the tunnel's wall, so they butt.
+            fill_half = (arc_half(face) - TUNNEL_WALL_HALF) / 2
+            for k in (-1, 1):
+                offset = k * (TUNNEL_WALL_HALF + fill_half)
+                ring_piece(f'TunnelFill_{i}_{k}', a, wall_mid, offset, LEVEL_HEIGHT / 2,
+                           TUNNEL_WALL_DEPTH, LEVEL_HEIGHT / 2, fill_half + .16,
+                           CONCRETE, edge=.03)
+                # The service bay is plant, not a home front, so it gets the
+                # dado band and a louvre rather than windows and a doorway.
+                ring_piece(f'TunnelDado_{i}_{k}', a, wall_mid - TUNNEL_WALL_DEPTH - .02,
+                           offset, 1.20, .02, .17, fill_half, TILEBAND, edge=.008)
+                ring_piece(f'TunnelDadoCap_{i}_{k}', a, wall_mid - TUNNEL_WALL_DEPTH - .04,
+                           offset, 1.38, .04, .022, fill_half, BRASS, edge=.008)
+                ring_piece(f'TunnelSkirt_{i}_{k}', a, wall_mid - TUNNEL_WALL_DEPTH - .05,
+                           offset, .09, .05, .09, fill_half, DARK, edge=.01)
+                ring_piece(f'TunnelLouvre_{i}_{k}', a, wall_mid - TUNNEL_WALL_DEPTH - .07,
+                           offset, 2.30, .07, .34, fill_half * .52, DARK, edge=.015)
+                for b in range(6):
+                    ring_piece(f'TunnelLouvreBar_{i}_{k}_{b}',
+                               a, wall_mid - TUNNEL_WALL_DEPTH - .12, offset,
+                               2.06 + b * .10, .04, .022, fill_half * .46,
+                               BRUSHED, edge=.004)
             continue
         panel_half = (front_half - DOOR_HALF - .12) / 2
         for k in (-1, 1):
@@ -1634,6 +1668,9 @@ def build_tunnel():
     """Smooth arched passage and playable maintenance room behind its bulkhead."""
     clear_scene()
     SPAN = 1.80          # half-width of the landmark arch
+    # SPAN + haunch + spandrel has to equal TUNNEL_WALL_HALF, or the ring's
+    # filler panels and this wall stop meeting.
+    assert abs((SPAN + 1.64) - TUNNEL_WALL_HALF) < 1e-6, 'tunnel wall width drifted'
     SPRING = 1.95        # springing line
     DEPTH = 3.20         # ribbed passage before the bulkhead
     DOOR_Z = 3.72        # shared with src/silo.js

@@ -67,6 +67,9 @@ if (physics.armory?.present) {
 for (const texture of physics.textures) {
   check(texture.size !== '1x1', `${texture.material} fell back to a placeholder texture`);
 }
+for (const texture of physics.siloTextures || []) {
+  check(texture.size !== '1x1', `${texture.material} fell back to a placeholder texture in the silo`);
+}
 
 if (physics.silo.present) {
   check(physics.silo.arrival.grounded, 'arriving in the silo did not land on the top landing');
@@ -267,6 +270,34 @@ check(Math.abs((weapons.person?.startY ?? 0) - (weapons.person?.endY ?? 99)) < 1
 check(weapons.quartermaster?.down, 'the quartermaster cannot be brought down');
 check(weapons.quartermaster?.tipped > 1.4,
   `the downed quartermaster tipped only ${weapons.quartermaster?.tipped} rad`);
+
+// Gore. A round through a person throws blood downrange and marks what was
+// stood behind them; it used to produce seven small cubes and nothing else.
+const gore = weapons.gore || {};
+check(gore.spray > 10, `a shotgun into a resident threw ${gore.spray} particles`);
+check(gore.spatter > 3, `${gore.spatter} blood marks left by six shotgun rounds into someone`);
+
+// The silo's envelope. The level ring leaves the service bay's facade out for
+// the tunnel arch to stand in; nothing filled the rest of that bay, so the top
+// landing — the first thing the player sees coming down from the shelter — had
+// a five-metre hole in its wall onto the shaft.
+const envelope = physics.envelope || {};
+check(envelope.floorHoles === 0,
+  `${envelope.floorHoles} places in the silo where the walkway has no floor: ${(envelope.worst || []).join(', ')}`);
+check(envelope.wallGaps === 0,
+  `${envelope.wallGaps} places in the silo where you can see through the wall: ${(envelope.worst || []).join(', ')}`);
+
+// The dog. He walks the way he is pointing, he comes when he is called, and
+// once he is yours he heels.
+const dogged = combat.garrison || {};
+check((dogged.dogFacing ?? -1) > 0.7,
+  `the dog walks at ${dogged.dogFacing} to his own nose — he is moonwalking again`);
+check(dogged.dogCame && dogged.dogCame.to < 3 && dogged.dogCame.from > 8,
+  `called from ${dogged.dogCame?.from} m, the dog got to ${dogged.dogCame?.to} m`);
+check(dogged.dogTrust >= 1, `the dog will not be won over (trust ${dogged.dogTrust})`);
+check(dogged.dogFollows === 'following', `a bonded dog is "${dogged.dogFollows}", not following`);
+check((dogged.dogHeel ?? 99) < 4,
+  `the dog stayed ${dogged.dogHeel} m behind when the player walked off`);
 
 // The surface. What used to be out there was a skirt, twenty-six flat "far
 // field" rectangles and fourteen "grass patches", each a hard-edged block of

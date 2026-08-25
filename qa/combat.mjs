@@ -143,6 +143,45 @@ const results = await page.evaluate(async () => {
     ls.simulate(2);
     out.garrison.treatment = { before, hurt, after: ls.state().health,
       dosesLeft: garrison.dosesRemaining(), offered: !!bay };
+
+    // The dog. He has to walk the way he is pointing — he spent a while
+    // walking the whole ring backwards — and he has to be a dog you can make
+    // friends with rather than a prop on rails.
+    if (garrison.dog) {
+      const THREE = ls.THREE;
+      const dog = garrison.dog;
+      const sample = () => {
+        dog.updateWorldMatrix(true, true);
+        return {
+          at: dog.getWorldPosition(new THREE.Vector3()),
+          nose: dog.getObjectByName('Head').getWorldPosition(new THREE.Vector3())
+            .sub(dog.getObjectByName('Tail1').getWorldPosition(new THREE.Vector3())).setY(0).normalize(),
+        };
+      };
+      const a = sample();
+      ls.simulate(60);
+      const b = sample();
+      const travel = b.at.clone().sub(a.at).setY(0);
+      out.garrison.dogFacing = travel.length() > 0.05
+        ? +a.nose.dot(travel.normalize()).toFixed(3) : null;
+
+      // Call him from the far side of the gallery.
+      ls.body.teleport(Math.cos(0.4) * 16.4, garrison.dog.position.y, Math.sin(0.4) * 16.4);
+      ls.simulate(4);
+      const hailed = dog.position.distanceTo(ls.body.position);
+      garrison.callDog();
+      ls.simulate(60 * 14);
+      out.garrison.dogCame = { from: +hailed.toFixed(2),
+        to: +dog.position.distanceTo(ls.body.position).toFixed(2) };
+
+      // Stroke him until he is yours, then walk off and see if he comes.
+      for (let i = 0; i < 4; i++) { garrison.callDog(); ls.simulate(60 * 3); }
+      out.garrison.dogTrust = +garrison.dogState().trust.toFixed(2);
+      out.garrison.dogFollows = garrison.dogState().state;
+      ls.body.teleport(Math.cos(3.6) * 16.4, garrison.dog.position.y, Math.sin(3.6) * 16.4);
+      ls.simulate(60 * 16);
+      out.garrison.dogHeel = +dog.position.distanceTo(ls.body.position).toFixed(2);
+    }
   }
   return out;
 });

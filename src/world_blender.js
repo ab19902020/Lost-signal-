@@ -1393,7 +1393,7 @@ export function createGameWorld(assets, options = {}) {
     // room the camera is standing in went dark because the body was elsewhere.
     if (world === 'silo') {
       siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
-      garrison?.update(dt);
+      garrison?.update(dt, playerPosition);
     }
     if (world === 'outside') range?.update(dt);
     updateGate(dt);

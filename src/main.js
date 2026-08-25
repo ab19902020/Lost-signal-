@@ -320,6 +320,8 @@ async function prepare() {
             .find((child) => child.name.startsWith('Equipped_'))?.name ?? null,
         }),
         decals: () => decals.count(),
+        // How much is in the air right now: gore, dust and sparks.
+        particles: () => debris.length,
         marks: () => decals.total(),
         reload: () => reload(),
         // Render one shot into an offline context and measure it. A harness
@@ -537,7 +539,10 @@ function wireGameEvents() {
   });
   addEventListener('lostsignal:dog', (event) => {
     flash(event.detail?.line || '…', 4200);
-    clickSound(520, .05, .03);
+    // He answers. A whine when he is still working you out, a bark once he
+    // has decided.
+    dogSound(event.detail?.bonded ? 'bark' : 'whine');
+    if (event.detail?.bonded) completeObjective('dog');
   });
   // The infirmary on the secure gallery. Three courses of treatment, and then
   // it is a bench with empty boxes on it.
@@ -729,6 +734,7 @@ const OBJECTIVES = [
   { id: 'hydroponics', text: 'Reach the hydroponics levels' },
   { id: 'cache', text: 'Find the silo stores at the bottom' },
   { id: 'drive', text: 'Get the estate car at the gate running and drive it' },
+  { id: 'dog', text: 'Make friends with the dog on the top gallery' },
 ];
 const completed = new Set();
 
@@ -957,6 +963,7 @@ const SPREAD_TO_NDC = 3;
 const PERSON_KINDS = ['resident', 'quartermaster'];
 const CREATURE_KINDS = ['deer', 'rabbit', 'zombie', ...PERSON_KINDS];
 const _shotOrigin = new THREE.Vector3();
+const _shotDirection = new THREE.Vector3();
 const _hitNormal = new THREE.Vector3();
 const _normalMatrix = new THREE.Matrix3();
 
@@ -1082,7 +1089,10 @@ function fireRound(world, spread, damage) {
   // Whichever came first. Checking the living list on its own let every weapon
   // shoot straight through the bulkhead it was pointed at.
   if (target && (!impact || living[0].distance <= impact.distance)) {
-    resolveHit(target, living[0].point, damage);
+    // gore() re-uses this raycaster to throw spatter, so the round's own
+    // direction has to be taken off it first.
+    _shotDirection.copy(ray.ray.direction);
+    resolveHit(target, living[0].point, damage, _shotDirection);
     return true;
   }
   if (impact) {
@@ -1167,7 +1177,8 @@ function swing() {
   const living = ray.intersectObjects(livingTargets(), true);
   const target = living.length ? targetRootOf(living[0].object) : null;
   if (target) {
-    resolveHit(target, living[0].point, weapon.damage);
+    _shotDirection.copy(ray.ray.direction);
+    resolveHit(target, living[0].point, weapon.damage, _shotDirection);
     alarmBystanders(0.6);
     return true;
   }
@@ -1194,15 +1205,19 @@ function alarmBystanders(level) {
   return game.residents?.alarm?.(game.player.position, 18 * level) ?? 0;
 }
 
-function resolveHit(target, point, damage = weapon?.damage ?? 34) {
+function resolveHit(target, point, damage = weapon?.damage ?? 34, direction = ray.ray.direction) {
   const kind = target.userData.kind;
-  if (PERSON_KINDS.includes(kind)) return resolvePersonHit(target, point, damage);
+  if (PERSON_KINDS.includes(kind)) return resolvePersonHit(target, point, damage, direction);
 
-  burst(point, 'blood', 8, 0.3);
+  // How much of a mess a round makes: a shotgun at close range is not a
+  // nine-millimetre, and a pellet on its own is not the whole cartridge.
+  const weight = goreWeight();
   const agent = game.creatures.agentFor(target);
 
   if (kind !== 'zombie') {
+    gore(point, direction, weight, { fatal: true });
     if (agent?.kill()) {
+      bloodPool(target);
       flash(`${kind.toUpperCase()} DOWN — APPROACH TO HARVEST`, 1700);
     }
     return;
@@ -1210,9 +1225,13 @@ function resolveHit(target, point, damage = weapon?.damage ?? 34) {
 
   // Height above the infected's feet decides where the round landed.
   const headshot = point.y - target.position.y > 1.42;
+  gore(point, direction, weight * (headshot ? 1.7 : 1), { fatal: headshot });
   target.userData.hp = (target.userData.hp ?? 3) - (headshot ? 3 : 1);
   if (target.userData.hp <= 0) {
-    if (agent?.kill()) flash(headshot ? 'HEADSHOT — INFECTED DOWN' : 'INFECTED DOWN', 1300);
+    if (agent?.kill()) {
+      bloodPool(target);
+      flash(headshot ? 'HEADSHOT — INFECTED DOWN' : 'INFECTED DOWN', 1300);
+    }
     return;
   }
   if (agent) agent.stagger = agent.staggerTime;
@@ -1222,14 +1241,15 @@ function resolveHit(target, point, damage = weapon?.damage ?? 34) {
 // Shooting someone is a thing the shelter lets you do, and it has to look like
 // what it is: they take the round where it landed, and if it kills them they go
 // down on the deck and stay there.
-function resolvePersonHit(target, point, damage) {
-  burst(point, 'blood', 9, 0.34);
+function resolvePersonHit(target, point, damage, direction = ray.ray.direction) {
   const headshot = point.y - target.position.y > 1.5;
   const multiplier = headshot ? (weapon?.headshot ?? 2.2) : 1;
   target.userData.hp = (target.userData.hp ?? 100) - damage * multiplier;
   const name = target.userData.kind === 'quartermaster' ? 'QUARTERMASTER ELI' : 'RESIDENT';
+  const fatal = target.userData.hp <= 0;
+  gore(point, direction, goreWeight() * (headshot ? 1.8 : 1), { fatal });
 
-  if (target.userData.hp > 0) {
+  if (!fatal) {
     flash(`${name} HIT`, 900);
     alarmBystanders(1);
     return;
@@ -1238,9 +1258,24 @@ function resolvePersonHit(target, point, damage) {
   const agent = game.residents?.agentFor?.(target);
   const downed = agent ? agent.kill() : game.armory?.downQuartermaster?.();
   if (downed !== false) {
+    bloodPool(target);
     flash(headshot ? `${name} DOWN — HEADSHOT` : `${name} DOWN`, 2200);
     alarmBystanders(1.4);
   }
+}
+
+/**
+ * How much of a mess the weapon in hand makes of one hit.
+ *
+ * Calibre carries most of it, but a shotgun's damage is split across its
+ * pellets, so each pellet has to throw a fraction or a cartridge of buckshot
+ * paints the room.
+ */
+function goreWeight() {
+  const calibre = weapon?.calibre ?? 0.09;
+  const pellets = Math.max(1, weapon?.pellets ?? 1);
+  if (weapon?.kind === 'melee') return 0.55;
+  return THREE.MathUtils.clamp(calibre * 9 / Math.sqrt(pellets), 0.3, 2.2);
 }
 
 let reloadTimer = 0;
@@ -1960,6 +1995,46 @@ function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.c
 function setOutdoorAudio(on){if(outdoorGain&&ac)outdoorGain.gain.setTargetAtTime(on?.045:0,ac.currentTime,.15)}
 function clickSound(freq=500,d=.05,vol=.04){if(!ac)return;const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();o.frequency.value=freq;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(master);o.start(t);o.stop(t+d+.01)}
 function beacon(){clickSound(760,.25,.035)}
+// The dog. A bark is two pitched noise bursts through a formant; a whine is one
+// long one that slides. Neither is a sample; both are unmistakably a dog.
+function dogSound(kind = 'bark') {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const shape = (at, hz, sweep, decay, level) => {
+    const source = ac.createBufferSource();
+    source.buffer = noiseBuffer(.6);
+    const throat = ac.createBiquadFilter();
+    throat.type = 'bandpass';
+    throat.Q.value = 3.4;
+    throat.frequency.setValueAtTime(hz, at);
+    throat.frequency.exponentialRampToValueAtTime(Math.max(60, sweep), at + decay);
+    const body = ac.createBiquadFilter();
+    body.type = 'lowpass';
+    body.frequency.value = hz * 3.2;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(.0008, at);
+    gain.gain.exponentialRampToValueAtTime(level, at + decay * .12);
+    gain.gain.exponentialRampToValueAtTime(.0006, at + decay);
+    source.connect(throat); throat.connect(body); body.connect(gain); gain.connect(master);
+    source.start(at); source.stop(at + decay + .05);
+    const voice = ac.createOscillator();
+    voice.type = 'sawtooth';
+    voice.frequency.setValueAtTime(hz * .48, at);
+    voice.frequency.exponentialRampToValueAtTime(Math.max(50, sweep * .48), at + decay);
+    const voiceGain = ac.createGain();
+    voiceGain.gain.setValueAtTime(.0008, at);
+    voiceGain.gain.exponentialRampToValueAtTime(level * .5, at + decay * .12);
+    voiceGain.gain.exponentialRampToValueAtTime(.0005, at + decay);
+    voice.connect(voiceGain); voiceGain.connect(master);
+    voice.start(at); voice.stop(at + decay + .05);
+  };
+  if (kind === 'bark') {
+    shape(t, 620, 300, .16, .17);
+    shape(t + .22, 560, 260, .18, .13);
+  } else {
+    shape(t, 480, 760, .52, .09);
+  }
+}
 function hurtSound(){
   if(!ac)return;
   const t=ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
@@ -2313,6 +2388,108 @@ function burst(point, kind, count = 7, spread = 0.26) {
   }
 }
 
+// --- Gore --------------------------------------------------------------
+// Shooting a person used to produce seven three-centimetre cubes that fell for
+// half a second. A round through someone throws a cone of blood out behind
+// them, mists at the entry, spatters whatever is stood behind, and leaves a
+// pool where they land.
+const _gorePoint = new THREE.Vector3();
+const _goreDir = new THREE.Vector3();
+const _goreEnd = new THREE.Vector3();
+const _goreNormal = new THREE.Vector3();
+const bloodMistGeometry = new THREE.SphereGeometry(0.055, 6, 5);
+const bloodMistMaterial = new THREE.MeshBasicMaterial({
+  color: 0x8c1a13, transparent: true, opacity: 0.62, depthWrite: false,
+});
+
+/**
+ * A round arriving in flesh.
+ *
+ * `direction` is the way the round was travelling; `weight` scales the whole
+ * thing, so buckshot at three metres is not a nine-millimetre at forty.
+ */
+function gore(point, direction, weight = 1, { fatal = false } = {}) {
+  const scene = activeScene();
+  _goreDir.copy(direction).setY(direction.y * 0.35).normalize();
+
+  // The mist at the entry wound: a puff that expands and fades on the spot.
+  const mist = new THREE.Mesh(bloodMistGeometry, bloodMistMaterial.clone());
+  mist.position.copy(point);
+  mist.scale.setScalar(0.6 * weight);
+  scene.add(mist);
+  debris.push({
+    mesh: mist, scene, life: 0.34, spawned: 0.34,
+    velocity: new THREE.Vector3(_goreDir.x * 0.6, 0.25, _goreDir.z * 0.6),
+    grow: 5.4 * weight, fade: true, gravity: 1.2,
+  });
+
+  // The spray. Weighted downrange, because that is where the round went.
+  const drops = Math.round((fatal ? 26 : 15) * weight);
+  for (let i = 0; i < drops; i++) {
+    const drop = new THREE.Mesh(impactGeometry, impactMaterials.blood);
+    drop.position.copy(point);
+    drop.scale.setScalar(0.5 + Math.random() * 1.4);
+    scene.add(drop);
+    const cone = 0.55 + Math.random() * 0.75;
+    debris.push({
+      mesh: drop, scene,
+      life: 0.7 + Math.random() * 0.9,
+      velocity: new THREE.Vector3(
+        _goreDir.x * (2.4 + Math.random() * 5.2) + (Math.random() - 0.5) * cone * 5,
+        1.1 + Math.random() * 2.6,
+        _goreDir.z * (2.4 + Math.random() * 5.2) + (Math.random() - 0.5) * cone * 5),
+      gravity: 16,
+      spin: (Math.random() - 0.5) * 14,
+    });
+  }
+
+  // What is stood behind them wears it. One ray downrange, one straight down.
+  spatter(scene, point, _goreDir, 3.4, 0.30 * weight, fatal ? 4 : 2);
+  spatter(scene, point, _goreEnd.set(0, -1, 0), 2.6, 0.34 * weight, fatal ? 3 : 1);
+}
+
+/** Throw blood along a direction and mark whatever stops it. */
+function spatter(scene, point, direction, reach, size, count) {
+  if (count <= 0) return;
+  const geometry = worldGeometry(scene);
+  for (let i = 0; i < count; i++) {
+    _goreEnd.copy(direction)
+      .add(_gorePoint.set((Math.random() - 0.5) * 0.55, (Math.random() - 0.5) * 0.4,
+        (Math.random() - 0.5) * 0.55))
+      .normalize();
+    ray.set(point, _goreEnd);
+    ray.far = reach;
+    const hit = ray.intersectObjects(geometry, true)
+      .find((candidate) => candidate.object.isMesh && candidate.object.visible
+        && !candidate.object.userData.isDecal && !targetRootOf(candidate.object));
+    if (!hit) continue;
+    if (hit.face) {
+      _normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+      _goreNormal.copy(hit.face.normal).applyMatrix3(_normalMatrix).normalize();
+    } else {
+      _goreNormal.copy(_goreEnd).negate();
+    }
+    const mark = decals.add(scene, hit.point, _goreNormal, {
+      kind: 'blood', size: size * (0.7 + Math.random() * 0.9),
+    });
+    if (mark) mark.userData.isDecal = true;
+  }
+}
+
+/** The pool under someone who is not getting up. */
+function bloodPool(target) {
+  const scene = activeScene();
+  const base = target.position;
+  for (let i = 0; i < 5; i++) {
+    _gorePoint.set(base.x + (Math.random() - 0.5) * 1.5, base.y + 0.02,
+      base.z + (Math.random() - 0.5) * 1.5);
+    const mark = decals.add(scene, _gorePoint, _goreNormal.set(0, 1, 0), {
+      kind: 'blood', size: 0.5 + Math.random() * 0.7,
+    });
+    if (mark) mark.userData.isDecal = true;
+  }
+}
+
 function updateEffects(dt) {
   decals.update(dt);
   if (muzzleTimer > 0) {
@@ -2327,8 +2504,18 @@ function updateEffects(dt) {
       debris.splice(i, 1);
       continue;
     }
-    particle.velocity.y -= 14 * dt;
+    particle.velocity.y -= (particle.gravity ?? 14) * dt;
     particle.mesh.position.addScaledVector(particle.velocity, dt);
+    if (particle.grow) {
+      particle.mesh.scale.addScalar(particle.grow * dt);
+    }
+    if (particle.spin) {
+      particle.mesh.rotation.x += particle.spin * dt;
+      particle.mesh.rotation.z += particle.spin * 0.7 * dt;
+    }
+    if (particle.fade && particle.mesh.material.transparent) {
+      particle.mesh.material.opacity = 0.62 * (particle.life / (particle.spawned || 1));
+    }
   }
 }
 

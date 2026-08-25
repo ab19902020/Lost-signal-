@@ -365,14 +365,16 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
     return true;
   }
 
-  // Homes on the residential levels only; the top ring is the secure unit.
-  for (let level = 0; level < levels; level++) {
-    const y = levelY(level);
-    for (let bay = 0; bay < segments; bay++) {
+  // The service bay, on every level including the secure one. The level ring
+  // leaves this bay's facade out so the arch has an opening to stand in, so a
+  // level without a tunnel in it is a level with a five-metre hole in its wall:
+  // that is what the top landing had, and why the player arriving from the
+  // shelter could see straight through the wall and down the shaft.
+  function buildTunnelBay(level, y) {
+    {
+      const bay = TUNNEL_BAY;
       const angle = (bay * TAU) / segments;
-      const initialOpen = doorwayAngle(level, bay);
-
-      if (bay === TUNNEL_BAY) {
+      {
         const rotationY = -angle + Math.PI / 2;
         const baseRadius = deckOuter - 0.30;
         const basePosition = new THREE.Vector3(
@@ -419,7 +421,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
 
         const state = {
           level, bay, open: false, root: doorRoot, collider: doorCollider,
-          closedRotation, lights: [], label: `SERVICE BULKHEAD — LEVEL ${levels - level}`,
+          closedRotation, lights: [],
+          // The top ring is the secure unit, not a numbered residential level.
+          label: level === levels
+            ? 'SECURE UNIT — SERVICE BULKHEAD'
+            : `SERVICE BULKHEAD — LEVEL ${levels - level}`,
         };
         tunnelDoors.push(state);
         tunnelDoorByLevel.set(level, state);
@@ -438,8 +444,18 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
           new THREE.Vector3(Math.cos(angle) * (doorRadius + 2.15), y + 2.8,
             Math.sin(angle) * (doorRadius + 2.15)), false));
         updateDoorLabel(state);
-        continue;
       }
+    }
+  }
+
+  // Homes on the residential levels only; the top ring is the secure unit.
+  for (let level = 0; level < levels; level++) {
+    const y = levelY(level);
+    buildTunnelBay(level, y);
+    for (let bay = 0; bay < segments; bay++) {
+      const angle = (bay * TAU) / segments;
+      const initialOpen = doorwayAngle(level, bay);
+      if (bay === TUNNEL_BAY) continue;
 
       // All homes exist, including those whose doors start shut. Frustum
       // culling means only the rooms in view draw, and a player may now open
@@ -752,8 +768,11 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
   // walkway collision, which is how it ended up without the railing opening
   // the landing needs.
   buildLevelRings(topY, false);
+  buildTunnelBay(levels, topY);
   for (let i = 0; i < segments; i++) {
     const angle = (i * Math.PI * 2) / segments;
+    // The service bay carries the arch and its bulkhead, not a front door.
+    if (i === TUNNEL_BAY) continue;
 
     // The level ring carries a doorway in every bay. On the residential levels
     // a home stands behind each one; up here there is only the secure unit, so

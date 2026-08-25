@@ -449,6 +449,22 @@ results.silo = await page.evaluate(async () => {
 });
 
 // A 1x1 map means a texture failed to load and three substituted a placeholder.
+// This checks the silo as well as the shelter: regenerating a habitat GLB
+// without re-running the image externalise step leaves every image as a
+// 645-byte placeholder, and the whole silo renders as flat white boxes.
+results.siloTextures = await page.evaluate(() => {
+  const seen = [];
+  const silo = globalThis.__ls.game.scenes?.silo || globalThis.__ls.game.silo;
+  silo.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m?.map || seen.some(e => e.material === m.name)) continue;
+      seen.push({ material: m.name, size: `${m.map.image?.width}x${m.map.image?.height}` });
+    }
+  });
+  return seen;
+});
+
 results.textures = await page.evaluate(() => {
   const seen = [];
   globalThis.__ls.game.bunker.traverse((o) => {
@@ -503,6 +519,56 @@ results.country = await page.evaluate(() => {
   });
   return { field, jigsaw, instanced, scattered, triangles: Math.round(triangles),
     ...ls.game.country };
+});
+
+// The silo's envelope. The level ring leaves the service bay's facade out so
+// the tunnel arch has an opening to stand in, and for a long time nothing
+// filled the rest of that bay: the player arriving from the shelter looked
+// through a five-metre hole in the wall, past the gallery, at the shell twelve
+// metres behind it. Cast at every level for floor you can fall through and
+// wall you can see through.
+results.envelope = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const THREE = ls.THREE;
+  ls.world('silo');
+  ls.simulate(10);
+  const silo = ls.game.scenes?.silo || ls.game.silo;
+  const WELL = 13.0;
+  const DECK = 19.6;
+  const HEIGHT = 4.0;
+  const LEVELS = 7;
+  const meshes = [];
+  silo.traverse((o) => { if (o.isMesh && o.visible) meshes.push(o); });
+  const ray = new THREE.Raycaster();
+  ray.far = 60;
+  const down = new THREE.Vector3(0, -1, 0);
+  let floorHoles = 0;
+  let wallGaps = 0;
+  const worst = [];
+  const STEPS = 72;
+  for (let level = 0; level <= LEVELS; level++) {
+    const y = level * HEIGHT + 0.02;
+    for (let i = 0; i < STEPS; i++) {
+      const angle = (i / STEPS) * Math.PI * 2;
+      for (const r of [WELL + 1.2, DECK - 1.2]) {
+        ray.set(new THREE.Vector3(Math.cos(angle) * r, y + 0.9, Math.sin(angle) * r), down);
+        const hit = ray.intersectObjects(meshes, false)[0];
+        if (!hit || hit.distance > 1.8) {
+          floorHoles++;
+          if (worst.length < 6) worst.push(`floor L${level} @${angle.toFixed(2)}`);
+        }
+      }
+      const origin = new THREE.Vector3(Math.cos(angle) * (DECK - 1.4), y + 1.6,
+        Math.sin(angle) * (DECK - 1.4));
+      ray.set(origin, new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)));
+      const hit = ray.intersectObjects(meshes, false)[0];
+      if (!hit || hit.distance > 12) {
+        wallGaps++;
+        if (worst.length < 6) worst.push(`wall L${level} @${angle.toFixed(2)}`);
+      }
+    }
+  }
+  return { floorHoles, wallGaps, worst, meshes: meshes.length };
 });
 
 results.world = await page.evaluate(() => ({

@@ -192,6 +192,10 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
   const victim = residents[0];
   const startY = victim.position.y;
   ls.arm('armoryShotgun01');
+  // A round through someone has to make a mess: blood in the air and blood on
+  // whatever was stood behind them. Count both across the shots below.
+  const goreBefore = { marks: ls.marks(), particles: ls.particles?.() ?? 0 };
+  let airborne = 0;
   // Stay on them: the gallery empties after the first shot, so re-close the
   // range and re-aim each time rather than firing at where they used to be.
   for (let shot = 0; shot < 6 && victim.userData.alive !== false; shot++) {
@@ -200,8 +204,11 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
     ls.aimAt({ x: victim.position.x, y: victim.position.y + 1.1, z: victim.position.z });
     ls.simulate(2);
     ls.fire();
-    ls.simulate(45);   // longer than the slowest action in the collection
+    ls.simulate(2);
+    airborne = Math.max(airborne, (ls.particles?.() ?? 0) - goreBefore.particles);
+    ls.simulate(43);   // longer than the slowest action in the collection
   }
+  out.gore = { spray: airborne, spatter: ls.marks() - goreBefore.marks };
   ls.simulate(120);
   out.person = {
     down: victim.userData.alive === false,
