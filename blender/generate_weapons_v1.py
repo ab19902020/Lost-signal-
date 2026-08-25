@@ -462,10 +462,370 @@ def stock(kind, z, y, M):
         block('StockHinge', (0, y, z - .012), (.0130, .0110, .0075), M['steel'], edge=.0014)
 
 
+
+
+
+# --- The rest of the families ----------------------------------------------
+
+def build_smg(spec, M):
+    """Short, fast, and built round the magazine in the grip or just ahead."""
+    barrel = spec.get('barrel', .118)
+    can = spec.get('suppressor', False)
+    hull('Receiver', [
+        ((0, 0, -.060), .0165, .0175),
+        ((0, .0006, -.020), .0180, .0205),
+        ((0, .0006, .034), .0178, .0200),
+        ((0, 0, .052), .0150, .0165),
+    ], M['body'], sides=24, power=5)
+    for i in range(7):
+        block(f'Vent_{i}', (0, .0210, -.030 + i * .0120), (.0115, .0022, .0038),
+              M['body'], edge=.0005, segments=1)
+    tube('Barrel', (0, .0006, .058 + barrel / 2), .0048, barrel, M['steel'], verts=22)
+    if can:
+        tube('Can', (0, .0006, .058 + barrel * .62), .0135, barrel * .78, M['body'], verts=26)
+        for i in range(9):
+            ring(f'Can_Band_{i}', (0, .0006, .026 + barrel * .28 + i * barrel * .072),
+                 .0137, .0012, M['steel'], segments=20)
+    else:
+        muzzle_brake('Muzzle', .058 + barrel, .0048, M, ports=3, length=.030)
+    picatinny('Rail', -.052, .046, .0208, .0085, M, tooth=.0085)
+    iron_sights('Irons', .0250, .040, -.040, M, hooded=False)
+    block('Charging', (-.0175, .0130, -.028), (.0075, .0032, .0110), M['steel'], edge=.0009)
+    block('EjectionPort', (.0178, .0060, .014), (.0020, .0068, .0140), M['body'], edge=.0009)
+    tube('Selector', (-.0165, -.0090, .022), .0042, .0055, M['steel'],
+         rotation=(0, math.pi / 2, 0), verts=14, edge=.0005)
+    trigger_group('Trigger', .026, -.0150, M, guard_length=.040)
+    pistol_grip('Grip', .008, -.0250, M, lean=.30, length=.078)
+    magazine('Mag', .034, -.0270, M, curve=.05, depth=.098, width=.0092, ribs=8)
+    # A folding wire stock and a foregrip: what makes a submachine gun readable.
+    for side in (-1, 1):
+        block(f'Wire_{side}', (side * .0120, -.0040, -.088), (.0026, .0026, .0340),
+              M['steel'], edge=.0008)
+    block('WirePlate', (0, -.0060, -.120), (.0135, .0190, .0042), M['grip'], edge=.0016)
+    hull('Foregrip', [
+        ((0, -.0165, .046), .0105, .0115),
+        ((0, -.0420, .048), .0115, .0125),
+        ((0, -.0560, .048), .0100, .0110),
+    ], M['grip'], sides=16, axis='y', power=3)
+    for i in range(6):
+        ring(f'Foregrip_Groove_{i}', (0, -.0230 - i * .0058, .047), .0118, .0014,
+             M['body'], rotation=(math.pi / 2, 0, 0), segments=14)
+
+
+def build_shotgun(spec, M):
+    """Tube magazine, heat shield, pump, and a bead at the end of it."""
+    barrel = spec.get('barrel', .245)
+    hull('Receiver', [
+        ((0, 0, -.056), .0175, .0195),
+        ((0, .0008, -.016), .0190, .0225),
+        ((0, .0008, .026), .0188, .0220),
+        ((0, 0, .046), .0160, .0180),
+    ], M['body'], sides=24, power=5)
+    tube('Barrel', (0, .0060, .052 + barrel / 2), .0098, barrel, M['steel'], verts=24)
+    tube('TubeMag', (0, -.0130, .052 + barrel * .46), .0086, barrel * .82, M['body'], verts=22)
+    tube('TubeCap', (0, -.0130, .052 + barrel * .88), .0098, .014, M['steel'], verts=20)
+    # Heat shield over the barrel, with real slots in the sides.
+    for i in range(11):
+        z = .066 + i * (barrel * .74) / 10
+        block(f'Shield_{i}', (0, .0165, z), (.0092, .0030, .0060), M['steel'], edge=.0006)
+        for side in (-1, 1):
+            block(f'Shield_Leg_{i}_{side}', (side * .0098, .0110, z),
+                  (.0026, .0060, .0055), M['steel'], edge=.0006, segments=1)
+    # Pump, with the grooves that say pump.
+    pump_z = .052 + barrel * .42
+    hull('Pump', [
+        ((0, -.0058, pump_z - .038), .0155, .0135),
+        ((0, -.0058, pump_z), .0165, .0145),
+        ((0, -.0058, pump_z + .038), .0155, .0135),
+    ], M['furniture'], sides=22, power=4)
+    for i in range(9):
+        block(f'Pump_Groove_{i}', (0, -.0195, pump_z - .032 + i * .0080),
+              (.0140, .0022, .0026), M['body'], edge=.0005, segments=1)
+    block('Bead_Post', (0, .0175, .052 + barrel - .004), (.0016, .0055, .0016),
+          M['steel'], edge=.0004)
+    tube('Bead', (0, .0232, .052 + barrel - .004), .0026, .0026, M['brass'],
+         rotation=(math.pi / 2, 0, 0), verts=12, edge=0)
+    # Shell carrier down the side of the receiver: five loops with brass in them.
+    for i in range(5):
+        ring(f'Loop_{i}', (-.0195, -.0020, -.046 + i * .0175), .0075, .0016, M['furniture'],
+             rotation=(0, math.pi / 2, 0), segments=14)
+        tube(f'Shell_{i}', (-.0195, -.0020, -.046 + i * .0175), .0064, .0150, M['brass'],
+             rotation=(0, math.pi / 2, 0), verts=14, edge=.0004)
+    trigger_group('Trigger', .022, -.0175, M, guard_length=.044)
+    if spec.get('grip', 'pistol') == 'pistol':
+        pistol_grip('Grip', .004, -.0270, M, lean=.36, length=.086)
+        stock(spec.get('stock', 'fixed'), -.056, .0008, M)
+    else:
+        # Sawn off: no stock, a bird's head grip and nothing else.
+        hull('Wrist', [
+            ((0, -.0180, -.056), .0140, .0165),
+            ((0, -.0420, -.070), .0150, .0180),
+            ((0, -.0620, -.082), .0130, .0150),
+        ], M['furniture'], sides=18, axis='y', power=3)
+
+
+def build_sniper(spec, M):
+    """A precision rifle: heavy barrel, glass, a bolt and a bipod."""
+    barrel = spec.get('barrel', .330)
+    hull('Receiver', [
+        ((0, 0, -.080), .0165, .0180),
+        ((0, .0008, -.030), .0180, .0210),
+        ((0, .0008, .034), .0176, .0205),
+        ((0, 0, .056), .0150, .0170),
+    ], M['body'], sides=24, power=5)
+    tube('Barrel', (0, .0008, .062 + barrel / 2), .0092, barrel, M['steel'], verts=26)
+    for i in range(7):
+        ring(f'Flute_{i}', (0, .0008, .086 + i * barrel * .11), .0094, .0018,
+             M['body'], segments=22)
+    picatinny('Rail', -.070, .040, .0212, .0088, M)
+    scope(spec, M, top=.0212)
+    muzzle_brake('Muzzle', .062 + barrel, .0092, M, ports=6, length=.058)
+    # Bolt, out to the side, with a knob you could actually grab.
+    tube('Bolt_Shaft', (.0230, .0080, -.044), .0038, .0230, M['steel'],
+         rotation=(0, math.pi / 2, 0), verts=14, edge=.0005)
+    tube('Bolt_Knob', (.0360, .0080, -.044), .0078, .0110, M['steel'],
+         rotation=(0, math.pi / 2, 0), verts=18, edge=.0008)
+    tube('Bolt_Body', (0, .0080, -.058), .0090, .0400, M['steel'], verts=20, edge=.0006)
+    trigger_group('Trigger', .038, -.0180, M)
+    pistol_grip('Grip', .018, -.0290, M, lean=.30, length=.092)
+    magazine('Mag', .006, -.0430, M, curve=.02, depth=.058, width=.0105, ribs=4)
+    stock('fixed', -.080, .0008, M)
+    # Bipod, folded down under the fore-end.
+    for side in (-1, 1):
+        block(f'Bipod_Leg_{side}', (side * .0130, -.0400, .080),
+              (.0032, .0330, .0032), M['body'], rotation=(0, 0, side * .26), edge=.0007)
+        block(f'Bipod_Foot_{side}', (side * .0225, -.0720, .080),
+              (.0058, .0038, .0075), M['steel'], edge=.0010)
+    block('Bipod_Mount', (0, -.0140, .080), (.0110, .0080, .0120), M['steel'], edge=.0014)
+    block('CheekRiser', (0, .0175, -.058), (.0120, .0060, .0300), M['furniture'], edge=.0018)
+
+
+def scope(spec, M, top):
+    """Glass, turrets, rings and a sunshade."""
+    z = spec.get('scope_at', -.010)
+    body = spec.get('scope_body', .0170)
+    length = spec.get('scope_length', .200)
+    tube('Scope_Tube', (0, top + .034, z), body, length, M['body'], verts=30)
+    tube('Scope_Bell', (0, top + .034, z + length * .44), body * 1.42, length * .22,
+         M['body'], verts=30)
+    tube('Scope_Ocular', (0, top + .034, z - length * .44), body * 1.28, length * .18,
+         M['body'], verts=30)
+    tube('Scope_Shade', (0, top + .034, z + length * .60), body * 1.44, length * .14,
+         M['body'], verts=30)
+    tube('Scope_Objective', (0, top + .034, z + length * .52), body * 1.34, .0035,
+         M['glass'], verts=30, edge=0)
+    tube('Scope_Eyepiece', (0, top + .034, z - length * .52), body * 1.20, .0030,
+         M['glass'], verts=30, edge=0)
+    for tag, dz in (('Front', length * .26), ('Rear', -length * .26)):
+        block(f'Scope_Ring_{tag}', (0, top + .018, z + dz), (.0092, .0195, .0075),
+              M['steel'], edge=.0014)
+        for side in (-1, 1):
+            tube(f'Scope_RingBolt_{tag}_{side}', (side * .0092, top + .006, z + dz),
+                 .0026, .0030, M['steel'], rotation=(0, math.pi / 2, 0), verts=10, edge=0)
+    # Turrets: elevation on top, windage on the side, both knurled.
+    for tag, rot, offset in (('Elev', (0, 0, 0), (0, body + .008, 0)),
+                             ('Wind', (0, math.pi / 2, 0), (body + .008, 0, 0))):
+        cx, cy = offset[0], top + .034 + offset[1]
+        tube(f'Scope_{tag}', (cx, cy, z), .0082, .0150, M['steel'],
+             rotation=(math.pi / 2, 0, 0) if tag == 'Elev' else (0, math.pi / 2, 0),
+             verts=20, edge=.0008)
+        for i in range(12):
+            a = i * math.tau / 12
+            if tag == 'Elev':
+                loc = (cx + math.cos(a) * .0082, cy, z + math.sin(a) * .0082)
+            else:
+                loc = (cx, cy + math.cos(a) * .0082, z + math.sin(a) * .0082)
+            block(f'Scope_{tag}_Knurl_{i}', loc, (.0012, .0012, .0060), M['body'],
+                  rotation=(0, 0, -a), edge=0)
+        block(f'Scope_{tag}_Cap', (cx, cy + (.0100 if tag == 'Elev' else 0),
+                                   z if tag == 'Elev' else z),
+              (.0070, .0022, .0070), M['body'], edge=.0008)
+
+
+def build_pistol(spec, M):
+    """Slide, frame, and everything a pack model leaves off a handgun."""
+    barrel = spec.get('barrel', .098)
+    hull('Slide', [
+        ((0, .0130, -.052), .0125, .0130),
+        ((0, .0130, -.030), .0132, .0142),
+        ((0, .0130, barrel * .70), .0130, .0140),
+        ((0, .0130, barrel * .92), .0120, .0128),
+    ], M['steel'], sides=22, power=6)
+    # Serrations: two banks, which is what says "slide".
+    for bank, base, count in (('Rear', -.048, 8), ('Front', barrel * .48, 5)):
+        for i in range(count):
+            block(f'Serration_{bank}_{i}', (0, .0130, base + i * .0072),
+                  (.0134, .0110, .0018), M['body'], edge=.0005, segments=1)
+    hull('Frame', [
+        ((0, -.0040, -.048), .0115, .0110),
+        ((0, -.0040, .012), .0120, .0118),
+        ((0, -.0040, barrel * .62), .0112, .0102),
+    ], M['body'], sides=20, power=5)
+    tube('Barrel', (0, .0130, barrel * .96), .0052, .020, M['steel'], verts=20)
+    tube('Bore', (0, .0130, barrel * 1.02), .0030, .008, M['grip'], verts=16, edge=0)
+    # Dovetail sights.
+    block('Sight_Rear', (0, .0272, -.046), (.0105, .0042, .0050), M['steel'], edge=.0008)
+    for side in (-1, 1):
+        block(f'Sight_RearBlade_{side}', (side * .0062, .0300, -.046),
+              (.0034, .0032, .0044), M['body'], edge=.0006)
+    block('Sight_Front', (0, .0278, barrel * .84), (.0022, .0048, .0038),
+          M['steel'], edge=.0006)
+    block('Sight_FrontDot', (0, .0300, barrel * .84 - .0034), (.0014, .0014, .0006),
+          M['brass'], edge=0)
+    # Hammer, safety, slide stop, take-down.
+    if spec.get('hammer', True):
+        block('Hammer', (0, .0180, -.060), (.0055, .0110, .0038), M['steel'],
+              rotation=(.30, 0, 0), edge=.0010)
+        block('Hammer_Spur', (0, .0270, -.066), (.0058, .0026, .0055), M['steel'], edge=.0012)
+    block('Safety', (-.0122, .0035, -.038), (.0030, .0028, .0090), M['steel'], edge=.0006)
+    block('SlideStop', (-.0120, .0010, -.014), (.0026, .0034, .0130), M['steel'], edge=.0006)
+    tube('Takedown', (.0118, -.0020, .006), .0034, .0035, M['steel'],
+         rotation=(0, math.pi / 2, 0), verts=12, edge=.0004)
+    block('MagRelease', (.0118, -.0050, -.028), (.0028, .0048, .0048), M['steel'], edge=.0008)
+    # Ejection port, cut into the slide.
+    block('EjectionPort', (.0128, .0180, barrel * .18), (.0016, .0060, .0130),
+          M['body'], edge=.0008)
+    trigger_group('Trigger', -.016, -.0090, M, guard_length=.040)
+    pistol_grip('Grip', -.048, -.0130, M, lean=.30, length=.082)
+    magazine('Mag', -.048, -.0900, M, curve=.02, depth=.014, width=.0092, ribs=1)
+    # An accessory rail under the dust cover, because it is 1990-something.
+    picatinny('UnderRail', .010, barrel * .60, -.0165, .0062, M, tooth=.0070)
+
+
+def build_revolver(spec, M):
+    """Frame, cylinder with flutes and chambers, ejector rod, and a hammer."""
+    barrel = spec.get('barrel', .112)
+    hull('Frame', [
+        ((0, .0060, -.058), .0130, .0165),
+        ((0, .0060, -.016), .0138, .0180),
+        ((0, .0060, .014), .0130, .0160),
+    ], M['steel'], sides=22, power=5)
+    # The barrel, with a full-length underlug: what a heavy revolver looks like.
+    tube('Barrel', (0, .0120, .022 + barrel / 2), .0072, barrel, M['steel'], verts=24)
+    block('Underlug', (0, .0020, .022 + barrel * .48), (.0072, .0072, barrel * .46),
+          M['steel'], edge=.0014)
+    block('TopStrap', (0, .0208, .022 + barrel * .46), (.0060, .0026, barrel * .46),
+          M['steel'], edge=.0010)
+    for i in range(9):
+        block(f'Rib_{i}', (0, .0234, .026 + i * barrel * .10), (.0052, .0014, .0022),
+              M['body'], edge=0, segments=1)
+    # Cylinder.
+    cyl_z = -.006
+    radius = .0175
+    tube('Cylinder', (0, .0090, cyl_z), radius, .0400, M['steel'], verts=32, edge=.0010)
+    for i in range(6):
+        a = i * math.tau / 6
+        block(f'Flute_{i}', (math.cos(a) * radius * .86, .0090 + math.sin(a) * radius * .86,
+                             cyl_z),
+              (radius * .22, radius * .22, .0150), M['body'], rotation=(0, 0, -a),
+              edge=.0009)
+        tube(f'Chamber_{i}', (math.cos(a) * radius * .58, .0090 + math.sin(a) * radius * .58,
+                              cyl_z + .0205),
+             radius * .17, .0035, M['grip'], verts=12, edge=0)
+    ring('Cylinder_Front', (0, .0090, cyl_z + .0200), radius * .98, .0016, M['body'], segments=26)
+    ring('Cylinder_Rear', (0, .0090, cyl_z - .0200), radius * .98, .0016, M['body'], segments=26)
+    tube('Ejector', (0, .0020, .022 + barrel * .52), .0034, barrel * .90, M['steel'], verts=16)
+    block('EjectorHead', (0, .0020, .022 + barrel * .98), (.0048, .0048, .0050),
+          M['steel'], edge=.0010)
+    block('Latch', (-.0135, .0090, -.030), (.0030, .0060, .0120), M['steel'], edge=.0008)
+    block('Hammer', (0, .0190, -.062), (.0058, .0125, .0040), M['steel'],
+          rotation=(.28, 0, 0), edge=.0010)
+    block('Hammer_Spur', (0, .0295, -.070), (.0062, .0028, .0060), M['steel'], edge=.0012)
+    for i in range(5):
+        block(f'Hammer_Check_{i}', (0, .0320, -.0730 + i * .0026), (.0050, .0010, .0010),
+              M['body'], edge=0)
+    trigger_group('Trigger', -.030, -.0080, M, guard_length=.044)
+    pistol_grip('Grip', -.062, -.0110, M, lean=.42, length=.090)
+
+
+def build_blade(spec, M):
+    """A knife: a ground blade with a fuller, a guard, and a wrapped grip."""
+    length = spec.get('blade', .175)
+    hull('Blade', [
+        ((0, 0, .010), .0032, .0125),
+        ((0, 0, .010 + length * .30), .0038, .0170),
+        ((0, 0, .010 + length * .70), .0032, .0155),
+        ((0, 0, .010 + length * .94), .0018, .0080),
+        ((0, 0, .010 + length), .0006, .0016),
+    ], M['steel'], sides=14, power=4)
+    for i in range(11):
+        block(f'Fuller_{i}', (0, .0035, .028 + i * length * .062),
+              (.0040, .0016, length * .030), M['body'], edge=.0005, segments=1)
+    # Serrations along the spine, near the guard.
+    for i in range(7):
+        block(f'Serration_{i}', (0, .0140, .022 + i * .0075), (.0034, .0026, .0030),
+              M['steel'], rotation=(0, 0, .4), edge=.0005)
+    block('Guard', (0, .0010, .004), (.0090, .0180, .0055), M['body'], edge=.0016)
+    block('Ricasso', (0, .0010, .012), (.0042, .0110, .0090), M['steel'], edge=.0010)
+    # A wrapped grip: eighteen turns of cord.
+    for i in range(18):
+        ring(f'Wrap_{i}', (0, 0, -.006 - i * .0052), .0098, .0026, M['grip'], segments=14)
+    block('Pommel', (0, 0, -.102), (.0092, .0125, .0060), M['steel'], edge=.0018)
+    tube('Lanyard', (0, 0, -.108), .0022, .0060, M['grip'],
+         rotation=(0, math.pi / 2, 0), verts=10, edge=0)
+
+
+# --- The armoury -----------------------------------------------------------
+# Twenty-six weapons out of seven builds. What varies is what would actually
+# vary between two rifles in the same rack: barrel length, handguard, stock,
+# optic, magazine, finish.
+
+CATALOGUE = [
+    # --- Rifles ---
+    ('assault_rifle_01', build_rifle, 'phosphate',
+     dict(barrel=.215, handguard=.148, stock='collapsible')),
+    ('assault_rifle_02', build_rifle, 'phosphate',
+     dict(barrel=.178, handguard=.118, stock='collapsible', ports=4, grip_lean=.34)),
+    ('assault_rifle_03', build_rifle, 'parkerized',
+     dict(barrel=.268, handguard=.186, stock='fixed', ports=6, mag_depth=.098)),
+    ('bullpup_rifle', build_rifle, 'phosphate',
+     dict(barrel=.238, handguard=.096, stock='none', ports=4, mag_depth=.078)),
+    ('akm', build_rifle, 'parkerized',
+     dict(barrel=.232, handguard=.132, stock='fixed', ports=3, mag_curve=.30,
+          mag_depth=.096, grip_lean=.44)),
+    # --- Shotguns ---
+    ('shotgun_01', build_shotgun, 'blued', dict(barrel=.245, stock='fixed')),
+    ('shotgun_02', build_shotgun, 'blued', dict(barrel=.268, stock='fixed')),
+    ('shotgun_short_stock', build_shotgun, 'parkerized',
+     dict(barrel=.196, stock='folding')),
+    ('shotgun_sawed_off', build_shotgun, 'blued', dict(barrel=.118, grip='wrist')),
+    ('mossberg_590a1', build_shotgun, 'parkerized', dict(barrel=.278, stock='fixed')),
+    # --- Precision ---
+    ('sniper_rifle_01', build_sniper, 'phosphate',
+     dict(barrel=.310, scope_body=.0165, scope_length=.190)),
+    ('sniper_rifle_02', build_sniper, 'blued',
+     dict(barrel=.348, scope_body=.0180, scope_length=.215, scope_at=-.014)),
+    ('sniper_rifle_03', build_sniper, 'desert',
+     dict(barrel=.298, scope_body=.0158, scope_length=.178)),
+    ('sniper_rifle_04', build_sniper, 'desert',
+     dict(barrel=.392, scope_body=.0205, scope_length=.245, scope_at=-.018)),
+    # --- Submachine guns ---
+    ('smg_01', build_smg, 'phosphate', dict(barrel=.118)),
+    ('smg_02', build_smg, 'blued', dict(barrel=.128, suppressor=True)),
+    # --- Sidearms ---
+    ('pistol_01', build_pistol, 'phosphate', dict(barrel=.098)),
+    ('pistol_02', build_pistol, 'blued', dict(barrel=.082)),
+    ('pistol_03', build_pistol, 'parkerized', dict(barrel=.104)),
+    ('pistol_04', build_pistol, 'blued', dict(barrel=.112)),
+    ('glock_19', build_pistol, 'phosphate', dict(barrel=.090, hammer=False)),
+    ('revolver_01', build_revolver, 'blued', dict(barrel=.112)),
+    ('revolver_02', build_revolver, 'steelgrey' if False else 'phosphate', dict(barrel=.062)),
+    ('revolver_03', build_revolver, 'blued', dict(barrel=.152)),
+    # --- Blades ---
+    ('bayonet', build_blade, 'parkerized', dict(blade=.198)),
+    ('combat_knife', build_blade, 'blued', dict(blade=.158)),
+]
+
+
 if __name__ == '__main__':
     import sys
-    clear_scene()
-    M = palette('phosphate')
-    build_rifle(dict(), M)
-    join_all('ServiceRifle')
-    export('weapon_rifle_test.glb')
+    only = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+    for stem, builder, finish, spec in CATALOGUE:
+        if only and stem not in only:
+            continue
+        clear_scene()
+        M = palette(finish)
+        builder(spec, M)
+        join_all(stem)
+        export(f'weapon_{stem}_v1.glb')
+    print('ARMOURY COMPLETE')

@@ -38,30 +38,35 @@ const bunkerUrls = {
 // not pass through the legacy quarter-turn correction.
 const suppliedUrls = {
   adventurer: `${BASE}assets/supplied/adventurer.glb`,
-  armoryAssault01: `${BASE}assets/supplied/assault_rifle_01.glb`,
-  armoryAssault02: `${BASE}assets/supplied/assault_rifle_02.glb`,
-  armoryAssault03: `${BASE}assets/supplied/assault_rifle_03.glb`,
-  armoryBayonet: `${BASE}assets/supplied/bayonet.glb`,
+  // The armoury is built rather than bought. The pack models were 240 to
+  // 5,000 triangles and this is the geometry the player looks at more than any
+  // other in the game; these are 5,600 to 16,600, with rails, irons, brakes,
+  // ejection ports, checkered grips and magazines that have floor plates.
+  // See blender/generate_weapons_v1.py.
+  armoryAssault01: `${BASE}assets/blender/weapon_assault_rifle_01_v1.glb`,
+  armoryAssault02: `${BASE}assets/blender/weapon_assault_rifle_02_v1.glb`,
+  armoryAssault03: `${BASE}assets/blender/weapon_assault_rifle_03_v1.glb`,
+  armoryBayonet: `${BASE}assets/blender/weapon_bayonet_v1.glb`,
   armoryBipod: `${BASE}assets/supplied/bipod.glb`,
-  armoryBullpup: `${BASE}assets/supplied/bullpup.glb`,
-  armoryPistol01: `${BASE}assets/supplied/pistol_01.glb`,
-  armoryPistol02: `${BASE}assets/supplied/pistol_02.glb`,
-  armoryPistol03: `${BASE}assets/supplied/pistol_03.glb`,
-  armoryPistol04: `${BASE}assets/supplied/pistol_04.glb`,
-  armoryRevolver01: `${BASE}assets/supplied/revolver_01.glb`,
-  armoryRevolver02: `${BASE}assets/supplied/revolver_02.glb`,
-  armoryRevolver03: `${BASE}assets/supplied/revolver_03.glb`,
+  armoryBullpup: `${BASE}assets/blender/weapon_bullpup_rifle_v1.glb`,
+  armoryPistol01: `${BASE}assets/blender/weapon_pistol_01_v1.glb`,
+  armoryPistol02: `${BASE}assets/blender/weapon_pistol_02_v1.glb`,
+  armoryPistol03: `${BASE}assets/blender/weapon_pistol_03_v1.glb`,
+  armoryPistol04: `${BASE}assets/blender/weapon_pistol_04_v1.glb`,
+  armoryRevolver01: `${BASE}assets/blender/weapon_revolver_01_v1.glb`,
+  armoryRevolver02: `${BASE}assets/blender/weapon_revolver_02_v1.glb`,
+  armoryRevolver03: `${BASE}assets/blender/weapon_revolver_03_v1.glb`,
   armoryScope: `${BASE}assets/supplied/scope.glb`,
-  armoryShotgunSawed: `${BASE}assets/supplied/shotgun_sawed_off.glb`,
-  armoryShotgunShort: `${BASE}assets/supplied/shotgun_short_stock.glb`,
-  armoryShotgun01: `${BASE}assets/supplied/shotgun_01.glb`,
-  armoryShotgun02: `${BASE}assets/supplied/shotgun_02.glb`,
-  armorySniper01: `${BASE}assets/supplied/sniper_rifle_01.glb`,
-  armorySniper02: `${BASE}assets/supplied/sniper_rifle_02.glb`,
-  armorySniper03: `${BASE}assets/supplied/sniper_rifle_03.glb`,
-  armorySniper04: `${BASE}assets/supplied/sniper_rifle_04.glb`,
-  armorySmg01: `${BASE}assets/supplied/submachine_gun_01.glb`,
-  armorySmg02: `${BASE}assets/supplied/submachine_gun_02.glb`,
+  armoryShotgunSawed: `${BASE}assets/blender/weapon_shotgun_sawed_off_v1.glb`,
+  armoryShotgunShort: `${BASE}assets/blender/weapon_shotgun_short_stock_v1.glb`,
+  armoryShotgun01: `${BASE}assets/blender/weapon_shotgun_01_v1.glb`,
+  armoryShotgun02: `${BASE}assets/blender/weapon_shotgun_02_v1.glb`,
+  armorySniper01: `${BASE}assets/blender/weapon_sniper_rifle_01_v1.glb`,
+  armorySniper02: `${BASE}assets/blender/weapon_sniper_rifle_02_v1.glb`,
+  armorySniper03: `${BASE}assets/blender/weapon_sniper_rifle_03_v1.glb`,
+  armorySniper04: `${BASE}assets/blender/weapon_sniper_rifle_04_v1.glb`,
+  armorySmg01: `${BASE}assets/blender/weapon_smg_01_v1.glb`,
+  armorySmg02: `${BASE}assets/blender/weapon_smg_02_v1.glb`,
   armoryTripod: `${BASE}assets/supplied/tripod.glb`,
 };
 
@@ -70,10 +75,10 @@ const suppliedUrls = {
 // checkout without them still boots, it just runs a barer compound.
 const packUrls = {
   // Weapons the FPS pack adds to the armoury wall.
-  armoryAkm: `${BASE}assets/supplied/akm.glb`,
-  armoryMossberg: `${BASE}assets/supplied/mossberg_590a1.glb`,
-  armoryGlock: `${BASE}assets/supplied/glock_19.glb`,
-  armoryCombatKnife: `${BASE}assets/supplied/combat_knife.glb`,
+  armoryAkm: `${BASE}assets/blender/weapon_akm_v1.glb`,
+  armoryMossberg: `${BASE}assets/blender/weapon_mossberg_590a1_v1.glb`,
+  armoryGlock: `${BASE}assets/blender/weapon_glock_19_v1.glb`,
+  armoryCombatKnife: `${BASE}assets/blender/weapon_combat_knife_v1.glb`,
   // The surface.
   solarArray: `${BASE}assets/supplied/solar_array.glb`,
   deadTree01: `${BASE}assets/supplied/dead_tree_01.glb`,
