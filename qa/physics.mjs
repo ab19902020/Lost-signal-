@@ -73,8 +73,8 @@ results.storageRack = await read();
 
 // The armoury is a room, not an interaction pretending to be one: its shut
 // pocket door blocks the player, the open door admits the real controller, the
-// back wall stops them, every supplied weapon is present, and the quartermaster
-// is a solid animated character rather than a ghost prop.
+// back wall stops them, every supplied weapon is present, and the high-density
+// quartermaster is a solid animated character rather than a ghost prop.
 results.armory = await page.evaluate(() => {
   const ls = globalThis.__ls;
   const armory = ls.game.armory;

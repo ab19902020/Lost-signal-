@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { dressPerson } from './creatures.js';
+import { createResidentHuman, freezeHumanPose, HUMAN_BUILD_PRESETS } from './humans.js';
 
 // Silo 47 — a habitation silo, not a weapons one.
 //
@@ -819,12 +819,12 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       () => window.dispatchEvent(new CustomEvent('lostsignal:cache')));
   }
 
-  // The galleries have to look occupied. Ten residents walk and talk; these are
-  // the rest of the three hundred, joined into one mesh each so a populated
-  // silo costs draw calls rather than skeletons.
+  // The galleries have to look occupied. The moving residents use authored
+  // locomotion; these additional people are frozen at varied points in the
+  // same high-detail rig's idle clip. Geometry and textures stay shared across
+  // the crowd, but nobody visible falls back to the old assembled figures.
   const crowd = [];
-  const stillBuilds = ['A', 'B', 'C', 'D', 'E', 'F']
-    .map((k) => assets[`residentStill${k}`]).filter(Boolean);
+  const stillBuilds = HUMAN_BUILD_PRESETS.filter((preset) => assets[preset.asset]);
   if (stillBuilds.length) {
     for (let level = 0; level < levels; level++) {
       const y = levelY(level);
@@ -832,11 +832,14 @@ export function buildSilo({ scene, colliders, place, addInteraction, assets }) {
       for (let i = 0; i < count; i++) {
         const angle = (i / count) * Math.PI * 2 + level * 0.83;
         const radius = wellRadius + 0.55 + ((i + level) % 3) * 0.5;
-        const figure = place(stillBuilds[(level * 3 + i) % stillBuilds.length], scene,
-          [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
-          [0, Math.atan2(-Math.cos(angle), -Math.sin(angle)) + (i % 2 ? 0.4 : -0.3), 0], 1,
-          { world: 'silo', collide: false });
-        dressPerson(figure, level * 5 + i);
+        const built = createResidentHuman(assets, level * 5 + i);
+        if (!built) continue;
+        const figure = built.root;
+        figure.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+        figure.rotation.set(0,
+          Math.atan2(-Math.cos(angle), -Math.sin(angle)) + (i % 2 ? 0.4 : -0.3), 0);
+        scene.add(figure);
+        freezeHumanPose(figure, built.gltf, level * .73 + i * .41);
         crowd.push(figure);
       }
     }

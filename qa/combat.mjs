@@ -63,22 +63,32 @@ const results = await page.evaluate(async () => {
       Math.hypot(r.position.x - before[i].x, r.position.z - before[i].z) > 0.4).length;
     out.residentLevels = new Set(residents.map(r => Math.round(r.position.y))).size;
     out.residentLines = residents.filter(r => (r.userData.resident?.line || '').length > 10).length;
-    // How many distinct bodies are in play. The torso alone will not tell you:
-    // every build shares its topology and only differs by scale. What differs
-    // is what each is wearing and carrying — a coat skirt, straps, an apron, a
-    // satchel, a cap, a beard — so the whole figure's mesh count and total
-    // vertex count together identify the build.
+    // How many distinct bodies are in play. Revision seven uses two continuous
+    // high-density basemeshes and six coordinated morph/proportion presets, so
+    // topology alone is intentionally shared and the authored build marker is
+    // the correct identity.
     const builds = new Set();
+    const triangleCounts = [];
+    let rigged = 0;
     for (const r of residents) {
       let meshes = 0, verts = 0;
+      let triangles = 0;
+      let hasSkin = false;
       r.traverse((o) => {
         if (!o.isMesh) return;
         meshes++;
         verts += o.geometry.attributes.position.count;
+        triangles += o.geometry.index
+          ? o.geometry.index.count / 3 : o.geometry.attributes.position.count / 3;
+        hasSkin ||= !!o.isSkinnedMesh;
       });
-      builds.add(`${meshes}:${verts}`);
+      builds.add(r.userData.humanBuild || `${meshes}:${verts}`);
+      triangleCounts.push(Math.round(triangles));
+      if (hasSkin) rigged++;
     }
     out.residentBuilds = builds.size;
+    out.residentRigged = rigged;
+    out.residentTriangleRange = [Math.min(...triangleCounts), Math.max(...triangleCounts)];
     const residentRadii = residents.map(r => Math.hypot(r.position.x, r.position.z));
     out.residentsOffGallery = residentRadii.filter(radius => radius < 13.2 || radius > 19.4).length;
     out.residentRadiusRange = [

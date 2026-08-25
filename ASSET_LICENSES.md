@@ -5,6 +5,9 @@ Only assets with explicit redistribution terms are copied into this repository.
 - **deer.glb / rabbit.glb** — source: `kunalkushwaha/vsim`; repository licence: MIT.
 - **Zombie Apocalypse Kit models** — Quaternius; CC0 1.0.
 - **Concrete / diamond-plate PBR textures** — ambientCG; CC0, mirrored by `rishipr/der-koloss-ce`.
+- **High-density human basemeshes** — Aiden and Maya Human Forge exports,
+  generated with MakeHuman / MPFB and MakeHuman System Assets; CC0 1.0. The
+  repository copy of the asset licence is at `public/assets/characters/LICENSE.txt`.
 
 ## Supplied model packs
 

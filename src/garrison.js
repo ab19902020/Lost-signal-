@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
+import { dressHuman, HUMAN_BUILD_PRESETS } from './humans.js';
 
 // The top of Silo 47 is a secure unit, and until now it was a locked door on an
 // empty gallery. This is what is actually posted up there: a soldier on the
@@ -49,6 +50,15 @@ export function buildGarrison({ scene, colliders, assets, place, addInteraction,
     const angle = Math.PI * 0.25 + 0.16;
     const radius = deckOuter - 1.55;
     sentry = cloneGLTF(assets.soldier);
+    dressHuman(sentry, 2, {
+      preset: HUMAN_BUILD_PRESETS[2],
+      id: 'secure-unit-sentry-high',
+      morph: 'Athletic',
+      morphStrength: .72,
+      top: 0x303f35,
+      bottom: 0x252d28,
+      shoes: 0x151817,
+    });
     sentry.name = 'Secure_Unit_Sentry';
     sentry.position.set(Math.cos(angle) * radius, topY + 0.02, Math.sin(angle) * radius);
     // Face in off the wall, across the gallery toward the stair landing.

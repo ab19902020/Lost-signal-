@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
+import {
+  createResidentHuman,
+  HUMAN_BUILD_PRESETS,
+  humanClip,
+} from './humans.js';
 
 // Wildlife and infected. The models are Blender GLBs with named limb nodes
 // pivoted at their joints, so the runtime only rotates those nodes — no
@@ -199,6 +204,42 @@ class Resident extends Creature {
     this.state = 'stroll';
     this.greeting = 0;
     this.panic = 0;
+    this.mixer = null;
+    this.humanActions = {};
+    this.humanAction = null;
+    this.wavePlaying = false;
+    this.wasGreeting = false;
+
+    // Revision-seven people carry a real skeleton and authored motion. Keep
+    // the old named-pivot animation below as a fallback for partial checkouts,
+    // but drive every high-detail resident with the rig it was built around.
+    if (options.gltf?.animations?.length) {
+      this.mixer = new THREE.AnimationMixer(root);
+      for (const name of ['Idle', 'Walk', 'Wave']) {
+        const clip = humanClip(options.gltf, name);
+        if (clip) this.humanActions[name.toLowerCase()] = this.mixer.clipAction(clip);
+      }
+      const wave = this.humanActions.wave;
+      if (wave) {
+        wave.setLoop(THREE.LoopOnce, 1);
+        wave.clampWhenFinished = true;
+        this.mixer.addEventListener('finished', (event) => {
+          if (event.action !== wave) return;
+          this.wavePlaying = false;
+          this.playHumanAction('idle', .18);
+        });
+      }
+      this.playHumanAction('idle', 0);
+    }
+  }
+
+  playHumanAction(name, fade = .2) {
+    const next = this.humanActions[name];
+    if (!next || next === this.humanAction) return;
+    next.enabled = true;
+    next.reset().fadeIn(fade).play();
+    this.humanAction?.fadeOut(fade);
+    this.humanAction = next;
   }
 
   // Somebody just fired, or fell, within earshot. Three hundred people live
@@ -272,6 +313,24 @@ class Resident extends Creature {
   // resident takes a different route through the state machine and still has
   // to move their legs.
   animate(dt, moved, greeting) {
+    if (this.mixer) {
+      const greetingNow = greeting > .18;
+      if (moved > .02) {
+        this.wavePlaying = false;
+        this.playHumanAction('walk', .16);
+        this.humanActions.walk?.setEffectiveTimeScale(
+          THREE.MathUtils.clamp(.72 + moved * .36, .72, 1.35));
+      } else if (greetingNow && !this.wasGreeting && this.humanActions.wave) {
+        this.wavePlaying = true;
+        this.playHumanAction('wave', .15);
+      } else if (!this.wavePlaying) {
+        this.playHumanAction('idle', .22);
+      }
+      this.mixer.update(dt);
+      this.wasGreeting = greetingNow;
+      return;
+    }
+
     swing(this.limbs, ['legL'], this.phase, moved * 0.14);
     swing(this.limbs, ['legR'], this.phase + Math.PI, moved * 0.14);
     swing(this.limbs, ['shinL'], this.phase + 1.1, moved * 0.07);
@@ -324,54 +383,14 @@ function findSpawn(colliders, radius, bounds, avoid) {
   return null;
 }
 
-// Place residents around a gallery ring at a given height.
-// Ten identical people on one gallery reads as a copy-paste, not a community.
-// Each resident gets their own jacket, trousers, hair and skin tone, cloned off
-// the shared materials so the change is per-figure.
-const JACKETS = [0x3f4a52, 0x4a4038, 0x2f4442, 0x53433f, 0x38414f, 0x4d4a3a, 0x424a44, 0x554440];
-const TROUSERS = [0x2b2f36, 0x35302b, 0x232a2c, 0x3a352f, 0x2a2d33];
-const HAIRS = [0x171310, 0x2e2118, 0x4a3626, 0x6b6259, 0x0f0d0c, 0x3d2b1c];
-const SKINS = [0x8a6650, 0xb08968, 0x6b4a36, 0xc79c78, 0x53382a, 0x9c7355];
-
-export function dressPerson(root, index) {
-  const pick = (list, salt) => list[(index * 7 + salt) % list.length];
-  const swatch = {
-    HabJacket: pick(JACKETS, 0),
-    HabTrouser: pick(TROUSERS, 3),
-    HabHair: pick(HAIRS, 5),
-    HabSkin: pick(SKINS, 1),
-  };
-  const cloned = new Map();
-  root.traverse((o) => {
-    if (!o.isMesh) return;
-    const materials = Array.isArray(o.material) ? o.material : [o.material];
-    const swapped = materials.map((m) => {
-      const colour = m && swatch[m.name];
-      if (colour === undefined) return m;
-      let copy = cloned.get(m.name);
-      if (!copy) {
-        copy = m.clone();
-        copy.color.setHex(colour);
-        cloned.set(m.name, copy);
-      }
-      return copy;
-    });
-    o.material = Array.isArray(o.material) ? swapped : swapped[0];
-  });
-  return root;
-}
-
-// The six builds of person the Blender kit ships. Twenty residents drawn from
-// six bodies and a palette of cloth, hair and skin read as twenty people; one
-// body recoloured twenty times reads as one person cloned.
-export const RESIDENT_BUILDS = ['A', 'B', 'C', 'D', 'E', 'F'];
+export const RESIDENT_BUILDS = HUMAN_BUILD_PRESETS;
 
 export function populateSilo({ scene, colliders, assets, walkable, count = 20 }) {
   const residents = [];
   const agents = [];
   const byRoot = new Map();
-  const builds = RESIDENT_BUILDS.map((k) => assets[`resident${k}`]).filter(Boolean);
-  if (!builds.length || !walkable?.length) {
+  const availableBuilds = RESIDENT_BUILDS.filter((preset) => assets[preset.asset]);
+  if (!availableBuilds.length || !walkable?.length) {
     return { residents, agents, byRoot, update: () => {}, resolvePlayer: () => false,
              agentFor: () => null, alarm: () => 0 };
   }
@@ -385,7 +404,9 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
     const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
     // Walk the builds rather than picking at random, so twenty residents are
     // never eleven of one body and one of another.
-    const root = dressPerson(cloneGLTF(builds[i % builds.length]), i);
+    const built = createResidentHuman(assets, i);
+    if (!built) continue;
+    const { root, gltf } = built;
     root.position.set(Math.cos(angle) * ring.radius, ring.y, Math.sin(angle) * ring.radius);
     root.rotation.y = Math.atan2(-Math.cos(angle), -Math.sin(angle));
     root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -395,6 +416,7 @@ export function populateSilo({ scene, colliders, assets, walkable, count = 20 })
       turnRate: 2.6,
       homeY: ring.y,
       line: RESIDENT_LINES[i % RESIDENT_LINES.length],
+      gltf,
     });
     agents.push(agent);
     residents.push(root);

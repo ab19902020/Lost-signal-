@@ -179,13 +179,13 @@ await saveChecked(desktop, '02a-walk-in-armoury', {
   minMean: 0.065, maxMean: 0.54, maxDark: 0.84, maxBright: 0.08,
 });
 
-// Conversation-distance proof of the exact character the user supplied. This
-// catches a wrong up axis, back-facing import, broken skin, lost backpack or a
-// scale error that a wide store shot can hide.
+// Conversation-distance proof of the high-density quartermaster. This catches
+// a wrong up axis, back-facing import, broken skin/hair transparency or a scale
+// error that a wide store shot can hide.
 await desktop.evaluate(() => {
   const ls = globalThis.__ls;
   const person = ls.game.armory?.quartermaster;
-  if (!person) throw new Error('supplied Adventurer character is missing');
+  if (!person) throw new Error('high-density quartermaster is missing');
   ls.freecam(4.97, 1.55, 2.30, 4.97, 1.42, 4.03, 46);
   ls.game.camera.near = .05;
   ls.game.camera.far = 8;

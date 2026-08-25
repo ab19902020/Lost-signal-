@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { cloneGLTF, findNamed } from './assets.js';
+import { dressHuman, HUMAN_BUILD_PRESETS } from './humans.js';
 import { WEAPONS, isUsable } from './weapons.js';
 
 // The bunker starts as one 13 m room. This occupies its former loose-crate
@@ -166,9 +167,9 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     });
   }
 
-  // The supplied animated Adventurer becomes a named, solid quartermaster in
-  // the room. Their neutral idle and one-shot wave use the authored skeleton,
-  // so this is a character rather than a static shop mannequin.
+  // A high-density, fully skinned human becomes the named, solid quartermaster
+  // in the room. His neutral idle and one-shot wave use the authored 53-bone
+  // skeleton, so the visual upgrade does not turn him into a static mannequin.
   let quartermaster = null;
   let mixer = null;
   let idleAction = null;
@@ -181,17 +182,26 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
   let qmDirection = 1;
   if (assets.adventurer) {
     quartermaster = cloneGLTF(assets.adventurer);
+    dressHuman(quartermaster, 4, {
+      preset: HUMAN_BUILD_PRESETS[4],
+      id: 'quartermaster-eli-high',
+      morph: 'Heavy',
+      morphStrength: .35,
+      top: 0x35443e,
+      bottom: 0x20262b,
+      shoes: 0x171819,
+    });
     quartermaster.name = 'Quartermaster_Adventurer';
     quartermaster.position.copy(ARMORY_ORIGIN).add(new THREE.Vector3(1.17, .01, 1.43));
-    // Quaternius characters face local +Z (the backpack sits on -Z). The
+    // The authored human faces local +Z. The
     // armoury entrance is toward -Z, so turn Eli around to greet the player
     // instead of presenting the backpack at conversation distance.
     quartermaster.rotation.y = Math.PI;
     quartermaster.userData.kind = 'quartermaster';
     scene.add(quartermaster);
     mixer = new THREE.AnimationMixer(quartermaster);
-    const idleClip = clipBySuffix(assets.adventurer, '|Idle_Neutral', '|Idle');
-    const waveClip = clipBySuffix(assets.adventurer, '|Wave', '|Interact');
+    const idleClip = clipBySuffix(assets.adventurer, '|Idle_Neutral', '|Idle', 'Idle');
+    const waveClip = clipBySuffix(assets.adventurer, '|Wave', '|Interact', 'Wave');
     if (idleClip) {
       idleAction = mixer.clipAction(idleClip);
       idleAction.play();
