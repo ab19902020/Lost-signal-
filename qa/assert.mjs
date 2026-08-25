@@ -268,6 +268,28 @@ check(weapons.quartermaster?.down, 'the quartermaster cannot be brought down');
 check(weapons.quartermaster?.tipped > 1.4,
   `the downed quartermaster tipped only ${weapons.quartermaster?.tipped} rad`);
 
+// The surface. What used to be out there was a skirt, twenty-six flat "far
+// field" rectangles and fourteen "grass patches", each a hard-edged block of
+// one colour — a jigsaw from any height. It is one vertex-coloured mesh now,
+// with the countryside instanced on top of it.
+const country = physics.country || {};
+check(country.jigsaw === 0,
+  `${country.jigsaw} flat-colour ground rectangles are back on the surface`);
+check(country.field?.vertexColours === true,
+  'the ground is not carrying its tone in vertex colours');
+check((country.field?.spread ?? 0) > 0.1,
+  `the ground's tone barely varies (spread ${country.field?.spread})`);
+check(country.hedges > 90, `only ${country.hedges} hedge sections in the fields`);
+// These floors are set for the mobile tier, which plants a third of the
+// countryside. A desktop gets three times as much of everything.
+check(country.tufts > 340, `only ${country.tufts} grass tufts on the surface`);
+check(country.trees > 55, `only ${country.trees} trees in the country`);
+check(country.scattered > 800,
+  `only ${country.scattered} scattered instances outside`);
+// Instancing is the whole reason the count can be that high.
+check(country.instanced >= 20 && country.scattered / country.instanced > 20,
+  `the countryside is not instanced (${country.instanced} meshes for ${country.scattered} copies)`);
+
 // Sound. Every weapon has to make its own noise, with a real transient on the
 // front of it, and the room it is fired in has to be audible in the result.
 const audio = weapons.audio || {};

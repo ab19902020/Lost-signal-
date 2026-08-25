@@ -14,7 +14,11 @@ import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 // No visible architecture/props are authored with Three.js geometry.
 // Three.js geometry below is limited to particles/effects. All physical world
 // objects are Blender-authored GLBs loaded through assets.js.
-export function createGameWorld(assets) {
+export function createGameWorld(assets, options = {}) {
+  // How much of the countryside to plant. A phone gets a third of it; the
+  // layout is identical either way, so nothing moves between tiers — there is
+  // simply less of it.
+  const foliage = options.foliage ?? 1;
   const bunker = new THREE.Scene();
   bunker.background = new THREE.Color(0x030504);
   bunker.fog = new THREE.FogExp2(0x050807, 0.019);
@@ -25,7 +29,7 @@ export function createGameWorld(assets) {
   // the far end of the compound — fell into a void with a hard edge where the
   // floodlights stopped. It now runs a real clock: sun, moon, stars and
   // weather, with the fog tracking the horizon so distance is haze, not void.
-  outside.fog = new THREE.FogExp2(0x141d26, 0.0095);
+  outside.fog = new THREE.FogExp2(0x141d26, 0.0028);
 
   // Silo 47-A, reached through the hatch in the shelter floor.
   const silo = new THREE.Scene();
@@ -68,6 +72,55 @@ export function createGameWorld(assets) {
   function addInteraction(object, name, world, onUse) {
     object.userData.interaction = { name, world, onUse };
     interactions.push(object);
+  }
+
+  // --- Scattering the countryside ------------------------------------------
+  // A field needs hundreds of things standing in it, and hundreds of cloned
+  // glTF subtrees is hundreds of draw calls. Everything scattered by the dozen
+  // or more goes through one InstancedMesh per source mesh instead, with the
+  // asset's own internal transform folded into every instance matrix.
+  const _instanceMatrix = new THREE.Matrix4();
+  const _instancePosition = new THREE.Vector3();
+  const _instanceQuaternion = new THREE.Quaternion();
+  const _instanceScale = new THREE.Vector3();
+
+  /**
+   * Scatter one asset across the surface as instanced geometry.
+   *
+   * `placements` are [x, z, rotationY, scale, tiltX, tiltZ] — a lean is what
+   * stops a hundred copies of one bush reading as a hundred copies of one bush.
+   */
+  function scatter(gltf, placements, options = {}) {
+    if (!gltf || !placements.length) return null;
+    const source = cloneGLTF(gltf);
+    source.updateMatrixWorld(true);
+    const group = new THREE.Group();
+    group.name = options.name || 'Scatter';
+    const meshes = [];
+    source.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    for (const mesh of meshes) {
+      const local = mesh.matrixWorld.clone();
+      const instanced = new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length);
+      instanced.name = `${group.name}_${mesh.name}`;
+      instanced.castShadow = options.castShadow ?? false;
+      instanced.receiveShadow = options.receiveShadow ?? true;
+      // The instances cover the whole map; the source geometry's bounding
+      // sphere describes one of them, so three would cull the entire field the
+      // moment the camera turned away from wherever the asset's origin is.
+      instanced.frustumCulled = false;
+      placements.forEach(([x, z, spin = 0, scale = 1, tiltX = 0, tiltZ = 0], index) => {
+        _instancePosition.set(x, options.y ?? 0, z);
+        _instanceQuaternion.setFromEuler(new THREE.Euler(tiltX, spin, tiltZ, 'ZYX'));
+        _instanceScale.setScalar(scale);
+        _instanceMatrix.compose(_instancePosition, _instanceQuaternion, _instanceScale);
+        _instanceMatrix.multiply(local);
+        instanced.setMatrixAt(index, _instanceMatrix);
+      });
+      instanced.instanceMatrix.needsUpdate = true;
+      group.add(instanced);
+    }
+    outside.add(group);
+    return group;
   }
 
   // Collision comes from the placed Blender geometry itself, so props can never
@@ -263,17 +316,12 @@ export function createGameWorld(assets) {
   // EXTERIOR — ALSO BLENDER VISIBLE GEOMETRY
   // ---------------------------------------------------------------------------
   const groundRoot = place(assets.exteriorGround, outside, [0,0,0], [0,0,0], 1, { collide: false });
-  // The sun's shadow camera covers ninety metres of compound. The skirt and the
-  // far fields run to five hundred, so most of their area lies outside that
-  // frustum entirely — where the shadow lookup clamps and the result crawls
-  // across acres of flat ground as the light moves. Nothing that far out can
-  // receive a shadow worth having, so it does not ask for one.
-  groundRoot.traverse((part) => {
-    if (!part.isMesh) return;
-    if (/^(ExteriorSkirt|FarField_)/.test(part.name)) part.receiveShadow = false;
-    // Flat ground never casts anything either; only the props on it do.
-    part.castShadow = false;
-  });
+  // Flat ground never casts anything; only the props standing on it do. It
+  // used to be a stack of coplanar layers, and half of them had to opt out of
+  // receiving shadows as well because the lookup crawled where they ran past
+  // the sun's ninety-metre shadow frustum. It is one mesh now, so there is
+  // nothing to fight and nothing to opt out.
+  groundRoot.traverse((part) => { if (part.isMesh) part.castShadow = false; });
   place(assets.exteriorEntrance, outside, [0,0,-17], [0,0,0], 1, { shrink: 0.12 });
 
   // Sun, moon, stars, cloud and rain, all on the shelter's own clock. The
@@ -388,21 +436,12 @@ export function createGameWorld(assets) {
   // now a real treeline of five dead forms standing OUTSIDE the fence, where a
   // treeline belongs, and the yard is dressed with what a shelter compound
   // would actually have in it.
+  // The five dead forms the whole countryside is planted from. They used to be
+  // a hand-typed ring of fourteen just outside the wire; they are now scattered
+  // by the hundred out to four hundred metres, out of the hedgerows they would
+  // actually have grown in. See countryside(), below.
   const deadTrees = [assets.deadTree01, assets.deadTree02, assets.deadTree03,
     assets.deadTree04, assets.deadTree05].filter(Boolean);
-  if (deadTrees.length) {
-    const treeLine = [
-      [-30, -34, .4, .95], [-14, -35, 2.1, .8], [4, -37, 1.2, 1.05], [22, -34, 3.4, .85],
-      [-34, -18, .9, .9], [-36, 2, 2.6, 1.0], [-33, 20, 1.7, .8], [-28, 32, 4.2, .95],
-      [30, -20, 5.1, .85], [34, -2, .3, 1.0], [32, 17, 2.9, .9], [26, 30, 1.4, .8],
-      [-10, 33, 3.7, .95], [10, 35, .6, .9],
-    ];
-    treeLine.forEach(([x, z, r, scale], i) =>
-      place(deadTrees[i % deadTrees.length], outside, [x, 0, z], [0, r, 0], scale,
-        { collide: false }));
-  } else {
-    [[-16,0,-6,0],[16,0,1,1.1],[-12,0,13,-.5],[11,0,-22,.7]].forEach(([x,y,z,r])=>place(assets.deadTree,outside,[x,y,z],[0,r,0],.9));
-  }
   [[-8,0,-9,0],[8,0,-8,.2],[-7,0,8,-.1],[7,0,7,.1]].forEach(([x,y,z,r])=>place(assets.barrier,outside,[x,y,z],[0,r,0],.9));
   [[-11,0,-14,0],[11,0,-14,.7],[-15,0,5,.2],[13,0,12,-.5]].forEach(([x,y,z,r])=>place(assets.rubble,outside,[x,y,z],[0,r,0],1,{ climbable: true }));
 
@@ -606,6 +645,245 @@ export function createGameWorld(assets) {
     [[-8.9, 0, -8.2, 0.35], [12.4, 0, 9.1, -2.4], [2.6, 0, -19.2, 3.0]].forEach(([x, y, z, r]) =>
       place(assets.remainsSlumped, outside, [x, y, z], [0, r, 0], 1, { collide: false }));
   }
+
+  // --- The countryside ------------------------------------------------------
+  // Everything outside the wire, laid out by the same noise the ground's own
+  // colour is baked from, so where it is rank is where the brambles are and
+  // where it burned off is where nothing much grows.
+  //
+  // It used to be twenty-six flat rectangles of "far field" and a treeline of
+  // fourteen. From the gate the country read as a green tablecloth; from the
+  // air it read as a jigsaw. This is hedgerows on a field grid, and a few
+  // thousand things standing in the fields between them.
+  function countryside() {
+    // The same lattice noise the ground is coloured with, so the scatter and
+    // the tone agree. Ported deliberately literally from the generator.
+    const hash2 = (ix, iz, seed) => {
+      let h = (Math.imul(ix, 374761393) + Math.imul(iz, 668265263)
+        + Math.imul(seed, 2246822519)) >>> 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+      return ((h ^ (h >>> 16)) & 0xFFFFFF) / 0xFFFFFF;
+    };
+    const valueNoise = (x, z, scale, seed) => {
+      const fx = x / scale;
+      const fz = z / scale;
+      const ix = Math.floor(fx);
+      const iz = Math.floor(fz);
+      const tx = fx - ix;
+      const tz = fz - iz;
+      const sx = tx * tx * (3 - 2 * tx);
+      const sz = tz * tz * (3 - 2 * tz);
+      const a = hash2(ix, iz, seed);
+      const b = hash2(ix + 1, iz, seed);
+      const c = hash2(ix, iz + 1, seed);
+      const d = hash2(ix + 1, iz + 1, seed);
+      return (a * (1 - sx) + b * sx) * (1 - sz) + (c * (1 - sx) + d * sx) * sz;
+    };
+    const fbm = (x, z, scale, seed, octaves = 4) => {
+      let total = 0;
+      let amplitude = 1;
+      let norm = 0;
+      for (let o = 0; o < octaves; o++) {
+        total += valueNoise(x, z, scale / (2 ** o), seed + o * 17) * amplitude;
+        norm += amplitude;
+        amplitude *= 0.5;
+      }
+      return total / norm;
+    };
+    const rankness = (x, z) => fbm(x + 2200, z - 1700, 54, 9137);
+    const dryness = (x, z) => fbm(x, z, 78, 4181);
+
+    // One stream, so the world is the same every session.
+    let seedState = 0x9e3779b9;
+    const random = () => {
+      seedState = (seedState + 0x6d2b79f5) >>> 0;
+      let t = seedState;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const between = (low, high) => low + random() * (high - low);
+
+    // --- Where things may not go -------------------------------------------
+    const roadOrigin = new THREE.Vector2(0, 18);
+    const roadAxis = new THREE.Vector2(roadDirection.x, roadDirection.z);
+    const _toPoint = new THREE.Vector2();
+    // Distance from the carriageway, or Infinity off either end of it.
+    const offRoad = (x, z) => {
+      _toPoint.set(x - roadOrigin.x, z - roadOrigin.y);
+      const along = _toPoint.dot(roadAxis);
+      if (along < -14 || along > 500) return Infinity;
+      return Math.abs(_toPoint.x * roadAxis.y - _toPoint.y * roadAxis.x);
+    };
+    // The compound, its approach, and the firing range down the west side.
+    const inCompound = (x, z, margin = 0) =>
+      x > -24 - margin && x < 24 + margin && z > -31 - margin && z < 21 + margin;
+    const clear = (x, z, verge = 7, margin = 3) =>
+      !inCompound(x, z, margin) && offRoad(x, z) > verge;
+
+    // --- Hedgerows ----------------------------------------------------------
+    // A jittered grid of field boundaries. Berkshire fields are irregular but
+    // they are not random: they meet at corners and they run for a while.
+    const HEDGE_LENGTH = 12;
+    const hedgeNear = [];
+    const hedgeFar = [];
+    const gates = [];
+    const hedgeTrees = [];
+    const FIELD = 152;
+    // Past this the fog has the country anyway, and every twelve metres of
+    // hedge is another instance in the pass.
+    const REACH = 268;
+    const lines = [];
+    for (let index = -3; index <= 3; index++) {
+      // Boundaries wander: a hedge that is dead straight for four hundred
+      // metres is a runway, not a field edge.
+      const drift = (t) => (fbm(index * 91 + t * 0.004, index * 37, 0.9, 55 + index) - 0.5) * 26;
+      lines.push({ axis: 'x', at: index * FIELD + (hash2(index, 7, 3) - 0.5) * 40, drift });
+      lines.push({ axis: 'z', at: index * FIELD + (hash2(index, 11, 5) - 0.5) * 40, drift });
+    }
+    for (const line of lines) {
+      // Each run gets one or two gaps in it, and a gate in one of them.
+      const gapAt = between(-REACH, REACH);
+      const gapWidth = between(9, 26);
+      let gated = false;
+      for (let t = -REACH; t < REACH; t += HEDGE_LENGTH) {
+        const wander = line.drift(t);
+        const x = line.axis === 'x' ? line.at + wander : t;
+        const z = line.axis === 'x' ? t : line.at + wander;
+        if (Math.hypot(x, z - 40) > REACH) continue;
+        if (!clear(x, z, 11, 8)) continue;
+        // Two boundaries meeting stacked four hedges on one spot, which read
+        // as a heap rather than as a corner. One run gives way at a crossing.
+        if (line.axis === 'z' && lines.some((other) => other.axis === 'x'
+          && Math.abs(x - (other.at + other.drift(z))) < 7)) continue;
+        if (Math.abs(t - gapAt) < gapWidth) {
+          if (!gated && Math.abs(t - gapAt) < HEDGE_LENGTH * 0.5) {
+            gated = true;
+            gates.push([x, z, line.axis === 'x' ? Math.PI / 2 : 0, 1]);
+          }
+          continue;
+        }
+        // A hedge is never quite on the line and never quite level.
+        const spin = (line.axis === 'x' ? Math.PI / 2 : 0) + between(-0.05, 0.05);
+        const placement = [x + between(-0.7, 0.7), z + between(-0.7, 0.7), spin,
+          between(0.86, 1.2), between(-0.03, 0.03), between(-0.04, 0.04)];
+        (Math.hypot(x, z) < 90 ? hedgeNear : hedgeFar).push(placement);
+        // Trees grow out of hedgerows, which is where every tree in a field
+        // that has not been planted actually is.
+        if (random() < 0.16) {
+          hedgeTrees.push([x + between(-1.6, 1.6), z + between(-1.6, 1.6),
+            between(0, Math.PI * 2), between(0.8, 1.5)]);
+        }
+      }
+    }
+    // Two levels of detail, split by distance rather than by camera: the
+    // hedges you can walk up to are the full build, the two hundred behind
+    // them are a quarter of the blocks and identical in silhouette.
+    scatter(assets.hedgerow, hedgeNear, { name: 'Hedge_Near', castShadow: true });
+    scatter(assets.hedgerowFar || assets.hedgerow, hedgeFar,
+      { name: 'Hedge_Far', castShadow: false });
+    scatter(assets.hedgeGap, gates, { name: 'Field_Gates', castShadow: true });
+
+    // --- What stands in the fields ------------------------------------------
+    // Rejection sampling against the noise: brambles take the rank ground,
+    // scrub thins out where it burned off, and nothing grows on the road.
+    const sample = (count, reach, accept, { near = 0, spacing = 0 } = {}) => {
+      const out = [];
+      const spacingSquared = spacing * spacing;
+      for (let tries = 0; tries < count * 16 && out.length < count; tries++) {
+        const angle = random() * Math.PI * 2;
+        // Square-root weighting gives an even area density; biasing it inward
+        // puts the detail where the player can actually see it.
+        const radius = near + (reach - near) * Math.sqrt(random()) ** 1.35;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius + 20;
+        if (!accept(x, z)) continue;
+        // Bushes that land on top of each other stop reading as bushes and
+        // start reading as one lumpy mass, which is what a field of brambles
+        // must not look like.
+        if (spacingSquared && out.some(([ox, oz]) =>
+          (ox - x) ** 2 + (oz - z) ** 2 < spacingSquared)) continue;
+        out.push([x, z]);
+      }
+      return out;
+    };
+
+    // Brambles: thickest on the rank ground, and they crowd the hedge lines.
+    const scrub = sample(Math.round(460 * foliage), 300,
+      (x, z) => clear(x, z, 9) && random() < 0.25 + rankness(x, z) * 1.5,
+      { spacing: 3.4 })
+      .map(([x, z]) => [x, z, random() * Math.PI * 2, between(0.7, 1.6),
+        between(-0.06, 0.06), between(-0.06, 0.06)]);
+    scatter(assets.scrub, scrub, { name: 'Scrub', castShadow: false });
+
+    // Seeded grass. Only the near field: it is what stops the ground reading
+    // as a painted bedsheet underfoot, and past thirty metres it is a texture.
+    const tufts = [];
+    for (let tries = 0; tries < 5200 && tufts.length < Math.round(1150 * foliage); tries++) {
+      const angle = random() * Math.PI * 2;
+      const radius = 5 + 118 * Math.sqrt(random()) ** 1.6;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius - 4;
+      // Inside the wire it grows too — it is a field with a shelter in it —
+      // but not on the track, the apron or the yard.
+      const onTrack = Math.abs(x) < 4.2 && z > -16 && z < 19;
+      const onYard = z < -18.4 && z > -26.8 && x > -21 && x < 13;
+      if (onTrack || onYard || offRoad(x, z) < 5.4) continue;
+      if (random() > 0.35 + rankness(x, z) * 1.1 - dryness(x, z) * 0.4) continue;
+      tufts.push([x, z, random() * Math.PI * 2, between(0.7, 1.5),
+        between(-0.1, 0.1), between(-0.1, 0.1)]);
+    }
+    scatter(assets.grassTuft, tufts, { name: 'Grass_Tufts', castShadow: false });
+
+    // Trees. The hedgerow ones, plus copses where the ground is rank.
+    const copse = sample(Math.round(120 * foliage), 420,
+      (x, z) => clear(x, z, 13) && random() < rankness(x, z) * 1.7,
+      { spacing: 5.5 })
+      .map(([x, z]) => [x, z, random() * Math.PI * 2, between(0.75, 1.6)]);
+    const standing = [...hedgeTrees, ...copse];
+    if (deadTrees.length) {
+      // Five different dead forms, dealt out so no two neighbours match.
+      deadTrees.forEach((tree, index) => {
+        scatter(tree, standing.filter((_, i) => i % deadTrees.length === index),
+          { name: `Dead_Trees_${index}`, castShadow: false });
+      });
+    } else {
+      scatter(assets.deadTree, standing, { name: 'Dead_Trees', castShadow: false });
+    }
+
+    // Everything else lying about out there.
+    const lay = (asset, count, reach, name, options = {}) => {
+      const placements = sample(Math.round(count * foliage), reach,
+        (x, z) => clear(x, z, options.verge ?? 9, options.margin ?? 4),
+        { spacing: options.spacing ?? 6 })
+        .map(([x, z]) => [x, z, random() * Math.PI * 2,
+          between(options.min ?? 0.85, options.max ?? 1.25),
+          between(-0.05, 0.05), between(-0.05, 0.05)]);
+      scatter(asset, placements, { name, castShadow: options.castShadow ?? false });
+      return placements;
+    };
+    lay(assets.fallenTree, 46, 380, 'Fallen_Trees', { min: 0.8, max: 1.35 });
+    lay(assets.spoilHeap, 26, 400, 'Spoil_Heaps', { min: 0.7, max: 1.5 });
+    lay(assets.fieldDebris, 140, 330, 'Field_Debris', { min: 0.8, max: 1.4 });
+    lay(assets.farmWreck, 9, 320, 'Farm_Wrecks', { min: 0.9, max: 1.1, verge: 16 });
+    lay(assets.rubble, 40, 300, 'Field_Rubble', { min: 0.7, max: 1.3 });
+
+    // Telegraph poles follow the road, because that is what they follow.
+    if (assets.telegraphPole) {
+      const poles = [];
+      for (let i = 0; i < 26; i++) {
+        const distance = 26 + i * 18.5;
+        const side = i % 2 ? 1 : -1;
+        const [x, , z] = roadPoint(distance, side * between(8.2, 9.6));
+        poles.push([x, z, TOWN_BEARING + between(-0.05, 0.05), between(0.92, 1.06),
+          between(-0.03, 0.03), between(-0.03, 0.03)]);
+      }
+      scatter(assets.telegraphPole, poles, { name: 'Telegraph_Poles', castShadow: false });
+    }
+    return { hedges: hedgeNear.length + hedgeFar.length, gates: gates.length,
+      scrub: scrub.length, tufts: tufts.length, trees: standing.length };
+  }
+  const country = countryside();
 
   // Somewhere to find out what the armoury's twenty-six weapons actually do.
   const range = createRange({
@@ -1194,7 +1472,7 @@ export function createGameWorld(assets) {
     weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
-    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,country,
     gateIsOpen:()=>gateOpen,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,

@@ -260,7 +260,12 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
       // The fog matches the horizon, so distance runs out into haze rather
       // than into a colour that belongs to nothing on screen.
       scene.fog.color.copy(horizon).lerp(_a.setHex(0x9aa6ad), cloud * 0.35 * dayFactor);
-      scene.fog.density = 0.0075 + rain * 0.012 + cloud * 0.003;
+      // Clear-day density used to be 0.0075, which is seventy per cent fogged
+      // at a hundred and fifty metres. That was tuned for a surface with
+      // nothing on it past the wire; there is now half a kilometre of hedged
+      // country and a town out there, and all of it was arriving as a white
+      // wash. Weather still closes it down — a rainstorm is still a rainstorm.
+      scene.fog.density = 0.0026 + rain * 0.0115 + cloud * 0.0035;
     }
     return state;
   }

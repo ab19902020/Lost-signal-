@@ -138,12 +138,16 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
     ls.fire();
     ls.simulate(4);
     const after = ls.weapon();
-    // A second round, well after the slowest action in the collection has
-    // cycled: hip spread is wide enough that a single shot can legitimately
-    // go out through the armoury doorway and hit nothing at all.
-    ls.simulate(100);
-    ls.fire();
-    ls.simulate(6);
+    // More rounds, each well after the slowest action in the collection has
+    // cycled. Hip spread is wide enough that a shot can legitimately go out
+    // through the armoury doorway and hit nothing at all — the snub revolver
+    // threw two in a row past it and failed a run — so keep firing until one
+    // of them marks the wall, or four have missed it.
+    for (let round = 1; round < 4 && ls.marks() <= marksBefore; round++) {
+      ls.simulate(100);
+      ls.fire();
+      ls.simulate(6);
+    }
     if (spec.kind === 'melee') {
       if (after.ammo !== 0) out.fired.push(`${key}: a blade consumed ammunition`);
     } else if (after.ammo !== before.ammo - 1) {

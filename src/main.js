@@ -180,9 +180,12 @@ const TIERS = {
   // Mobile previously lost browser antialiasing when the composer rendered to
   // an unsampled target. SMAA costs one light fullscreen pass and removes the
   // crawling/blocky railing edges visible in the supplied Android recording.
-  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: true, grain: 0.0, ao: false },
-  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.004, ao: false },
-  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.007, ao: true },
+  // `foliage` is how much of the countryside gets planted. The layout is the
+  // same at every tier — the same hedge lines, the same fields — there is
+  // simply less standing in them.
+  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: true, grain: 0.0, ao: false, foliage: 0.34 },
+  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.004, ao: false, foliage: 0.68 },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.007, ao: true, foliage: 1 },
 };
 const quality = (() => {
   // ?quality=high forces a tier. A headless browser reports four cores and a
@@ -263,7 +266,7 @@ async function prepare() {
       opening.setLoadStatus(`BRINGING SITE SYSTEMS ONLINE — ${step}/${total}`);
     });
 
-    game = createGameWorld(assets);
+    game = createGameWorld(assets, { foliage: quality.foliage });
     game.camera.rotation.order = 'YXZ';
 
     createComposer();

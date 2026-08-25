@@ -461,6 +461,50 @@ results.textures = await page.evaluate(() => {
   return seen;
 });
 
+// The surface. The ground has to be one vertex-coloured mesh rather than a
+// stack of flat-coloured rectangles — that stack was the jigsaw — and the
+// countryside on it has to be instanced rather than cloned, or a field of a
+// thousand things is a thousand draw calls.
+results.country = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.world('outside');
+  ls.simulate(10);
+  let field = null;
+  let jigsaw = 0;
+  let instanced = 0;
+  let scattered = 0;
+  let triangles = 0;
+  ls.game.outside.traverse((o) => {
+    if (!o.isMesh) return;
+    if (/^(ExteriorSkirt|FarField_|GrassPatch_)/.test(o.name)) jigsaw++;
+    if (o.name === 'ExteriorField') {
+      const colour = o.geometry.attributes.color;
+      const values = [];
+      if (colour) {
+        for (let i = 0; i < colour.count; i += Math.ceil(colour.count / 400)) {
+          values.push(colour.getY(i) - colour.getZ(i));
+        }
+      }
+      field = {
+        vertexColours: !!colour && o.material.vertexColors === true,
+        // How far apart the greenest and the driest ground are. A single flat
+        // tone would read as zero here.
+        spread: values.length
+          ? +(Math.max(...values) - Math.min(...values)).toFixed(3) : 0,
+        receiveShadow: o.receiveShadow,
+      };
+    }
+    if (o.isInstancedMesh) {
+      instanced++;
+      scattered += o.count;
+      const g = o.geometry;
+      triangles += ((g.index ? g.index.count : g.attributes.position.count) / 3) * o.count;
+    }
+  });
+  return { field, jigsaw, instanced, scattered, triangles: Math.round(triangles),
+    ...ls.game.country };
+});
+
 results.world = await page.evaluate(() => ({
   wildlife: globalThis.__ls.game.wildlife.length,
   residents: globalThis.__ls.game.residents?.residents.length ?? 0,

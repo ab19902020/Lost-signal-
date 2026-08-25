@@ -99,6 +99,42 @@ def world_uv(o, tile=2.2):
     return o
 
 
+# --- Deterministic noise ----------------------------------------------------
+# The ground's tone, and where things grow on it, both come from the same
+# lattice noise. It has to be deterministic: the scatter in the scene code has
+# to agree with the colour baked into the mesh, and both have to be the same
+# every time the world is generated.
+
+def _hash2(ix, iz, seed):
+    h = (ix * 374761393 + iz * 668265263 + seed * 2246822519) & 0xFFFFFFFF
+    h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
+    return ((h ^ (h >> 16)) & 0xFFFFFF) / 0xFFFFFF
+
+
+def value_noise(x, z, scale, seed):
+    fx, fz = x / scale, z / scale
+    ix, iz = math.floor(fx), math.floor(fz)
+    tx, tz = fx - ix, fz - iz
+    sx = tx * tx * (3 - 2 * tx)
+    sz = tz * tz * (3 - 2 * tz)
+    a = _hash2(ix, iz, seed)
+    b = _hash2(ix + 1, iz, seed)
+    c = _hash2(ix, iz + 1, seed)
+    d = _hash2(ix + 1, iz + 1, seed)
+    return (a * (1 - sx) + b * sx) * (1 - sz) + (c * (1 - sx) + d * sx) * sz
+
+
+def fbm(x, z, scale, seed, octaves=4):
+    total = 0.0
+    amplitude = 1.0
+    norm = 0.0
+    for o in range(octaves):
+        total += value_noise(x, z, scale / (2 ** o), seed + o * 17) * amplitude
+        norm += amplitude
+        amplitude *= 0.5
+    return total / norm
+
+
 def plan_uv(o, across, along):
     """Plan-view UVs, in metres, for a surface that is read from above.
 
@@ -255,6 +291,17 @@ def join_all(name):
     return joined
 
 
+def shade_smooth(o):
+    # Foliage only. Each leaf block is a disconnected cube, so smoothing
+    # averages its own eight normals and rounds it off — which is the whole
+    # difference between a hedge and a pile of boxes.
+    if o is None:
+        return o
+    for polygon in o.data.polygons:
+        polygon.use_smooth = True
+    return o
+
+
 def export(name):
     path = os.path.join(OUT, name)
     add_orientation_marker()
@@ -263,9 +310,18 @@ def export(name):
     # baking a private copy of every one into each GLB. The same six 1K maps were
     # embedded five times over, which was 10 MB of the asset payload and five
     # separate GPU uploads of identical images.
-    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True,
-                              export_apply=True, export_yup=False,
-                              export_keep_originals=True)
+    options = dict(filepath=path, export_format='GLB', use_selection=True,
+                   export_apply=True, export_yup=False,
+                   export_keep_originals=True)
+    # The ground carries its tone in a colour attribute rather than in a
+    # separate polygon per shade. The exporter's default only writes one out if
+    # a material samples it, and a glTF material cannot; ACTIVE writes it
+    # regardless, and the runtime multiplies the base colour by it, which is
+    # exactly what the glTF spec says COLOR_0 is for.
+    try:
+        bpy.ops.export_scene.gltf(**options, export_vertex_color='ACTIVE')
+    except TypeError:
+        bpy.ops.export_scene.gltf(**options)
     print('EXPORT', path)
 
 
@@ -517,65 +573,101 @@ def build_exterior_ground():
 
     This is Berkshire, years after it happened. The grass came back — it always
     does — so what is underfoot is rough pasture gone to seed, not a car park.
-    The eleven-by-nine grid of concrete slabs that used to cover the middle read
-    as a field of black panels at night and had no business being there: the
-    hard standing is now a single worn apron in front of the shelter door and a
-    track running up to the gate, with grass either side of it.
+
+    One mesh, not a stack of them. It used to be a skirt, a field, twenty-six
+    big rotated rectangles of "far field" and fourteen "grass patches", each a
+    flat colour with a hard edge, all within a few centimetres of each other:
+    from any height it read as a jigsaw, and at range the layers fought in the
+    depth buffer. There is now a single graded grid — six-metre cells where the
+    player walks, opening out to a hundred and sixty at the horizon — carrying
+    its tone in vertex colours off the same noise the scatter uses. Nothing has
+    an edge because nothing is a separate polygon.
     """
     clear_scene()
-    # Painted surfaces, not flat colours. Untextured they were a patchwork of
-    # hard-edged coloured polygons across the whole compound — you could read
-    # every rectangle in the field from the gate.
     def ground(name, tile):
         return image_pbr(name, f'{tile}__Color.jpg',
                          'concrete__Concrete034_1K_NormalGL.jpg',
                          'concrete__Concrete034_1K_Roughness.jpg')
     grass = ground('MeadowGrass', 'grass_meadow')
-    grass_dry = ground('DryGrass', 'grass_dry')
-    grass_dark = ground('RankGrass', 'grass_rank')
     soil = ground('BareEarth', 'earth')
     asphalt = mat('WornAsphalt', (.115, .118, .116), 0, .93)
 
-    # The field, and a wider skirt of it behind the fence so the ground runs
-    # out past the wire instead of ending two metres beyond it.
-    # The ground is a stack of flat layers covering the same kilometre, so the
-    # gaps between them are the whole margin the depth buffer has to work with.
-    # They used to sit within six centimetres of one another and fought all the
-    # way to the horizon; these are spaced far enough apart to resolve at range
-    # and still far too close to see as steps.
-    cube('ExteriorGrass', (0, -.30, 0), (30, .30, 34), grass, edge=.10)
-    # The skirt has to reach the town now, because there is a road running out
-    # to it. One quad: at this range the fog and the haze do the work, and the
-    # alternative is a horizon that stops five hundred metres short of where
-    # the player can see.
-    cube('ExteriorSkirt', (0, -.62, 0), (460, .30, 560), grass, edge=0)
-    # Field boundaries out along the road, so the far country is not one flat
-    # green. Berkshire is hedged fields, not prairie.
-    random.seed(23)
-    for i in range(26):
-        fx = random.uniform(-380, 300)
-        fz = random.uniform(-260, 500)
-        if abs(fx) < 34 and abs(fz) < 34:
-            continue
-        cube(f'FarField_{i}', (fx, -.20, fz),
-             (random.uniform(28, 74), .10, random.uniform(28, 74)),
-             grass_dry if i % 2 else grass_dark,
-             rotation=(0, random.uniform(0, 3.1), 0), edge=1.2)
+    # Vertex tints applied to the one pasture texture. Meadow is the ground
+    # state; dry is where it burned off; rank is the wet hollows and the shade.
+    MEADOW = (1.00, 1.00, 0.94)
+    DRY = (1.00, 0.88, 0.46)
+    RANK = (0.56, 0.78, 0.54)
+    POOR = (0.86, 0.76, 0.58)
 
-    # Patchwork: rough pasture is never one tone. Big soft overlapping mats of
-    # dry, rank and bare ground, all a couple of centimetres proud of the field.
-    patches = [
-        (-19, -22, 9.0, 7.0, grass_dry), (14, -17, 8.0, 9.5, grass_dark),
-        (-22, 5, 7.5, 11.0, grass_dark), (17, 12, 9.5, 7.0, grass_dry),
-        (-7, -27, 11.0, 5.5, grass_dry), (8, 24, 8.5, 6.0, grass_dark),
-        (-26, -6, 8.0, 8.0, grass_dry), (24, 2, 7.0, 9.0, grass_dark),
-        (-12, 20, 6.5, 6.0, grass_dry), (20, -27, 8.0, 6.0, grass_dry),
-        (-40, -30, 22.0, 18.0, grass_dark), (44, -12, 20.0, 22.0, grass_dry),
-        (-46, 18, 20.0, 20.0, grass_dry), (38, 30, 24.0, 18.0, grass_dark),
-    ]
-    for index, (x, z, sx, sz, material) in enumerate(patches):
-        cube(f'GrassPatch_{index}', (x, -.02, z), (sx, .052, sz), material,
-             rotation=(0, index * .27, 0), edge=.60)
+    def tone(x, z):
+        # Two independent fields: how dry it is, and how rank. Neither is a
+        # boundary, so neither can draw one.
+        dry = fbm(x, z, 78.0, 4181)
+        rank = fbm(x + 2200, z - 1700, 54.0, 9137)
+        # A slow, very large wash on top so the country reads as having
+        # somewhere lower and wetter in it rather than as even scatter.
+        wash = fbm(x - 900, z + 1300, 260.0, 517, octaves=3)
+        # A third field for the thin ground over chalk, which is most of the
+        # downs and is what stops two tones reading as two tones.
+        poor = fbm(x - 4100, z + 3300, 132.0, 2749, octaves=3)
+        dry = min(1.0, max(0.0, (dry - 0.40) * 3.1 + (wash - 0.5) * 0.9))
+        rank = min(1.0, max(0.0, (rank - 0.50) * 3.2 - (wash - 0.5) * 1.0))
+        poor = min(1.0, max(0.0, (poor - 0.56) * 2.8))
+        colour = []
+        for i in range(3):
+            c = MEADOW[i] * (1 - dry) + DRY[i] * dry
+            c = c * (1 - rank) + RANK[i] * rank
+            c = c * (1 - poor * 0.7) + POOR[i] * poor * 0.7
+            # Fine break-up, so even one tone is never perfectly even.
+            c *= 0.94 + fbm(x + i * 700, z - i * 400, 11.0, 733 + i) * 0.12
+            colour.append(min(1.0, max(0.0, c)))
+        return (colour[0], colour[1], colour[2], 1.0)
+
+    # A graded axis: six-metre cells across the compound and everywhere the
+    # player can drive, opening out toward the horizon where a vertex buys
+    # nothing.
+    def graded_axis(core=198.0, step=6.0, reach=1500.0, growth=1.34):
+        inner = []
+        n = int(core / step)
+        for i in range(-n, n + 1):
+            inner.append(i * step)
+        out = []
+        position = core
+        span = step
+        while position < reach:
+            span *= growth
+            position += span
+            out.append(min(position, reach))
+        return [-v for v in reversed(out)] + inner + out
+
+    axis = graded_axis()
+    bm = bmesh.new()
+    colour_layer = bm.loops.layers.color.new('Col')
+    uv_layer = bm.loops.layers.uv.new()
+    grid = [[bm.verts.new((x, 0.0, z)) for z in axis] for x in axis]
+    bm.verts.index_update()
+    for i in range(len(axis) - 1):
+        for j in range(len(axis) - 1):
+            face = bm.faces.new((grid[i][j], grid[i + 1][j],
+                                 grid[i + 1][j + 1], grid[i][j + 1]))
+            face.smooth = False
+            for loop in face.loops:
+                co = loop.vert.co
+                # World-scale UVs in metres, so the texel density is the same
+                # in the compound and half a kilometre out.
+                loop[uv_layer].uv = (co.x / 2.2, co.z / 2.2)
+                loop[colour_layer] = tone(co.x, co.z)
+    me = bpy.data.meshes.new('ExteriorFieldMesh')
+    bm.to_mesh(me)
+    bm.free()
+    # bmesh writes the attribute but leaves it neither active nor the render
+    # colour, and the exporter only writes out the render one — which is why
+    # the first attempt at this shipped a ground with no COLOR_0 on it at all.
+    me.color_attributes.active_color_name = 'Col'
+    me.color_attributes.default_color_name = 'Col'
+    me.materials.append(grass)
+    field = bpy.data.objects.new('ExteriorField', me)
+    bpy.context.collection.objects.link(field)
 
     # Worn earth only where boots and wheels have actually killed the grass: a
     # single track from the gate to the shelter door, and the turning circle in
@@ -598,6 +690,362 @@ def build_exterior_ground():
     export('exterior_ground_v3.glb')
 
 
+# --- What actually grows and lies about out there ---------------------------
+# Everything below is scattered in the hundreds by the scene code, through one
+# instanced draw per mesh, so the polygon budget per asset is the budget times
+# a few hundred. Bevels are off on the foliage for that reason: a bevelled cube
+# is a hundred and fifty triangles and a bare one is twelve, and at a hedge's
+# distance nothing can tell.
+
+HEDGE_LENGTH = 12.0
+
+
+def build_hedge(blocks=280, stems=11, name='hedgerow_v1.glb'):
+    """Twelve metres of overgrown hedgerow.
+
+    Berkshire is not fields, it is the hedges between them — take them out and
+    the country reads as a green tablecloth with things standing on it, which
+    is exactly what it was doing. Fifteen years unmanaged, so it is leggy and
+    half dead: a dense base, bare stems through the top of it, and the wire it
+    was planted along still in there somewhere.
+    """
+    clear_scene()
+    leaf = mat('HedgeLeaf', (.052, .076, .038), 0, .96)
+    leaf_dry = mat('HedgeLeafDry', (.104, .092, .052), 0, .97)
+    leaf_lit = mat('HedgeLeafLit', (.094, .132, .058), 0, .95)
+    leaf_deep = mat('HedgeLeafDeep', (.030, .046, .024), 0, .96)
+    dead = mat('HedgeDead', (.070, .060, .046), 0, .96)
+    timber = mat('HedgeTimber', (.078, .066, .052), 0, .95)
+    wire = mat('HedgeWire', (.098, .094, .088), .55, .70)
+    earth = mat('HedgeEarth', (.086, .074, .058), 0, .98)
+
+    random.seed(4021)
+    half = HEDGE_LENGTH / 2
+
+    # A hedge has to be solid. Fifty loose blocks scattered along a line read as
+    # fifty loose blocks; what makes a hedge is a continuous mass you cannot see
+    # daylight through, with an irregular top. So: a core you never see, and a
+    # hundred and thirty small blocks packed onto it.
+    def profile(t):
+        # How full the hedge is at -1..1 along its length.
+        return .86 + fbm(t * 4.0, 0.0, 1.6, 4021) * .40
+
+    # The bank it grew out of, and the dark core inside the leaf.
+    cube('Hedge_Bank', (0, .12, 0), (half, .12, .64), earth, edge=.20)
+    cube('Hedge_Core', (0, .92, 0), (half * .99, .70, .34), leaf, edge=.10)
+
+    for i in range(blocks):
+        t = random.uniform(-1, 1)
+        x = t * half * .99
+        fullness = profile(t)
+        # Blocks cluster low and thin out toward the top, and the hedge is
+        # narrower the higher up it you look.
+        lift = random.random() ** 1.45
+        y = .22 + lift * 1.72 * fullness
+        taper = 1.18 - (y / (2.1 * fullness))
+        z = random.gauss(0, .155 * max(.3, taper))
+        size = random.uniform(.075, .165) * (.72 + fullness * .5)
+        # Four tones: sunlit on the outside of the mass, deep in the middle,
+        # dead where it is dying back. One flat green reads as one flat solid.
+        outward = min(1.0, (abs(z) / .34) + lift * .5)
+        if outward > .72:
+            material = leaf_lit if i % 3 else (leaf_dry if i % 7 == 0 else leaf)
+        elif outward > .38:
+            material = leaf
+        else:
+            material = leaf_deep
+        cube(f'Hedge_Leaf_{i}', (x, y, z),
+             (size, size * random.uniform(.72, 1.05), size * random.uniform(.8, 1.25)),
+             material,
+             rotation=(random.uniform(-1.6, 1.6), random.uniform(0, 3.1),
+                       random.uniform(-1.6, 1.6)), edge=0)
+
+    # Leggy stems standing out of the top, which is what an unmanaged hedge
+    # looks like from any distance at all.
+    for i in range(stems):
+        x = random.uniform(-half * .92, half * .92)
+        h = random.uniform(2.4, 4.1)
+        lean = random.uniform(-.22, .22)
+        between(f'Hedge_Stem_{i}', (x, .2, random.gauss(0, .2)),
+                (x + lean * h, h, random.gauss(0, .3)), random.uniform(.028, .05),
+                timber, 6)
+        for b in range(2):
+            a = random.uniform(0, math.tau)
+            between(f'Hedge_Branch_{i}_{b}',
+                    (x + lean * h * .7, h * .68, 0),
+                    (x + lean * h * .7 + math.cos(a) * .7, h * .68 + random.uniform(.2, .7),
+                     math.sin(a) * .6), .018, dead, 5)
+
+    # The stock fence it was planted along, mostly swallowed.
+    for i in range(4):
+        x = -half + (i + .5) * (HEDGE_LENGTH / 4)
+        cube(f'Hedge_Post_{i}', (x, .48, -.44), (.045, .48, .045), timber,
+             rotation=(0, 0, random.uniform(-.06, .06)), edge=0)
+    for y in (.36, .62, .86):
+        between(f'Hedge_Wire_{y:.2f}', (-half, y, -.44), (half, y, -.44), .009, wire, 4)
+
+    shade_smooth(join_all('Hedgerow'))
+    export(name)
+
+
+def build_hedge_far():
+    # Past ninety metres a hedge is a dark mass with a ragged top and nothing
+    # else, and there are two hundred of them out there. Same silhouette, same
+    # seed, a quarter of the blocks.
+    build_hedge(blocks=52, stems=5, name='hedgerow_far_v1.glb')
+
+
+def build_hedge_gap():
+    """A field gate in a hedge: the break every run of hedge has in it."""
+    clear_scene()
+    timber = mat('GateTimber', (.128, .104, .072), 0, .94)
+    rust = mat('GateIron', (.112, .062, .038), .30, .90)
+    earth = mat('GapEarth', (.096, .082, .064), 0, .98)
+    cube('Gap_Mud', (0, .012, .1), (2.4, .020, 1.5), earth, edge=.55)
+    for side in (-1, 1):
+        cube(f'Gap_Post_{side}', (side * 2.05, .78, 0), (.09, .78, .09), timber, edge=.02)
+    # A five-bar gate, hanging off one hinge as they all end up.
+    lean = -.13
+    for i, y in enumerate((.30, .56, .82, 1.08, 1.34)):
+        cube(f'Gap_Bar_{i}', (-.05, y, .06), (1.92, .045, .035), timber,
+             rotation=(0, 0, lean), edge=.012)
+    cube('Gap_Stile', (-1.92, .82, .06), (.055, .56, .04), timber,
+         rotation=(0, 0, lean), edge=.012)
+    cube('Gap_Head', (1.80, .84, .06), (.055, .56, .04), timber,
+         rotation=(0, 0, lean), edge=.012)
+    between('Gap_Brace', (-1.86, .30, .10), (1.74, 1.32, .10), .034, timber, 6)
+    cube('Gap_Hinge', (2.00, 1.26, .04), (.13, .045, .05), rust, edge=.01)
+    join_all('HedgeGap')
+    export('hedge_gap_v1.glb')
+
+
+def build_scrub():
+    """A bramble clump. What takes a field first when nobody cuts it."""
+    clear_scene()
+    bramble = mat('ScrubBramble', (.050, .070, .034), 0, .96)
+    bramble_dry = mat('ScrubDry', (.070, .062, .036), 0, .97)
+    stem = mat('ScrubStem', (.072, .058, .042), 0, .95)
+    random.seed(707)
+    for i in range(18):
+        a = random.uniform(0, math.tau)
+        r = random.uniform(0, .78)
+        y = random.uniform(.14, .74) * (1 - r * .55)
+        size = random.uniform(.18, .38) * (1 - r * .35)
+        cube(f'Scrub_Mass_{i}', (math.cos(a) * r, y, math.sin(a) * r),
+             (size, size * .75, size),
+             bramble_dry if i % 4 == 0 else bramble,
+             rotation=(random.uniform(-.5, .5), a, random.uniform(-.5, .5)), edge=0)
+    for i in range(5):
+        a = random.uniform(0, math.tau)
+        between(f'Scrub_Cane_{i}', (0, .12, 0),
+                (math.cos(a) * random.uniform(.7, 1.3), random.uniform(.5, 1.05),
+                 math.sin(a) * random.uniform(.7, 1.3)), .014, stem, 5)
+    shade_smooth(join_all('ScrubClump'))
+    export('scrub_v1.glb')
+
+
+def build_grass_tuft():
+    """A clump of seeded grass, knee high.
+
+    Ground texture alone reads as a painted bedsheet the moment you stand on
+    it. What sells a field is the few hundred things standing up out of it in
+    the first thirty metres, so these are geometry — nine blades, no bevel —
+    scattered by the hundred through one instanced draw.
+    """
+    clear_scene()
+    # Lit to sit just above the ground texture's own blades, not below them:
+    # the first attempt at this was a drab olive twelve millimetres wide and
+    # read as a clump of burnt wire standing in a lawn.
+    blade = mat('TuftBlade', (.122, .168, .056), 0, .95)
+    blade_dry = mat('TuftBladeDry', (.166, .154, .072), 0, .95)
+    seed_head = mat('TuftSeed', (.182, .164, .092), 0, .94)
+    random.seed(313)
+    for i in range(15):
+        a = i * 2.399963 + random.uniform(-.25, .25)   # golden angle: no clumps
+        lean = random.uniform(.22, .62)
+        h = random.uniform(.22, .52)
+        base = (math.cos(a) * .05, 0.0, math.sin(a) * .05)
+        tip = (base[0] + math.cos(a) * lean * h, h, base[2] + math.sin(a) * lean * h)
+        # A blade is a wide flat strap, not a wire. Wide enough to catch the
+        # sun on one side and shade on the other is the whole trick.
+        cube(f'Tuft_Blade_{i}',
+             ((base[0] + tip[0]) / 2, h * .5, (base[2] + tip[2]) / 2),
+             (.017, h * .54, .006),
+             blade if i % 3 else blade_dry,
+             rotation=(math.sin(a) * lean, a, -math.cos(a) * lean), edge=0)
+        if i % 4 == 0:
+            cube(f'Tuft_Seed_{i}', tip, (.011, .062, .009), seed_head,
+                 rotation=(math.sin(a) * lean, a, -math.cos(a) * lean), edge=0)
+    join_all('GrassTuft')
+    export('grass_tuft_v1.glb')
+
+
+def build_fallen_tree():
+    """A trunk down across the field, which is where the dead ones end up."""
+    clear_scene()
+    bark = mat('FallenBark', (.088, .074, .058), 0, .95)
+    split = mat('FallenSplit', (.132, .112, .082), 0, .93)
+    random.seed(88)
+    length = 9.2
+    # A trunk tapers. Two lengths of it, the thin end lifted clear of the
+    # ground where the branches are holding it up.
+    cyl('Fallen_Trunk', (-1.4, .34, 0), .34, length * .55, bark,
+        rotation=(0, math.pi / 2, .02), verts=10, edge=.03)
+    cyl('Fallen_Trunk_Thin', (3.0, .40, .18), .24, length * .52, bark,
+        rotation=(0, math.pi / 2 + .06, -.05), verts=8, edge=.03)
+    cube('Fallen_Break', (length / 2 - .3, .46, .22), (.20, .26, .26), split,
+         rotation=(.2, .3, .1), edge=.04)
+    # The root plate, torn up on end: a disc standing vertically with the soil
+    # still in it, which is the thing you actually recognise across a field.
+    cyl('Fallen_Plate', (-length / 2 - .1, 1.05, 0), 1.05, .28, bark,
+        rotation=(0, math.pi / 2, .22), verts=12, edge=.05)
+    for i in range(9):
+        a = random.uniform(0, math.tau)
+        reach = random.uniform(.8, 1.5)
+        between(f'Fallen_Root_{i}', (-length / 2 - .1, 1.05, 0),
+                (-length / 2 - random.uniform(.3, .8), 1.05 + math.cos(a) * reach,
+                 math.sin(a) * reach), random.uniform(.025, .06), bark, 5)
+    for i in range(9):
+        t = random.uniform(-.42, .48) * length
+        a = random.uniform(0, math.tau)
+        tip = (t + random.uniform(-1.5, 1.5), .5 + abs(math.cos(a)) * 1.9,
+               math.sin(a) * 2.1)
+        between(f'Fallen_Branch_{i}', (t, .5, 0), tip, random.uniform(.025, .075), bark, 5)
+        if i % 2 == 0:
+            between(f'Fallen_Twig_{i}', tip,
+                    (tip[0] + random.uniform(-.9, .9), tip[1] + random.uniform(.1, .8),
+                     tip[2] + random.uniform(-.9, .9)), .018, split, 4)
+    join_all('FallenTree')
+    export('fallen_tree_v1.glb')
+
+
+def build_spoil_heap():
+    """A mound of earth and rubble. Relief, without touching the floor plane.
+
+    The compound's ground has to stay dead flat — every collider and both the
+    walking and driving bodies take the floor as zero — so the country gets its
+    shape from things standing on it rather than from contours in it.
+    """
+    clear_scene()
+    earth = mat('SpoilEarth', (.070, .058, .044), 0, .98)
+    rubble = mat('SpoilRubble', (.098, .092, .082), 0, .96)
+    random.seed(1290)
+    loft('Spoil_Mound', [
+        ((0, .0, 0), 4.6, 3.4),
+        ((.3, .55, .2), 3.8, 2.8),
+        ((.5, 1.05, .3), 2.7, 2.0),
+        ((.6, 1.45, .35), 1.4, 1.0),
+        ((.6, 1.62, .35), .3, .25),
+    ], earth, axis='y', sides=12)
+    for i in range(14):
+        a = random.uniform(0, math.tau)
+        r = random.uniform(1.2, 4.4)
+        cube(f'Spoil_Block_{i}', (math.cos(a) * r, random.uniform(.08, .5),
+             math.sin(a) * r * .74),
+             (random.uniform(.18, .5), random.uniform(.08, .26), random.uniform(.16, .44)),
+             rubble, rotation=(random.uniform(-.3, .3), a, random.uniform(-.3, .3)), edge=.03)
+    join_all('SpoilHeap')
+    export('spoil_heap_v1.glb')
+
+
+def build_telegraph_pole():
+    """A pole and two crossarms. Vertical marks along a road at half a mile."""
+    clear_scene()
+    timber = mat('PoleTimber', (.098, .082, .062), 0, .95)
+    iron = mat('PoleIron', (.086, .080, .072), .45, .78)
+    glassy = mat('PoleInsulator', (.185, .200, .190), .10, .35)
+    post('Pole_Mast', (0, 4.1, 0), .13, 8.2, timber, verts=10, edge=.02)
+    for i, y in enumerate((7.35, 6.65)):
+        cube(f'Pole_Arm_{i}', (0, y, 0), (.92, .045, .055), iron, edge=.015)
+        for k in (-1, -.45, .45, 1):
+            cube(f'Pole_Insulator_{i}_{k:.2f}', (k * .82, y + .11, 0), (.045, .07, .045),
+                 glassy, edge=.012)
+    cube('Pole_Step', (0, 2.4, .16), (.20, .022, .022), iron, edge=.006)
+    cube('Pole_Plate', (0, 1.7, .14), (.09, .13, .012), iron, edge=.006)
+    join_all('TelegraphPole')
+    export('telegraph_pole_v1.glb')
+
+
+def build_farm_wreck():
+    """A tractor left where it stopped, and the trailer behind it."""
+    clear_scene()
+    paint = mat('FarmPaint', (.146, .052, .034), .18, .82)
+    rust = mat('FarmRust', (.120, .066, .038), .22, .92)
+    tyre = mat('FarmTyre', (.020, .020, .020), 0, .95)
+    steel = mat('FarmSteel', (.098, .096, .090), .45, .80)
+    glassy = mat('FarmGlass', (.040, .052, .058), .10, .30)
+
+    cube('Farm_Body', (0, .92, 0), (.62, .30, 1.34), paint, edge=.08)
+    cube('Farm_Bonnet', (0, 1.12, -1.10), (.48, .26, .78), paint, edge=.07)
+    cube('Farm_Cab', (0, 1.72, .48), (.62, .52, .62), rust, edge=.06)
+    for side in (-1, 1):
+        cube(f'Farm_CabPost_{side}', (side * .58, 1.74, .48), (.04, .52, .58), steel, edge=.02)
+        cube(f'Farm_Glass_{side}', (side * .60, 1.76, .48), (.02, .44, .50), glassy, edge=.01)
+    cube('Farm_Exhaust', (.34, 1.86, -1.42), (.06, .58, .06), steel, edge=.02)
+    # Big rears, small fronts, all flat.
+    for side in (-1, 1):
+        cyl(f'Farm_RearWheel_{side}', (side * .86, .78, .62), .78, .38, tyre,
+            rotation=(0, math.pi / 2, 0), verts=16, edge=.03)
+        cyl(f'Farm_RearHub_{side}', (side * .86, .78, .62), .28, .40, rust,
+            rotation=(0, math.pi / 2, 0), verts=12, edge=.02)
+        cyl(f'Farm_FrontWheel_{side}', (side * .68, .40, -1.32), .40, .24, tyre,
+            rotation=(0, math.pi / 2, 0), verts=14, edge=.02)
+    # The trailer it was pulling, tipped on its side.
+    cube('Farm_TrailerBed', (0, .62, 4.30), (1.06, .10, 1.90), rust,
+         rotation=(0, .06, .34), edge=.05)
+    for side in (-1, 1):
+        cube(f'Farm_TrailerSide_{side}', (side * 1.00, 1.02, 4.30), (.06, .44, 1.88), rust,
+             rotation=(0, .06, .34), edge=.04)
+    cube('Farm_TrailerEnd', (0, 1.00, 6.14), (1.02, .42, .06), rust,
+         rotation=(0, .06, .34), edge=.04)
+    between('Farm_Drawbar', (0, .54, 2.42), (0, .70, 3.10), .06, steel, 6)
+    for side in (-1, 1):
+        cyl(f'Farm_TrailerWheel_{side}', (side * 1.02, .38, 4.60), .38, .22, tyre,
+            rotation=(0, math.pi / 2, .34), verts=12, edge=.02)
+    join_all('FarmWreck')
+    export('farm_wreck_v1.glb')
+
+
+def build_field_debris():
+    """The small stuff: a sheet of corrugate, a pallet, a drum, fence panels.
+
+    Not the roadside debris field, which is masonry from something that came
+    down. This is what fifteen years of weather drags across open country.
+    """
+    clear_scene()
+    corrugate = mat('DebrisCorrugate', (.128, .122, .112), .40, .86)
+    timber = mat('DebrisTimber', (.116, .092, .062), 0, .95)
+    drum = mat('DebrisDrum', (.100, .078, .046), .25, .90)
+    cloth = mat('DebrisCloth', (.118, .112, .098), 0, .97)
+    random.seed(2201)
+    # A sheet of corrugated iron, half buried and curled.
+    for i in range(7):
+        cube(f'Field_Corrugate_{i}', (-1.4 + i * .21, .06 + i * .012, .3),
+             (.10, .02, 1.05), corrugate,
+             rotation=(0, .12, .06 + i * .05), edge=.01)
+    # A broken pallet.
+    for i in range(5):
+        cube(f'Field_Slat_{i}', (1.9, .10, -.5 + i * .24), (.58, .022, .07), timber,
+             rotation=(.04, .22, random.uniform(-.05, .05)), edge=.008)
+    for i in range(2):
+        cube(f'Field_Bearer_{i}', (1.9 + (i - .5) * .5, .05, .0), (.05, .05, .62), timber,
+             rotation=(0, .22, 0), edge=.008)
+    # An oil drum on its side, and a fence panel that came off a bay.
+    cyl('Field_Drum', (-2.2, .29, -1.6), .29, .86, drum,
+        rotation=(0, .4, math.pi / 2), verts=14, edge=.02)
+    for i in range(6):
+        cube(f'Field_Mesh_{i}', (.6 + i * .01, .04, -2.1 + i * .30), (.86, .012, .012),
+             corrugate, rotation=(0, .1, .02), edge=0)
+    for i in range(2):
+        cube(f'Field_MeshRail_{i}', (.6 + i * .84 - .42, .04, -1.35), (.012, .012, .86),
+             corrugate, rotation=(0, .1, .02), edge=0)
+    # A sheet of something that used to be a tarpaulin.
+    cube('Field_Sheet', (-.4, .05, 1.9), (.9, .02, .7), cloth,
+         rotation=(.06, .8, -.05), edge=.06)
+    join_all('FieldDebris')
+    export('field_debris_v1.glb')
+
+
 ROAD_WIDTH = 6.8      # kerb to kerb: two lanes of a British B-road
 ROAD_TILE = 8.0       # metres of carriageway per repeat of the marking tile
 
@@ -614,7 +1062,7 @@ def build_road():
     tarmac = image_pbr('RoadTarmac', 'road__Color.jpg',
                        'concrete__Concrete034_1K_NormalGL.jpg',
                        'concrete__Concrete034_1K_Roughness.jpg')
-    verge = mat('RoadVerge', (.128, .116, .086), 0, .98)
+    verge = mat('RoadVerge', (.074, .070, .050), 0, .98)
     kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
 
     length = 20.0                       # half length: a 40 m section
@@ -627,7 +1075,7 @@ def build_road():
             ROAD_WIDTH, ROAD_TILE)
     for side in (-1, 1):
         cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
-        cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
+        cube(f'Road_Verge_{side}', (side * 4.24, .022, 0), (.62, .024, length), verge, edge=.30)
         # Marker posts every eight metres, as a rural B-road has.
         for i in range(-2, 3):
             cube(f'Road_Post_{side}_{i}', (side * 4.5, .48, i * 8.0), (.055, .48, .045),
@@ -644,7 +1092,7 @@ def build_road_damaged():
                        'concrete__Concrete034_1K_NormalGL.jpg',
                        'concrete__Concrete034_1K_Roughness.jpg')
     rubble = mat('RoadRubble', (.152, .146, .134), 0, .96)
-    verge = mat('RoadVerge', (.128, .116, .086), 0, .98)
+    verge = mat('RoadVerge', (.074, .070, .050), 0, .98)
     kerb = mat('RoadKerb', (.212, .208, .196), 0, .92)
 
     length = 20.0
@@ -652,7 +1100,7 @@ def build_road_damaged():
             ROAD_WIDTH, ROAD_TILE)
     for side in (-1, 1):
         cube(f'Road_Kerb_{side}', (side * 3.56, .085, 0), (.18, .085, length), kerb, edge=.03)
-        cube(f'Road_Verge_{side}', (side * 5.1, .02, 0), (1.4, .022, length), verge, edge=.35)
+        cube(f'Road_Verge_{side}', (side * 4.24, .022, 0), (.62, .024, length), verge, edge=.30)
     # A crater through one carriageway, with the spoil thrown out around it.
     post('Road_Crater', (-1.1, .01, -4.0), 2.3, .10, rubble, verts=18, edge=.06)
     for i in range(9):
@@ -1302,7 +1750,10 @@ for fn in (
     build_fence_signed, build_fence_damaged, build_fence_down,
     build_road, build_road_damaged, build_wreck_car, build_debris_field,
     build_range_target, build_distant_town, build_estate_car,
-    build_remains_covered, build_remains_slumped
+    build_remains_covered, build_remains_slumped,
+    build_hedge, build_hedge_far, build_hedge_gap, build_scrub, build_grass_tuft,
+    build_fallen_tree, build_spoil_heap, build_telegraph_pole,
+    build_farm_wreck, build_field_debris,
 ):
     fn()
 

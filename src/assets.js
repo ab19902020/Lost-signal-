@@ -187,6 +187,18 @@ const exteriorUrls = {
   // The same car with its wheels left as separate objects, hub origins and
   // all, so one of them can be driven instead of parked.
   carDrivable: `${BASE}assets/blender/car_drivable_v1.glb`,
+  // The countryside. Everything here is scattered in the dozens or the
+  // hundreds through instanced draws, so each one is built to a budget.
+  hedgerow: `${BASE}assets/blender/hedgerow_v1.glb`,
+  hedgerowFar: `${BASE}assets/blender/hedgerow_far_v1.glb`,
+  hedgeGap: `${BASE}assets/blender/hedge_gap_v1.glb`,
+  scrub: `${BASE}assets/blender/scrub_v1.glb`,
+  grassTuft: `${BASE}assets/blender/grass_tuft_v1.glb`,
+  fallenTree: `${BASE}assets/blender/fallen_tree_v1.glb`,
+  spoilHeap: `${BASE}assets/blender/spoil_heap_v1.glb`,
+  telegraphPole: `${BASE}assets/blender/telegraph_pole_v1.glb`,
+  farmWreck: `${BASE}assets/blender/farm_wreck_v1.glb`,
+  fieldDebris: `${BASE}assets/blender/field_debris_v1.glb`,
 };
 
 // Assets exported before the up-axis fix carry the authored Y-up world rotated
