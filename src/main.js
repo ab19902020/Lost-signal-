@@ -923,6 +923,9 @@ function use() {
 // take the weapon out of the picture — you are looking through it, not at it.
 const scopeRangeEl = document.getElementById('scopeRange');
 let scoped = false;
+// The eyepiece opens and closes rather than snapping, which is what stops the
+// transition reading as a black rectangle appearing.
+let scopeOpen = 0;
 
 function setScoped(value) {
   const next = !!value && !!weapon?.scope;
@@ -2572,6 +2575,8 @@ function updateWeapon(dt) {
     sprinting ? .24 : 0, 16, dt);
   // Optics differ. A scoped rifle pulls the frame in much further than a
   // pistol at arm's length, so the sight picture comes out of the catalogue.
+  // The optic does the magnifying now. The screen only eases in a little, so
+  // the world behind the tube settles rather than snapping.
   const targetFov = aiming ? (weapon?.zoom ?? 52) : 70;
   // A scoped rifle is never quite still, and magnification is what makes that
   // visible. Breathing walks the aim; holding it steady is the player's job.
@@ -2585,6 +2590,162 @@ function updateWeapon(dt) {
     game.camera.fov = nextFov;
     game.camera.updateProjectionMatrix();
   }
+}
+
+// --- The optic ------------------------------------------------------------
+// The scope used to be a CSS overlay: a black panel with a circular mask that
+// composited the wrong way round, so it blacked out the middle of the screen
+// rather than the surround, and behind it the main camera simply narrowed its
+// field of view. That is not a scope. It cannot magnify past what the screen
+// is already showing, the eye box is a hole cut in a black rectangle, and the
+// picture inside it is the same picture as outside it.
+//
+// This is an optic: a second camera on the same eye, with the objective's own
+// field of view, rendered into its own target and drawn inside the eyepiece.
+// The magnification is real, the sight picture is independent of the screen,
+// and what surrounds it is the inside of a tube.
+const SCOPE_SIZE = 1024;
+let scopeTarget = null;
+let scopeCamera = null;
+let scopeScene = null;
+let scopeQuad = null;
+let scopeMaterial = null;
+
+function ensureScope() {
+  if (scopeTarget) return;
+  scopeTarget = new THREE.WebGLRenderTarget(SCOPE_SIZE, SCOPE_SIZE, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    type: THREE.HalfFloatType,
+    samples: quality.samples || 0,
+  });
+  // The target holds linear light: the composer owns the output conversion for
+  // the main frame, and this quad is drawn straight to the framebuffer after
+  // it, so the shader has to do its own encode on the way out.
+  scopeTarget.texture.colorSpace = THREE.NoColorSpace;
+  scopeCamera = new THREE.PerspectiveCamera(10, 1, 0.15, 900);
+  scopeScene = new THREE.Scene();
+  scopeMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      view: { value: scopeTarget.texture },
+      aspect: { value: 1 },
+      radius: { value: 0.38 },
+      open: { value: 0 },
+      // How far off centre the eye is. A scope shades to black the moment you
+      // are not behind it, which is the whole reason a cheek weld exists.
+      shadow: { value: 0 },
+      mils: { value: 0 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D view;
+      uniform float aspect;
+      uniform float radius;
+      uniform float open;
+      uniform float shadow;
+      uniform float mils;
+
+      void main() {
+        vec2 centred = vUv - 0.5;
+        centred.x *= aspect;
+        float r = length(centred) / radius;
+
+        // Outside the eyepiece is the inside of the tube. Not pitch black —
+        // a shooter keeps some periphery — but dark enough that the eye goes
+        // where the glass is.
+        float inside = smoothstep(1.002, 0.986, r);
+        // The objective's image is a disc; it does not fill a rectangle.
+        vec2 lens = (centred / radius) * 0.5 + 0.5;
+        vec3 image = texture2D(view, lens).rgb;
+
+        // Eye relief: the further the eye is off axis, the more of the picture
+        // is shadowed from the edge in.
+        float relief = 1.0 - smoothstep(0.55 - shadow * 0.5, 1.0, r);
+        // Vignette and the faint blue-green cast of coated glass.
+        float edge = 1.0 - smoothstep(0.62, 1.0, r);
+        image *= mix(0.24, 1.0, edge) * relief;
+        image *= vec3(0.94, 1.0, 0.97);
+
+        // Reticle: a fine duplex cross with mil marks down the lower stadia.
+        float thin = 0.0016 / radius;
+        float thick = 0.0052 / radius;
+        vec2 a = abs(centred / radius);
+        float cross = 0.0;
+        cross = max(cross, step(a.x, thin) * step(a.y, 0.86));
+        cross = max(cross, step(a.y, thin) * step(a.x, 0.86));
+        // The heavy posts, which stop short of the middle.
+        cross = max(cross, step(a.x, thick) * step(0.42, a.y) * step(a.y, 0.92));
+        cross = max(cross, step(a.y, thick) * step(0.42, a.x) * step(a.x, 0.92));
+        // Mil dots down the bottom stadium.
+        for (int i = 1; i <= 4; i++) {
+          float at = float(i) * 0.10;
+          float w = 0.030 - float(i) * 0.004;
+          cross = max(cross, step(a.x, w) * step(abs(-centred.y / radius - at), thin * 1.4));
+        }
+        vec3 colour = mix(image, vec3(0.02, 0.025, 0.022), cross * edge);
+
+        // The housing's shadow just inside the rim.
+        image *= 1.0 - smoothstep(0.90, 1.0, r) * 0.85;
+
+        // A thread of light off the lens coating, top left.
+        float glint = smoothstep(0.55, 0.0, length(centred / radius - vec2(-0.34, 0.30)));
+        colour += vec3(0.10, 0.13, 0.11) * glint * 0.30 * edge;
+
+        // Encode: this is drawn to the framebuffer by hand, after the post
+        // stack has already had its say about the rest of the frame.
+        colour = pow(max(colour, 0.0), vec3(1.0 / 2.2));
+        vec3 surround = vec3(0.0);
+        vec3 finalColour = mix(surround, colour, inside);
+        float alpha = mix(0.90, 1.0, inside) * open;
+        gl_FragColor = vec4(finalColour, alpha);
+      }
+    `,
+  });
+  scopeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), scopeMaterial);
+  scopeQuad.frustumCulled = false;
+  scopeScene.add(scopeQuad);
+}
+
+/** Draw the optic over the finished frame. */
+function renderScope(scene) {
+  if (!scoped || !weapon?.zoom) return;
+  ensureScope();
+  const fov = weapon.opticFov ?? Math.max(3.2, 62 / (weapon.magnification ?? 4));
+  if (Math.abs(scopeCamera.fov - fov) > 0.001) {
+    scopeCamera.fov = fov;
+    scopeCamera.updateProjectionMatrix();
+  }
+  // Same eye, same instant: the optic sees exactly what the shooter's eye is
+  // pointed at, including the recoil the shot just put into it.
+  game.camera.getWorldPosition(scopeCamera.position);
+  game.camera.getWorldQuaternion(scopeCamera.quaternion);
+
+  const wasVisible = game.weaponView.visible;
+  game.weaponView.visible = false;
+  const previousTarget = renderer.getRenderTarget();
+  renderer.setRenderTarget(scopeTarget);
+  renderer.clear();
+  renderer.render(scene, scopeCamera);
+  renderer.setRenderTarget(previousTarget);
+  game.weaponView.visible = wasVisible;
+
+  scopeMaterial.uniforms.aspect.value = innerWidth / innerHeight;
+  scopeMaterial.uniforms.open.value = scopeOpen;
+  // Breathing and a spent shooter both move the eye behind the glass.
+  scopeMaterial.uniforms.shadow.value = THREE.MathUtils.clamp(
+    (1 - stamina) * 0.5 + Math.abs(recoilPitch) * 5.0, 0, 0.9);
+  const previousAutoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.render(scopeScene, scopeCamera);
+  renderer.autoClear = previousAutoClear;
 }
 
 // Motion detection: anything alive inside the camera's frustum trips the
@@ -2723,11 +2884,16 @@ function loop() {
   gradePass.uniforms.aberration.value = 0.0012;
   bloomPass.strength = currentWorld === 'outside' ? 0.12 : 0.2;
   composer.render();
+  // The optic goes over the finished frame, so the post stack grades the world
+  // and not the inside of the tube.
+  scopeOpen = THREE.MathUtils.damp(scopeOpen, scoped ? 1 : 0, 22, dt);
+  if (scopeOpen > 0.002) renderScope(scene);
 }
 
 addEventListener('resize', () => {
   if (!renderer || !game) return;
   renderer.setSize(innerWidth, innerHeight);
+  scopeTarget?.setSize(SCOPE_SIZE, SCOPE_SIZE);
   composer?.setSize(innerWidth, innerHeight);
   feedComposer?.setSize(innerWidth, innerHeight);
   game.camera.aspect = innerWidth / innerHeight;
