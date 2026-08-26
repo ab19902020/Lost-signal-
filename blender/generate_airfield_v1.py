@@ -192,16 +192,23 @@ def build_airstrip():
     ax, az = -(RUNWAY_WIDTH / 2 + 26), -half + 70
     block('Strip_Apron', (ax + 6, .09, az), (22.0, .04, 26.0), tarmac)
     for side in (-1, 1):
-        block(f'Strip_HangarWall_{"R" if side > 0 else "L"}',
+        block(f'Hangar_Wall_{"R" if side > 0 else "L"}',
               (ax - 8, 3.4, az + side * 11.0), (9.0, 3.4, .30), rust)
-    block('Strip_HangarBack', (ax - 16.8, 3.4, az), (.30, 3.4, 11.0), rust)
+    block('Hangar_Back', (ax - 16.8, 3.4, az), (.30, 3.4, 11.0), rust)
     for i in range(9):
-        block(f'Strip_HangarRoof_{i}', (ax - 16.5 + i * 2.1, 6.9 - abs(i - 4) * .22, az),
+        block(f'Hangar_Roof_{i}', (ax - 16.5 + i * 2.1, 6.9 - abs(i - 4) * .22, az),
               (1.05, .12, 11.2), steel)
     for i in range(6):
-        block(f'Strip_Drum_{i}', (ax + 12 + (i % 3) * 2.2, .70, az + 14 + (i // 3) * 2.4),
+        block(f'Hangar_Drum_{i}', (ax + 12 + (i % 3) * 2.2, .70, az + 14 + (i // 3) * 2.4),
               (.42, .62, .42), rust)
 
+    # Two objects, not one. The strip is four hundred metres of flat tarmac and
+    # must never be collided as a solid — a single box around it is an
+    # invisible wall the size of the airfield, standing between the player and
+    # the aeroplane. The hangar is the only thing out here you can walk into.
+    # The hangar is left as separate parts on purpose. Joined, its bounding box
+    # takes in the oil drums twelve metres away as well, and the one box that
+    # covers all of it is seventy metres long and lies across the runway.
     join_named('Airstrip', 'Strip_')
     return export('airstrip_v1.glb')
 

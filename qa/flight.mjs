@@ -46,6 +46,41 @@ const results = await page.evaluate(() => {
   const plane = ls.game.aircraft?.[0];
   if (!plane) return { missing: true };
 
+  // Can you get there?
+  //
+  // The airfield was visible from the compound and unreachable: the strip was
+  // collided as one object, which is a box the size of the airfield standing
+  // between the player and the aeroplane. Walking the whole way takes minutes,
+  // so this steps a probe along the route and asks the collision set whether a
+  // person could stand at each point. One blocked point in open field is a
+  // wall.
+  const c = ls.game.colliders.outside;
+  const target = plane.state.position;
+  const from = { x: 46, z: -40 };
+  const blocked = [];
+  const STEPS = 120;
+  for (let i = 1; i <= STEPS; i++) {
+    const t = i / STEPS;
+    const x = from.x + (target.x - from.x) * t;
+    const z = from.z + (target.z - from.z) * t;
+    // The aeroplane itself is solid, and it is the destination — being unable
+    // to walk through it is the point, not an obstruction.
+    if (Math.hypot(x - target.x, z - target.z) < 9) continue;
+    if (c.contains(x, z, 0.36, 0.3, 1.7)) blocked.push([+x.toFixed(1), +z.toFixed(1)]);
+  }
+  out.route = { blocked: blocked.length, first: blocked[0] || null,
+    to: [+target.x.toFixed(1), +target.z.toFixed(1)] };
+
+  // And the strip itself must not be solid: standing on the runway is the
+  // normal case, not an obstacle.
+  out.onStrip = c.contains(target.x + 40, target.z, 0.36, 0.3, 1.7);
+
+  out.townsfolk = (ls.game.townsfolk || []).map((person) => ({
+    name: person.name,
+    alive: person.userData.alive !== false,
+    at: [+person.position.x.toFixed(0), +person.position.z.toFixed(0)],
+  }));
+
   out.parked = {
     grounded: plane.state.grounded,
     speed: +plane.state.airspeed.toFixed(2),
@@ -66,7 +101,7 @@ const results = await page.evaluate(() => {
       grounded: plane.state.grounded });
   }
   out.groundRoll = roll;
-  out.rolledStraight = +Math.abs(plane.state.position.z - (-58)).toFixed(1);
+  out.rolledStraight = +Math.abs(plane.state.position.z - (-180)).toFixed(1);
 
   // Ease back and it should fly.
   ls.stick(0.55, 0, 0, 1);
@@ -104,8 +139,9 @@ const results = await page.evaluate(() => {
     kts: +(plane.state.airspeed * 1.94384).toFixed(1),
     sink: +plane.state.velocity.y.toFixed(2) };
 
-  // And it must come back down and stop, not fly on for ever.
-  ls.stick(0, 0, 0, 0);
+  // And it must come back down and stop, not fly on for ever. Brakes on, the
+  // way anyone lands it.
+  ls.stick(0, 0, 0, 0, true);
   ls.simulate(3000);
   out.landed = { grounded: plane.state.grounded,
     kts: +(plane.state.airspeed * 1.94384).toFixed(1) };
@@ -116,6 +152,12 @@ const failures = [];
 if (results.missing) failures.push('there is no aircraft in the world');
 else {
   const r = results;
+  if (r.route.blocked > 0) {
+    failures.push(`something blocks the way to the aircraft at ${r.route.blocked} of 120 points`
+      + ` along the route, first at ${r.route.first}`);
+  }
+  if (r.onStrip) failures.push('the runway itself is solid — you cannot stand on it');
+  if (r.townsfolk.length < 2) failures.push(`only ${r.townsfolk.length} townsfolk in the world`);
   if (!r.parked.grounded) failures.push('it does not start on the ground');
   if (r.parked.speed > 0.1) failures.push(`it is moving while parked (${r.parked.speed} m/s)`);
   if (!r.boarded) failures.push('could not get into it');
@@ -145,7 +187,7 @@ if (outDir) {
   const reset = () => {
     const ls = globalThis.__ls;
     const plane = ls.game.aircraft[0];
-    plane.state.position.set(-14, 1.36, -58);
+    plane.state.position.set(110, 1.36, -180);
     plane.state.velocity.set(0, 0, 0);
     plane.state.quaternion.setFromAxisAngle(new ls.THREE.Vector3(0, 1, 0), -Math.PI / 2);
     ls.stick(0, 0, 0, 0);
@@ -158,7 +200,7 @@ if (outDir) {
       ls.simulate(400);
       ls.park();
       const plane = ls.game.aircraft[0];
-      plane.state.position.set(-14, 1.36, -58);
+      plane.state.position.set(110, 1.36, -180);
       plane.state.velocity.set(0, 0, 0);
       plane.state.quaternion.setFromAxisAngle(new ls.THREE.Vector3(0, 1, 0), -Math.PI / 2);
       ls.simulate(10);
@@ -170,7 +212,7 @@ if (outDir) {
       const ls = globalThis.__ls;
       ls.fly(0);
       const plane = ls.game.aircraft[0];
-      plane.state.position.set(-14, 1.36, -58);
+      plane.state.position.set(110, 1.36, -180);
       plane.state.velocity.set(0, 0, 0);
       plane.state.quaternion.setFromAxisAngle(new ls.THREE.Vector3(0, 1, 0), -Math.PI / 2);
       ls.stick(0, 0, 0, 1); ls.simulate(300);

@@ -24,20 +24,20 @@ const RHO = 1.225;               // kg/m³ at sea level
 const MAX_THRUST = 5600;         // N at full throttle, static
 const CL_SLOPE = 5.0;            // lift coefficient per radian of incidence
 const CL_MAX = 1.42;
-const ALPHA_STALL = 0.28;        // ~16°, where the wing lets go
+const ALPHA_STALL = 0.34;        // ~19°, where the wing lets go
 const CD0 = 0.030;               // parasite drag
 const INDUCED = 0.052;           // induced drag, off lift squared
 
 // Control authority, in radians a second at the speed it is fully effective.
-const PITCH_RATE = 0.60;
-const ROLL_RATE = 2.10;
+const PITCH_RATE = 0.52;
+const ROLL_RATE = 1.55;
 const YAW_RATE = 0.62;
 // Longitudinal stability, and the incidence it settles at with the stick
 // central. A tail is what stops an aeroplane pointing wherever it was last
 // pushed: the further the wing is from its trimmed angle the harder the tail
 // pushes back, so full back stick reaches the stall and stops there instead of
 // standing the thing on its tail at seventy-seven degrees nose up.
-const PITCH_STABILITY = 2.1;
+const PITCH_STABILITY = 2.4;
 const TRIM_ALPHA = 0.06;
 const CONTROL_SPEED = 34;        // below this the surfaces go soft
 
@@ -158,7 +158,10 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
     const over = Math.abs(state.alpha) - ALPHA_STALL;
     state.stalled = over > 0 && speed > 1.2;
     let cl = CL_SLOPE * state.alpha;
-    if (state.stalled) cl *= Math.max(0.25, 1 - over * 3.2);
+    // A gentle break. Losing the lift all at once is realistic and horrible to
+    // fly; this bleeds it away so the nose drops, the speed builds and the wing
+    // starts working again without the pilot having to know why.
+    if (state.stalled) cl *= Math.max(0.42, 1 - over * 1.9);
     cl = THREE.MathUtils.clamp(cl, -CL_MAX, CL_MAX);
 
     const q = 0.5 * RHO * speed * speed;
@@ -191,7 +194,7 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
       // you look away from it — and without the pitch half, holding the stick
       // back walks the nose all the way round.
       const bank = Math.atan2(_right.y, _wingUp.y);
-      roll -= bank * 0.9 * (1 - Math.abs(state.controls.roll));
+      roll -= bank * 1.35 * (1 - Math.abs(state.controls.roll));
       pitch -= (state.alpha - TRIM_ALPHA) * PITCH_STABILITY * bite;
       // A banked wing turns: that is what a rudder pedal is for on a real one
       // and what nobody wants to coordinate on a keyboard.
