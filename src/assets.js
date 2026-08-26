@@ -37,6 +37,10 @@ const bunkerUrls = {
 // convention, unlike the earliest Lost Signal Blender exports, so they must
 // not pass through the legacy quarter-turn correction.
 const suppliedUrls = {
+  // The user's high-detail military protagonist. The source arrived as a
+  // two-million-triangle, 77 MB GLB; the checked-in runtime build preserves
+  // its humanoid skin and PBR material at a mobile-safe 239k triangles.
+  playerCharacter: `${BASE}assets/supplied/main_character.glb`,
   adventurer: `${BASE}assets/supplied/adventurer.glb`,
   // The armoury is built rather than bought. The pack models were 240 to
   // 5,000 triangles and this is the geometry the player looks at more than any

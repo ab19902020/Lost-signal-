@@ -12,6 +12,10 @@ Only assets with explicit redistribution terms are copied into this repository.
 the project owner. The FBX/OBJ sources are not committed; `tools/convert-supplied-packs.sh`
 reproduces the GLBs from a local copy of them.
 
+- **Main military character** — `main_character.glb`; supplied by the project
+  owner. The runtime copy preserves the original humanoid rig and PBR material,
+  with geometry and textures optimised for real-time mobile rendering.
+
 - **Quaternius packs** — `adventurer.glb`, the twenty-five armoury weapons,
   `solar_array.glb` (Solar Panel Structure) and `dead_tree_0*.glb` (Dead Trees);
   CC0 1.0.

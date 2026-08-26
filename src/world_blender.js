@@ -9,6 +9,7 @@ import { createRange } from './range.js';
 import { createSky } from './sky.js';
 import { createVehicle } from './vehicle.js';
 import { createAircraft } from './aircraft.js';
+import { createPlayerCharacter } from './player_character.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -53,6 +54,8 @@ export function createGameWorld(assets, options = {}) {
   camera.rotation.order = 'YXZ';
   camera.position.set(0, 1.67, 0);
   player.add(camera);
+  const playerCharacter = createPlayerCharacter(assets.playerCharacter);
+  player.add(playerCharacter.root);
   player.position.set(0, 0, 5.0);
   bunker.add(player);
 
@@ -1120,6 +1123,44 @@ export function createGameWorld(assets, options = {}) {
   const weaponAction = new THREE.Group();
   weaponView.add(weaponAction);
 
+  // First- and third-person are two presentations of the same player state.
+  // The main controller decides which mode is effective (a telescopic scope
+  // temporarily uses the first-person eye), while this layer keeps the body,
+  // held world weapon and camera viewmodel mutually consistent.
+  let playerViewMode = 'third';
+  let playerVisualActive = true;
+  let playerVisualObstructed = false;
+  let weaponPresented = false;
+
+  function syncPlayerPresentation() {
+    const thirdPerson = playerViewMode === 'third';
+    playerCharacter.setVisible(thirdPerson && playerVisualActive);
+    playerCharacter.setObstructed(playerVisualObstructed);
+    playerCharacter.setWeaponVisible(thirdPerson && playerVisualActive && weaponPresented);
+    weaponView.visible = !thirdPerson && playerVisualActive && weaponPresented;
+  }
+
+  function setViewMode(mode) {
+    playerViewMode = mode === 'first' ? 'first' : 'third';
+    syncPlayerPresentation();
+    return playerViewMode;
+  }
+
+  function setPlayerVisualActive(value) {
+    playerVisualActive = !!value;
+    syncPlayerPresentation();
+  }
+
+  function setPlayerVisualObstructed(value) {
+    playerVisualObstructed = !!value;
+    syncPlayerPresentation();
+  }
+
+  function setWeaponVisible(value) {
+    weaponPresented = !!value;
+    syncPlayerPresentation();
+  }
+
   // The held weapon carries its own floor of light.
   //
   // Lit by the world alone it was a black cut-out at any hour the sun was
@@ -1291,9 +1332,10 @@ export function createGameWorld(assets, options = {}) {
       weaponAction.remove(heldModel);
       heldModel = null;
       heldSights = null;
+      playerCharacter.setWeapon(null);
     }
     const source = (key && assets[key]) || armory?.weaponAsset || assets.rifle;
-    if (!source) { heldKey = null; return null; }
+    if (!source) { heldKey = null; playerCharacter.setWeapon(null); return null; }
     heldKey = key && assets[key] ? key : null;
     const model = cloneGLTF(source);
     const view = WEAPONS[heldKey]?.view
@@ -1386,6 +1428,7 @@ export function createGameWorld(assets, options = {}) {
     });
     weaponAction.add(model);
     heldModel = model;
+    playerCharacter.setWeapon(model);
     heldSights = measureSights(model);
     return model;
   }
@@ -1550,7 +1593,10 @@ export function createGameWorld(assets, options = {}) {
 
   function nearestInteraction(world) {
     const ray=new THREE.Raycaster();
-    ray.far=3.15;
+    // In third person the eye is on a three-metre boom, so a camera-relative
+    // ray needs to travel through that boom before it reaches the thing in
+    // front of the player. Reach is still validated from the body below.
+    ray.far=playerViewMode === 'third' ? 6.4 : 3.15;
     ray.setFromCamera({x:0,y:0},camera);
     camera.getWorldPosition(_interactionCamera);
     // The silo now has a real interaction on every quarters door. Raycasting
@@ -1559,7 +1605,12 @@ export function createGameWorld(assets, options = {}) {
     const candidates=interactions.filter((o) => {
       if (o.userData.interaction?.world !== world) return false;
       o.getWorldPosition(_interactionPoint);
-      return _interactionPoint.distanceToSquared(_interactionCamera) <= 18;
+      const cameraReach = playerViewMode === 'third' ? 48 : 18;
+      if (_interactionPoint.distanceToSquared(_interactionCamera) > cameraReach) return false;
+      const dx = _interactionPoint.x - player.position.x;
+      const dz = _interactionPoint.z - player.position.z;
+      return dx * dx + dz * dz <= 12.25
+        && Math.abs(_interactionPoint.y - player.position.y) <= 3.1;
     });
     const hits=ray.intersectObjects(candidates,true);
     if(!hits.length)return null;
@@ -1575,8 +1626,9 @@ export function createGameWorld(assets, options = {}) {
    */
   function setArmed(value) {
     const key = value === true ? DEFAULT_WEAPON : (value || null);
-    weaponView.visible = !!key;
     if (key) setWeapon(key);
+    weaponPresented = !!key;
+    syncPlayerPresentation();
     armory?.setEquipped(key);
     return key;
   }
@@ -1727,7 +1779,8 @@ export function createGameWorld(assets, options = {}) {
   return {
     assets,
     bunker,outside,silo,scenes,player,camera,interactions,wildlife,residents,cctvCameras,cctvBaseRot,
-    weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
+    weaponView,weaponAction,playerCharacter,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
+    setViewMode,setWeaponVisible,setPlayerVisualActive,setPlayerVisualObstructed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
     heldSights:()=>heldSights,

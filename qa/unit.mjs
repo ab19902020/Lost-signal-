@@ -470,9 +470,41 @@ const creatureSource = await readFile(new URL('../src/creatures.js', import.meta
 assert.ok(creatureSource.includes('this.groundY - eased * this.dropHeight'),
   'a body dropped on an upper gallery falls through it');
 
+// The playable protagonist is a real skinned model, not a primitive or a
+// billboard. The source upload is too expensive for a phone, so the runtime
+// asset must retain its humanoid rig while staying inside the mobile budget.
+const characterFile = await readFile(new URL(
+  '../public/assets/supplied/main_character.glb', import.meta.url));
+assert.equal(characterFile.readUInt32LE(0), 0x46546c67, 'main character is not a GLB');
+assert.ok(characterFile.length < 5 * 1024 * 1024,
+  `main character is not mobile-ready (${(characterFile.length / 1024 / 1024).toFixed(1)} MB)`);
+const characterJsonLength = characterFile.readUInt32LE(12);
+const characterDocument = JSON.parse(characterFile.subarray(20, 20 + characterJsonLength)
+  .toString('utf8').trimEnd());
+assert.ok(characterDocument.skins?.[0]?.joints?.length >= 40,
+  'main character lost its humanoid skeleton');
+const characterBones = new Set((characterDocument.nodes || []).map((node) => node.name));
+for (const bone of ['Head', 'Spine01', 'L_Upperarm', 'R_Upperarm', 'L_Thigh', 'R_Thigh']) {
+  assert.ok(characterBones.has(bone), `main character is missing ${bone}`);
+}
+const characterPrimitive = characterDocument.meshes?.[0]?.primitives?.[0];
+const characterTriangles = Math.floor(
+  characterDocument.accessors?.[characterPrimitive?.indices]?.count / 3);
+assert.ok(characterTriangles >= 200000,
+  `main character dropped below the high-detail target (${characterTriangles} triangles)`);
+assert.ok(characterDocument.extensionsUsed?.includes('EXT_meshopt_compression'),
+  'main character geometry is not Meshopt-compressed');
+assert.ok(worldSource.includes('createPlayerCharacter'),
+  'the supplied military character is not the playable actor');
+assert.ok(mainSource.includes('function updateThirdPersonCamera(')
+  && mainSource.includes('function toggleCameraMode('),
+  'first/third-person camera switching is missing');
+const htmlSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+assert.ok(htmlSource.includes('id="viewBtn"'), 'mobile has no camera view button');
+
 console.log(`Unit QA passed: ${USABLE_WEAPON_KEYS.length} usable weapons with distinct voices, `
   + `${colliders.boxes.length} boxes + ${colliders.rings.length} rings + `
   + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `
   + `walkway clear on all ${SILO.levels + 1} levels, `
   + `${doorwaysTraversed} front doors traversed and ${roomsChecked} rooms reachable, `
-  + `${counts.size} unique game events.`);
+  + `${counts.size} unique game events, ${characterTriangles} triangle main character.`);

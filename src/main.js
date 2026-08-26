@@ -91,6 +91,13 @@ let cctv = false;
 let currentCam = 0;
 let yaw = 0;
 let pitch = -0.03;
+let cameraMode = 'third';
+try {
+  const savedView = localStorage.getItem('ls.cameraView');
+  if (savedView === 'first' || savedView === 'third') cameraMode = savedView;
+} catch { /* private browsing can disable storage */ }
+let characterYaw = yaw;
+let cameraBoom = 3.15;
 let armed = false;
 // The service rifle's numbers. Everything else on the armoury wall carries its
 // own, out of the catalogue, but this pair is what an unmodified run starts on
@@ -186,6 +193,49 @@ function flash(text, duration = 1800) {
   msgEl.classList.add('on');
   clearTimeout(msgTimer);
   msgTimer = setTimeout(() => msgEl.classList.remove('on'), duration);
+}
+
+function effectiveCameraMode() {
+  // A telescopic optic uses the eye position even when the player's normal
+  // preference is third person. Releasing aim returns to that preference.
+  return scoped ? 'first' : cameraMode;
+}
+
+function syncCameraPresentation() {
+  const mode = effectiveCameraMode();
+  document.body.classList.toggle('first-person', mode === 'first');
+  document.body.classList.toggle('third-person', mode === 'third');
+  const button = document.getElementById('viewBtn');
+  if (button) {
+    button.textContent = cameraMode === 'third' ? 'VIEW 3P' : 'VIEW 1P';
+    button.setAttribute('aria-label', cameraMode === 'third'
+      ? 'Switch to first-person view' : 'Switch to third-person view');
+  }
+  if (!game) return mode;
+  game.setViewMode?.(mode);
+  game.setPlayerVisualActive?.(!driving && !flying);
+  return mode;
+}
+
+function setCameraMode(mode, { announce = true } = {}) {
+  const next = mode === 'first' ? 'first' : 'third';
+  if (cameraMode === next) {
+    syncCameraPresentation();
+    return cameraMode;
+  }
+  cameraMode = next;
+  cameraBoom = next === 'third' ? 3.15 : 0;
+  try { localStorage.setItem('ls.cameraView', cameraMode); } catch { /* optional preference */ }
+  syncCameraPresentation();
+  refreshWeaponView();
+  if (announce) flash(cameraMode === 'third'
+    ? 'THIRD-PERSON VIEW — GTA CAMERA'
+    : 'FIRST-PERSON VIEW', 1500);
+  return cameraMode;
+}
+
+function toggleCameraMode() {
+  return setCameraMode(cameraMode === 'third' ? 'first' : 'third');
 }
 
 function fail(error) {
@@ -290,6 +340,7 @@ async function prepare() {
 
     game = createGameWorld(assets, { foliage: quality.foliage });
     game.camera.rotation.order = 'YXZ';
+    syncCameraPresentation();
 
     createComposer();
     body.teleport(game.player.position.x, 0, game.player.position.z);
@@ -307,6 +358,14 @@ async function prepare() {
         // interaction tests, without making screenshots depend on browser UI.
         start: () => { opening.hide(); beginGame({ restore: false }); },
         look: (y, p = pitch) => { yaw = y; pitch = p; },
+        view: (mode) => mode ? setCameraMode(mode, { announce: false }) : cameraMode,
+        character: () => ({
+          name: game.playerCharacter?.model?.name ?? null,
+          visible: game.playerCharacter?.root?.visible ?? false,
+          weaponVisible: game.playerCharacter?.weaponMount?.visible ?? false,
+          bounds: game.playerCharacter?.bounds?.().getSize(new THREE.Vector3()).toArray()
+            .map((value) => +value.toFixed(3)) ?? null,
+        }),
         // The height is optional and defaults to keeping the one they have,
         // which is wrong after climbing out of an aeroplane at altitude:
         // a harness that only sets x and z then drops the player from
@@ -552,6 +611,7 @@ async function prepare() {
         survival,
         debug: () => ({ started, modal, cctv, aiming, holstered, sprinting, armed,
           reloading, weaponKey, wheelOpen, touchSprint: touch.sprint, touchMode,
+          cameraMode, effectiveCameraMode: effectiveCameraMode(), cameraBoom,
           helpOpen: helpOpen(), driving: !!driving, flying: !!flying, seated: !!seated,
           keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
@@ -1149,7 +1209,10 @@ let holsteredForDrive = false;
  */
 function refreshWeaponView() {
   const carrying = armed && !holstered;
-  if (game) game.weaponView.visible = carrying && !scoped && !driving;
+  if (game) {
+    syncCameraPresentation();
+    game.setWeaponVisible?.(carrying && !scoped && !driving && !flying);
+  }
   document.body.classList.toggle('armed', carrying);
   document.body.classList.toggle('holstered', armed && holstered);
 }
@@ -1826,7 +1889,27 @@ function wireControls() {
     flash(`${detail.dualsense ? 'DUALSENSE' : 'CONTROLLER'} CONNECTED — OPTIONS FOR CONTROLS`, 3200);
     gamepad.rumble(.3, .5, 240);
   });
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)openWheel()}if(e.code==='KeyX'&&!e.repeat)setHolstered(!holstered);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision();if(e.code==='KeyL'&&!e.repeat&&driving){const on=driving.toggleLights();flash(on?'HEADLAMPS ON':'HEADLAMPS OFF',1200)}if(e.code==='KeyB'&&!e.repeat&&driving)hornSound()});
+  addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code === 'KeyE' && !e.repeat) use();
+    if (e.code === 'KeyR' && !e.repeat) reload();
+    if (e.code === 'KeyF' && !e.repeat) { triggerHeld = true; fire(); }
+    if (e.code === 'KeyQ' && !e.repeat) setAiming(!aiming);
+    if (e.code === 'KeyV' && !e.repeat && !modal && !cctv && !driving && !flying) toggleCameraMode();
+    if (/^Digit[1-4]$/.test(e.code) && !e.repeat) selectSlot(+e.code.slice(5) - 1);
+    if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat) openWheel(); }
+    if (e.code === 'KeyX' && !e.repeat) setHolstered(!holstered);
+    if (e.code === 'KeyH') { e.preventDefault(); toggleHelp(); }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) queueJump(); }
+    if (e.code === 'Escape' && document.getElementById('help').classList.contains('open')) toggleHelp(false);
+    else if (e.code === 'Escape' && cctv) closeCCTV();
+    if (e.code === 'KeyN' && cctv) toggleNightVision();
+    if (e.code === 'KeyL' && !e.repeat && driving) {
+      const on = driving.toggleLights();
+      flash(on ? 'HEADLAMPS ON' : 'HEADLAMPS OFF', 1200);
+    }
+    if (e.code === 'KeyB' && !e.repeat && driving) hornSound();
+  });
   addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false;if(e.code==='Tab')closeWheel(true)});
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement){triggerHeld=true;fire()}});
@@ -1869,6 +1952,11 @@ function wireControls() {
   document.getElementById('reloadBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();reload()});
   document.getElementById('jumpBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();queueJump()});
   document.getElementById('aimBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();setAiming(!aiming)});
+  document.getElementById('viewBtn').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleCameraMode();
+  });
   document.getElementById('weaponSlots')?.addEventListener('pointerdown',(e)=>{
     const chip=e.target.closest('.slot');
     if(!chip)return;
@@ -1976,7 +2064,7 @@ function wireControls() {
 //   L1 · R1      previous · next weapon
 //   L3           sprint                R3           crouch toggle
 //   D-pad        weapon slots 1-4      Options      controls
-//   Touchpad     camera desk           PS           release the mouse
+//   Touchpad     first / third view    PS           release the mouse
 function updatePad(dt) {
   const state = gamepad.poll(dt);
   if (!state.connected || !started) {
@@ -2121,7 +2209,7 @@ function updatePad(dt) {
   if (state.pressed.down) selectSlot(2);
   if (state.pressed.left) selectSlot(3);
   if (state.pressed.r3) setHolstered(!holstered);
-  if (state.pressed.touchpad) openCCTV();
+  if (state.pressed.touchpad) toggleCameraMode();
 
   // L2 sights the weapon, R2 fires it. Both are analogue on a DualSense, so
   // the aim comes up progressively and the trigger has a real first stage.
@@ -2407,6 +2495,95 @@ function updateFlying(dt) {
 const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
 const rightAxis = new THREE.Vector3();
+const thirdPersonTarget = new THREE.Vector3();
+const thirdPersonOffset = new THREE.Vector3();
+
+const THIRD_PERSON_DISTANCE = 3.15;
+const THIRD_PERSON_AIM_DISTANCE = 2.45;
+const THIRD_PERSON_SHOULDER = 0.42;
+const THIRD_PERSON_AIM_SHOULDER = 0.68;
+
+function dampAngle(current, target, rate, dt) {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + delta * (1 - Math.exp(-rate * dt));
+}
+
+function updatePlayerCharacter(dt, { crouching = false, seated: isSeated = false } = {}) {
+  if (!game.playerCharacter) return;
+  const speed = isSeated ? 0 : body.horizontalSpeed;
+  // A holstered weapon should behave like empty hands: turn the actor into
+  // the direction of travel instead of making them moonwalk while the camera
+  // orbits independently.
+  if (!(armed && !holstered) && speed > 0.08 && !isSeated) {
+    const travelYaw = Math.atan2(-body.velocity.x, -body.velocity.z);
+    characterYaw = dampAngle(characterYaw, travelYaw, sprinting ? 14 : 10, dt);
+  } else {
+    characterYaw = dampAngle(characterYaw, yaw, aiming ? 18 : 11, dt);
+  }
+  const lookOffset = Math.atan2(Math.sin(yaw - characterYaw), Math.cos(yaw - characterYaw));
+  game.playerCharacter.update(dt, {
+    yaw: characterYaw,
+    lookYawOffset: lookOffset,
+    speed,
+    running: sprinting,
+    crouching,
+    grounded: body.grounded,
+    distance: body.distanceWalked,
+    armed: armed && !holstered,
+    aiming,
+    seated: isSeated,
+  });
+}
+
+function updateThirdPersonCamera(dt, targetHeight = body.eyeHeight) {
+  const distance = aiming ? THIRD_PERSON_AIM_DISTANCE : THIRD_PERSON_DISTANCE;
+  const shoulder = aiming ? THIRD_PERSON_AIM_SHOULDER : THIRD_PERSON_SHOULDER;
+  const orbitPitch = THREE.MathUtils.clamp(pitch * 0.68, -0.72, 0.72);
+  const horizontal = Math.cos(orbitPitch) * distance;
+  thirdPersonTarget.set(0, targetHeight - 0.08, 0);
+  thirdPersonOffset.set(
+    Math.sin(yaw) * horizontal + Math.cos(yaw) * shoulder,
+    -Math.sin(orbitPitch) * distance,
+    Math.cos(yaw) * horizontal - Math.sin(yaw) * shoulder,
+  );
+
+  // Pull the boom in before it reaches a wall, ceiling, railing or door. The
+  // collider query is deliberately spherical here: the camera should slide
+  // through a gap only when the lens actually fits through it.
+  const colliders = game.colliders[currentWorld];
+  let clearFraction = 1;
+  const steps = 14;
+  for (let step = 1; step <= steps; step++) {
+    const fraction = step / steps;
+    const localX = thirdPersonTarget.x + thirdPersonOffset.x * fraction;
+    const localY = thirdPersonTarget.y + thirdPersonOffset.y * fraction;
+    const localZ = thirdPersonTarget.z + thirdPersonOffset.z * fraction;
+    if (colliders.contains(
+      body.position.x + localX,
+      body.position.z + localZ,
+      0.12,
+      body.position.y + localY - 0.12,
+      body.position.y + localY + 0.12,
+    )) {
+      clearFraction = Math.max(0.14, (step - 1) / steps);
+      break;
+    }
+  }
+
+  const allowedBoom = distance * clearFraction;
+  cameraBoom = THREE.MathUtils.damp(cameraBoom, allowedBoom,
+    allowedBoom < cameraBoom ? 24 : 9, dt);
+  const fraction = cameraBoom / distance;
+  game.camera.position.copy(thirdPersonTarget).addScaledVector(thirdPersonOffset, fraction);
+  game.camera.rotation.set(pitch, yaw, recoilRoll * 0.18, 'YXZ');
+  game.setPlayerVisualObstructed?.(cameraBoom < 0.72);
+}
+
+function updateFirstPersonCamera(x, y, roll) {
+  game.camera.position.set(x, y, 0);
+  game.camera.rotation.set(pitch, yaw, roll, 'YXZ');
+  game.setPlayerVisualObstructed?.(false);
+}
 
 function updatePlayer(dt) {
   if (!started || modal) return;
@@ -2430,10 +2607,11 @@ function updatePlayer(dt) {
     body.velocity.set(0, 0, 0);
     body.grounded = true;
     game.player.position.set(body.position.x, body.position.y, body.position.z);
-    game.camera.position.set(0, 1.18 + Math.sin(breath) * 0.003, 0);
-    game.camera.rotation.z = 0;
     breath += dt * 0.55;
     sprinting = false;
+    updatePlayerCharacter(dt, { seated: true });
+    if (effectiveCameraMode() === 'third') updateThirdPersonCamera(dt, 1.18);
+    else updateFirstPersonCamera(0, 1.18 + Math.sin(breath) * 0.003, 0);
     return;
   }
 
@@ -2476,14 +2654,18 @@ function updatePlayer(dt) {
   const bobAmount = speedRatio * (sprinting ? 0.045 : 0.028) * (crouching ? 0.5 : 1);
   breath += dt * (sprinting ? 3.4 : 1.15);
 
-  game.camera.position.y = body.eyeHeight
+  const eyeY = body.eyeHeight
     + Math.sin(bobPhase) * bobAmount
     + Math.sin(breath) * 0.006
     - body.landingImpact * 0.22;
-  game.camera.position.x = Math.cos(bobPhase * 0.5) * bobAmount * 0.55;
-  game.camera.rotation.z = Math.cos(bobPhase * 0.5) * bobAmount * 0.22
+  const eyeX = Math.cos(bobPhase * 0.5) * bobAmount * 0.55;
+  const eyeRoll = Math.cos(bobPhase * 0.5) * bobAmount * 0.22
     + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0)
     + recoilRoll;
+
+  updatePlayerCharacter(dt, { crouching });
+  if (effectiveCameraMode() === 'third') updateThirdPersonCamera(dt, body.eyeHeight);
+  else updateFirstPersonCamera(eyeX, eyeY, eyeRoll);
 
   footsteps(dt, speedRatio, crouching);
 }

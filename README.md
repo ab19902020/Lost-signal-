@@ -46,6 +46,7 @@ body collision instead of behaving like scenery the player can walk through.
 ### Mobile
 - Left joystick: move
 - Swipe right half: look
+- VIEW 3P / 1P: switch GTA-style third-person and first-person cameras
 - USE: interact
 - JUMP: jump and climb onto low solid objects
 - AIM: aim down the service-rifle sights
@@ -56,12 +57,20 @@ body collision instead of behaving like scenery the player can walk through.
 - Shift: sprint (drains stamina; the frame desaturates as it empties)
 - Ctrl or C: crouch
 - Mouse: look
+- V: switch GTA-style third-person and first-person cameras
 - E: interact
 - Space: jump
 - Left mouse or F: fire
 - Right mouse or Q: aim down sights
 - R: reload
 - N: toggle infrared while a CCTV feed is open
+
+### Controller
+- Touchpad / View button: switch first-person and third-person views
+
+The game starts in third person with the supplied military protagonist visible.
+Scoped rifles move temporarily to the first-person optic and return to the
+player's chosen view when aim is released.
 
 ## The world
 
