@@ -18,7 +18,16 @@ npm run qa:tdz                    # dead-zone reads, as part of every build
 npm run qa:boot                   # does the production build actually start
 npm run qa:look                   # the surface across the day, with its numbers
 npm run qa:sights                 # every weapon's aim pose, down its own sights
+npm run qa:flight                 # the aeroplane: roll, rotate, climb, turn, stall, land
 ```
+
+`qa:flight` is the only way to know whether the aircraft works. A flight model
+that looks right parked can still refuse to leave the runway, climb without
+thrust, or fly at no airspeed at all — and none of that shows in a screenshot.
+It caught two: a ground projection that was not normalised, which shed five per
+cent of the speed every frame the moment the nose came up, and pitch authority
+with no longitudinal stability behind it, which stood the aeroplane on its tail
+at seventy-seven degrees on half back stick.
 
 `qa:look` shoots the compound at dawn, noon, gold hour, dusk, night and under
 cloud, and prints what the sky and the grade were set to for each frame. The
