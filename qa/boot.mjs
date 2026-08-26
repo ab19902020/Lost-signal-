@@ -37,18 +37,34 @@ const lap = (m) => console.error(`  ${((Date.now() - started) / 1000).toFixed(0)
 await page.goto(url, { waitUntil: 'load', timeout: 180_000 });
 lap('page loaded');
 
+// NEW GAME by id, not by text: CONTINUE is present but disabled without a
+// save, and clicking a disabled button does nothing at all — which a text
+// search happily reports as a successful click.
 const clicked = await page.evaluate(() => {
-  const button = [...document.querySelectorAll('button')]
-    .find((b) => /new game|continue|enter shelter/i.test(b.textContent || ''));
-  button?.click();
-  return button?.textContent?.trim() || null;
+  const button = document.getElementById('openingNew') || document.getElementById('openingContinue');
+  if (!button || button.disabled) return null;
+  button.click();
+  return button.id;
 });
 if (!clicked) {
-  console.error('FAILURE: the welcome menu offered nothing to click');
+  console.error('FAILURE: the welcome menu offered nothing that could be clicked');
   await browser.close();
   process.exit(1);
 }
-lap(`clicked ${clicked}`);
+lap(`clicked #${clicked}`);
+
+// The intro cutscene sits between the menu and the shelter. Skip it the way the
+// button does, once it exists.
+for (let i = 0; i < 30; i++) {
+  const skipped = await page.evaluate(() => {
+    const skip = document.getElementById('openingSkip');
+    if (!skip || skip.offsetParent === null) return false;
+    skip.click();
+    return true;
+  }).catch(() => false);
+  if (skipped) { lap('skipped the intro'); break; }
+  await page.waitForTimeout(1000);
+}
 
 let outcome = null;
 while (Date.now() - started < deadline) {
@@ -57,9 +73,11 @@ while (Date.now() - started < deadline) {
     return {
       fatal: /STARTUP FAILED|ASSET LOAD FAILED|ENGINE FAILED/i.test(text)
         ? text.slice(0, 200) : null,
-      // The HUD only exists once the world is built and the loop is running.
-      playing: !!document.getElementById('hud') && !!document.querySelector('canvas')
-        && (document.getElementById('dayStat')?.textContent || '') !== '',
+      // The HUD markup ships in index.html with placeholder values, so its mere
+      // presence proves nothing. This line is written once, at the end of
+      // prepare(), out of the quality tier the renderer actually chose — so it
+      // cannot appear unless the world was built without throwing.
+      playing: /DISPLAY$/.test((document.getElementById('backend')?.textContent || '').trim()),
       status: (document.getElementById('engineState')?.textContent || text).slice(0, 90),
     };
   }).catch(() => null);
