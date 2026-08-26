@@ -16,7 +16,19 @@ export const GradeShader = {
     aberration: { value: 0.00045 },
     contrast: { value: 1.025 },
     saturation: { value: 0.94 },
+    // Where the bottom of the picture sits. Shadows out here are not black:
+    // they are whatever the sky is putting into them, and holding them off
+    // zero with the sky's own colour is what keeps a silhouette a shape
+    // rather than a hole.
     lift: { value: new THREE.Color(0x0b1113) },
+    // Split toning. The surface is lit by two things that are nowhere near
+    // each other on the wheel — a gold sun and a cyan sky — and pushing the
+    // ends apart in the grade is what stops the render splitting the
+    // difference and handing back a uniform brown. `tone` is how much of it
+    // applies, so the shelter's own strip lights are left alone.
+    shadowTint: { value: new THREE.Color(0.70, 0.97, 1.22) },
+    highlightTint: { value: new THREE.Color(1.24, 1.01, 0.70) },
+    tone: { value: 0 },
     damage: { value: 0 },
   },
   vertexShader: /* glsl */`
@@ -27,12 +39,23 @@ export const GradeShader = {
     }`,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
-    uniform float time, vignette, grain, aberration, contrast, saturation, damage;
-    uniform vec3 lift;
+    uniform float time, vignette, grain, aberration, contrast, saturation, tone, damage;
+    uniform vec3 lift, shadowTint, highlightTint;
+    const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
     varying vec2 vUv;
 
     float hash(vec2 p) {
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    // A tint should move colour and leave level alone. Multiplying by a raw
+    // tint darkens as well as colours — a cyan whose red channel is 0.70 takes
+    // seven per cent of the luminance out of every shadow it touches, and at
+    // full strength that is most of the frame. Dividing the tint through by
+    // its own luminance first makes it a hue rotation with the brightness
+    // kept, which is the difference between a grade and a dimmer.
+    vec3 tint(vec3 c, vec3 t, float w) {
+      return mix(c, c * (t / max(dot(t, LUMA), 1e-4)), w);
     }
 
     void main() {
@@ -46,8 +69,23 @@ export const GradeShader = {
       color.g = texture2D(tDiffuse, vUv).g;
       color.b = texture2D(tDiffuse, vUv + centered * spread).b;
 
-      color = (color - 0.5) * contrast + 0.5;
-      float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+      // Contrast around a pivot below mid grey, then a soft shoulder. Pivoting
+      // at 0.5 and clamping crushed the sky to a flat band the moment contrast
+      // went above about 1.05; rolling the top off instead keeps the highlight
+      // detail that makes a bright sky read as bright rather than as white.
+      color = (color - 0.44) * contrast + 0.44;
+      color = max(color, 0.0);
+      color = color / (1.0 + max(color - 0.92, 0.0));
+
+      float luma = dot(color, LUMA);
+      // Warm end and cold end pulled apart before saturation, so saturation
+      // has two directions to work with instead of one.
+      float shadowWeight = 1.0 - smoothstep(0.0, 0.52, luma);
+      float highWeight = smoothstep(0.30, 0.95, luma);
+      color = tint(color, shadowTint, shadowWeight * tone);
+      color = tint(color, highlightTint, highWeight * tone);
+
+      luma = dot(color, LUMA);
       color = mix(vec3(luma), color, saturation);
       color += lift * (1.0 - luma);
 

@@ -1027,8 +1027,11 @@ export function createGameWorld(assets, options = {}) {
     outdoorDustDrift.push(.25 + Math.random() * .7);
   }
   outdoorDustGeo.setAttribute('position', new THREE.BufferAttribute(outdoorDustPositions, 3));
+  // Warm, and lit by the same sun everything else is. Grey motes read as
+  // pollen in a damp field; this is grit off a dead one.
   const outdoorDust = new THREE.Points(outdoorDustGeo, new THREE.PointsMaterial({
-    color: 0xcfc6b2, size: .035, transparent: true, opacity: .22, depthWrite: false,
+    color: 0xe0bc86, size: .042, transparent: true, opacity: .22,
+    depthWrite: false, blending: THREE.AdditiveBlending,
   }));
   outdoorDust.frustumCulled = false;
   outside.add(outdoorDust);
@@ -1467,7 +1470,7 @@ export function createGameWorld(assets, options = {}) {
     // Time passes wherever the player is standing. The sky is a few dozen
     // sums and a handful of uniform writes, so it runs every frame and the
     // surface is never waiting at the moment you left it.
-    sky.update(dt);
+    sky.update(dt, world === 'outside' ? playerPosition : null);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
     armory?.update(dt);
@@ -1497,7 +1500,8 @@ export function createGameWorld(assets, options = {}) {
         }
       }
       outdoorDustGeo.attributes.position.needsUpdate = true;
-      outdoorDust.material.opacity = .06 + (1 - sky.state.rain) * .18 * (.4 + sky.state.dayFactor * .6);
+      // Heaviest in full sun, because that is when you can see it at all.
+      outdoorDust.material.opacity = .05 + (1 - sky.state.rain) * .26 * (.3 + sky.state.dayFactor * .7);
       const night = 1 - sky.state.dayFactor;
       for (const light of floodLights) light.intensity = 4.5 * night;
       if (range?.lamp) range.lamp.intensity = 5.5 * night;

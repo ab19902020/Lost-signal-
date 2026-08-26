@@ -16,6 +16,18 @@ npm run qa:weapons                # the collection: fire, reload, recoil, gore
 npm run qa:driving                # the car, the perimeter gate and the pad
 npm run qa:tdz                    # dead-zone reads, as part of every build
 npm run qa:boot                   # does the production build actually start
+npm run qa:look                   # the surface across the day, with its numbers
+```
+
+`qa:look` shoots the compound at dawn, noon, gold hour, dusk, night and under
+cloud, and prints what the sky and the grade were set to for each frame. The
+numbers are the useful half — a picture cannot tell you that the grade was
+still damping toward its target and never arrived, and that is exactly the
+fault they caught. It needs a build with the debug handle left in:
+
+```
+NODE_ENV=development npx vite build --mode development --outDir dist-look
+npx vite preview --port 4175 --outDir dist-look
 ```
 
 `qa:boot` is the only harness that walks in through the front door: a

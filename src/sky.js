@@ -13,17 +13,24 @@ const TAU = Math.PI * 2;
 
 // Where the sun sits at each stage of the day, as colours to mix between.
 // Sampled at midnight, dawn, morning, noon, evening, dusk and back to midnight.
+// Two colours, held apart. The key is never white — gold at noon, orange on
+// the way down — and the fill is never grey: it is the sky, which out here is
+// a hard cyan. Everything the sun touches goes amber and everything it does
+// not goes blue, and the further those two are pushed the more the surface
+// reads as somewhere the atmosphere is full of dust rather than somewhere
+// slightly overcast. A neutral white key at noon is what made the compound
+// look like a car park.
 const SKY_STOPS = [
   //  t     zenith     horizon    sun/moon light   ambient sky  ambient ground
-  [0.00, 0x05070e, 0x0b1017, 0x8fa8bd, 0x2a3644, 0x14140f],
-  [0.22, 0x0c1420, 0x1d2430, 0x9fb4c6, 0x3b4a58, 0x1a1a14],
-  [0.27, 0x27364f, 0x8a5a3e, 0xffb27a, 0x6b5a52, 0x2e2620],
-  [0.34, 0x3f6791, 0xbe9a78, 0xffd7ad, 0x8ea3b4, 0x50463a],
-  [0.50, 0x4d7fae, 0xb7c6cd, 0xfff4e2, 0xa9c0d0, 0x6a6250],
-  [0.68, 0x40699a, 0xc0a184, 0xffdcb4, 0x93a6b3, 0x574c3f],
-  [0.76, 0x24324a, 0x8f5a39, 0xff9d63, 0x63544c, 0x2b241e],
-  [0.83, 0x0d1522, 0x1c232f, 0x9cb1c4, 0x3a4855, 0x191913],
-  [1.00, 0x05070e, 0x0b1017, 0x8fa8bd, 0x2a3644, 0x14140f],
+  [0.00, 0x04080f, 0x0a141c, 0x7fa6c8, 0x1d3550, 0x11140f],
+  [0.22, 0x0b1826, 0x1c2c3a, 0x93b6cf, 0x2c4a66, 0x171a15],
+  [0.27, 0x2a3358, 0xc25a1e, 0xff8f3c, 0x5d6a8a, 0x37241a],
+  [0.34, 0x2f6ea6, 0xd8944a, 0xffc070, 0x6f9cc4, 0x5c3a20],
+  [0.50, 0x1f74b4, 0xd8b083, 0xffe0a8, 0x74aad4, 0x7a5028],
+  [0.68, 0x2a6ba4, 0xd98f4a, 0xffbe74, 0x6b9ac2, 0x6a4522],
+  [0.76, 0x22304f, 0xc4571c, 0xff7a2e, 0x50607f, 0x33201a],
+  [0.83, 0x0b1622, 0x18242f, 0x89aecc, 0x24405c, 0x141713],
+  [1.00, 0x04080f, 0x0a141c, 0x7fa6c8, 0x1d3550, 0x11140f],
 ];
 
 const _a = new THREE.Color();
@@ -96,8 +103,12 @@ const FRAGMENT = /* glsl */`
     // The sun: a disc with a wide warm bloom around it.
     float sunAngle = dot(dir, sunDirection);
     float sunDisc = smoothstep(0.99955, 0.99985, sunAngle);
-    float sunGlow = pow(max(sunAngle, 0.0), 220.0) * 0.5
-                  + pow(max(sunAngle, 0.0), 8.0) * 0.10;
+    // Three terms: the tight corona, a broad flare, and a very wide scatter
+    // that is the air itself full of dust. The last is what makes looking
+    // toward the sun feel like looking through something.
+    float sunGlow = pow(max(sunAngle, 0.0), 220.0) * 0.55
+                  + pow(max(sunAngle, 0.0), 12.0) * 0.16
+                  + pow(max(sunAngle, 0.0), 2.5) * 0.09;
 
     // The moon: smaller, colder, with a faint halo.
     float moonAngle = dot(dir, moonDirection);
@@ -111,9 +122,20 @@ const FRAGMENT = /* glsl */`
     colour += vec3(0.72, 0.79, 0.88) * (moonGlow + moonDisc * 1.5)
             * (1.0 - sunAbove) * (1.0 - cloud * 0.8);
 
-    // Overcast flattens everything toward a single grey.
-    vec3 overcast = mix(vec3(0.055, 0.062, 0.070), vec3(0.40, 0.42, 0.44), sunAbove);
+    // Dust settles out of the air slowly, so it piles up along the horizon and
+    // thins overhead. This is the band that puts the ground and the sky on
+    // speaking terms instead of meeting at a hard line.
+    float horizonDust = pow(1.0 - clamp(abs(dir.y) * 2.2, 0.0, 1.0), 2.0);
+    // Wider and hotter at a low sun, which is when there is most air between
+    // the eye and the light: the far field glows instead of ending in a band
+    // of the same navy as the near ground.
+    colour += sunColor * horizonDust * (0.085 + 0.10 * (1.0 - sunAbove))
+            * smoothstep(-0.2, 0.35, sunDirection.y) * (1.0 - cloud * 0.6);
+
+    // Overcast flattens everything — toward dust-grey, not toward neutral.
+    vec3 overcast = mix(vec3(0.050, 0.055, 0.065), vec3(0.44, 0.40, 0.34), sunAbove);
     colour = mix(colour, overcast, cloud * 0.72);
+    colour *= mix(1.0, 1.35, sunAbove);
     gl_FragColor = vec4(colour, 1.0);
   }
 `;
@@ -161,11 +183,22 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   sun.shadow.normalBias = 0.045;
   sun.shadow.bias = -0.0004;
 
-  sun.shadow.camera.left = -46;
-  sun.shadow.camera.right = 46;
-  sun.shadow.camera.top = 46;
-  sun.shadow.camera.bottom = -46;
-  sun.shadow.camera.far = 220;
+  // The shadow box travels with whoever is looking at it. Held on the world
+  // origin it covered the compound and stopped, and beyond its edge every
+  // sample clamps to the border texel — which drew a hard straight line across
+  // the open ground where the shadowing simply gave up, running diagonally
+  // through the middle of the frame the moment the sun came off the vertical.
+  const SHADOW_EXTENT = 64;
+  sun.shadow.camera.left = -SHADOW_EXTENT;
+  sun.shadow.camera.right = SHADOW_EXTENT;
+  sun.shadow.camera.top = SHADOW_EXTENT;
+  sun.shadow.camera.bottom = -SHADOW_EXTENT;
+  sun.shadow.camera.far = 260;
+  // One shadow texel on the ground. The focus is snapped to this, because a
+  // box that slides continuously makes every shadow edge in the world crawl
+  // as the player walks; snapped, the map moves a whole texel at a time and
+  // the edges sit still.
+  const SHADOW_TEXEL = (SHADOW_EXTENT * 2) / 2048;
   scene.add(sun, sun.target);
 
   const moon = new THREE.DirectionalLight(0xa6bdc9, 0);
@@ -196,14 +229,27 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   const _sunDir = new THREE.Vector3();
   const _moonDir = new THREE.Vector3();
 
-  function update(dt) {
+  const _focus = new THREE.Vector3();
+
+  function update(dt, focus = null) {
     elapsed += dt;
     const t = (elapsed / dayLength) % 1;
     state.timeOfDay = t;
 
-    // Sun rises at 0.25 and sets at 0.75, so noon is the top of its arc.
+    // Sun rises at 0.25 and sets at 0.75, so noon is the top of its arc — but
+    // the arc is tilted out of the vertical rather than passing through the
+    // zenith. A sun directly overhead lights the ground and nothing else: every
+    // wall, vehicle and figure in the compound gets only the sky's fill, so the
+    // whole of the middle of the day came out cold and flat with the warm half
+    // of the light landing where the camera never looks. Leaning it over keeps
+    // a raking key and a long shadow on the ground at every hour the sun is up,
+    // which is the light this place is supposed to be baked by.
     const sunAngle = (t - 0.25) * TAU;
-    _sunDir.set(Math.cos(sunAngle) * 0.42, Math.sin(sunAngle), Math.cos(sunAngle) * 0.86).normalize();
+    const TILT = 0.5;
+    _sunDir.set(
+      Math.cos(sunAngle) * 0.42 + TILT * 0.86,
+      Math.sin(sunAngle),
+      Math.cos(sunAngle) * 0.86 - TILT * 0.42).normalize();
     _moonDir.copy(_sunDir).negate();
 
     const height = _sunDir.y;
@@ -239,15 +285,23 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     uniforms.cloud.value = cloud;
 
     const weatherDim = 1 - cloud * 0.72;
-    sun.position.copy(_sunDir).multiplyScalar(120);
+    if (focus) {
+      _focus.set(Math.round(focus.x / SHADOW_TEXEL) * SHADOW_TEXEL, 0,
+        Math.round(focus.z / SHADOW_TEXEL) * SHADOW_TEXEL);
+    } else {
+      _focus.set(0, 0, 0);
+    }
+    sun.target.position.copy(_focus);
+    sun.target.updateMatrixWorld();
+    sun.position.copy(_focus).addScaledVector(_sunDir, 120);
     sun.color.copy(lightColour);
-    // A key of 3.6 with a hemisphere fill of 2.1 over it put nearly six units
-    // of light on a pale wall, and ACES clips a long way before that: the yard
-    // came out as white shapes with no surface on them. The compound is
-    // concrete, rust and grass — none of it is meant to reach paper white, and
-    // the sun's job is to put a shadow on the ground, not to burn the ground
-    // off. Half a stop under is where the render keeps its mid-tones.
-    sun.intensity = Math.max(0, dayFactor) * 2.35 * weatherDim;
+    // Hot, but gold rather than white. A key of 3.6 in near-white clipped the
+    // yard to paper and took the surface off everything; pulling it to 2.35
+    // and leaving it neutral only made the same picture darker. The heat is
+    // back, and it is the colour doing the work: at this tint the red channel
+    // runs into the shoulder while green and blue still have somewhere to go,
+    // so a lit wall goes amber instead of going white.
+    sun.intensity = Math.max(0, dayFactor) * 3.45 * weatherDim;
     sun.visible = sun.intensity > 0.01;
     // The shadow map is left on its automatic per-frame refresh. Holding it
     // and stepping it when the sun had moved a set amount traded a crawl for a
@@ -256,24 +310,31 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     // normal bias, and the far ground no longer asking for shadows deal with
     // the crawl on their own.
 
-    moon.position.copy(_moonDir).multiplyScalar(120);
+    moon.target.position.copy(_focus);
+    moon.target.updateMatrixWorld();
+    moon.position.copy(_focus).addScaledVector(_moonDir, 120);
     moon.intensity = Math.max(0, 1 - dayFactor) * 2.55 * (1 - cloud * 0.55);
     moon.visible = moon.intensity > 0.01;
 
     ambient.color.copy(ambientSky);
     ambient.groundColor.copy(ambientGround);
-    // Fill, not a second sun. It lifts the shadow side off black and no more;
-    // above about one it starts washing out the very contrast the key light is
-    // there to create, and overcast — which is all fill — needs less of it,
-    // not more, because the sky itself has already gone flat.
-    ambient.intensity = (0.52 + dayFactor * 0.74) * (1 - cloud * 0.18);
+    // Fill, not a second sun — and blue, because the only thing filling a
+    // shadow out here is the sky. Kept well under the key: what separates the
+    // two is colour, not level, and lifting this is how a shadow stops being a
+    // shadow and starts being a slightly darker patch of the same grey.
+    // Roughly two and a half parts key to one part fill, held at that ratio
+    // whatever the level. Raising the fill on its own to rescue a dark noon
+    // took the rake out of every morning and evening as well: at a low sun the
+    // key lands at a glancing angle and is easily out-shouted, and the moment
+    // it is, the ground stops being gold and goes the colour of the sky.
+    ambient.intensity = (0.55 + dayFactor * 0.95) * (1 - cloud * 0.18);
 
-    // What the eye is stopped down to out here. Full daylight is nearly a
-    // stop under the shelter's flat interior; the small hours open back up so
-    // a moonlit yard is legible instead of merely dark, and cloud — which
-    // takes the highlights away — gets a little of it back.
-    state.exposure = THREE.MathUtils.lerp(1.16, 0.80, dayFactor)
-      + cloud * 0.10 * dayFactor;
+    // What the eye is stopped down to out here. A little under at noon, open
+    // at night. The previous 0.80 was a stop and a half of correction on top
+    // of a key that had already been cut, which is how the yard ended up
+    // muddy: nothing was clipping and nothing was bright either.
+    state.exposure = THREE.MathUtils.lerp(1.16, 1.10, dayFactor)
+      + cloud * 0.08 * dayFactor;
 
     if (scene.fog) {
       // The fog matches the horizon, so distance runs out into haze rather
@@ -284,7 +345,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
       // nothing on it past the wire; there is now half a kilometre of hedged
       // country and a town out there, and all of it was arriving as a white
       // wash. Weather still closes it down — a rainstorm is still a rainstorm.
-      scene.fog.density = 0.0026 + rain * 0.0115 + cloud * 0.0035;
+      scene.fog.density = 0.0032 + rain * 0.0115 + cloud * 0.0035;
     }
     return state;
   }

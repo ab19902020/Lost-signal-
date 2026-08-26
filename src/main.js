@@ -471,6 +471,15 @@ async function prepare() {
         time: (value) => { game.sky?.setTimeOfDay(value); updateStats(); },
         weather: (value) => { game.sky?.setWeather(value); },
         sky: () => ({ ...game.sky?.state }),
+        // What the grade is actually set to, so a harness can read the look
+        // instead of squinting at a screenshot of it.
+        grade: () => ({
+          tone: gradePass.uniforms.tone.value,
+          contrast: gradePass.uniforms.contrast.value,
+          saturation: gradePass.uniforms.saturation.value,
+          vignette: gradePass.uniforms.vignette.value,
+          lift: gradePass.uniforms.lift.value.toArray().map((v) => +v.toFixed(4)),
+        }),
         aim: (value = true) => setAiming(value),
         jump: () => queueJump(),
         aimAt: (target) => {
@@ -1834,6 +1843,11 @@ function updatePad(dt) {
   if (squeezed && !padTriggerHeld) { triggerHeld = true; padTriggerHeld = true; fire(); }
   else if (!squeezed && padTriggerHeld) { padTriggerHeld = false; triggerHeld = false; }
 }
+
+// Two shadow floors: the surface's is the sky it stands under, the shelter's
+// is the near-black the strip lights leave behind.
+const _liftOutside = new THREE.Color(0.026, 0.042, 0.062);
+const _liftInside = new THREE.Color(0x0b1113);
 
 const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
@@ -3214,8 +3228,34 @@ function loop() {
   // bands crawling over everything. Quantising the input holds the frame still
   // between real changes in the player's condition.
   const spent = 1 - stamina;
-  gradePass.uniforms.vignette.value = 0.44 + spent * 0.16;
-  gradePass.uniforms.saturation.value = 0.96 - spent * 0.14;
+
+  // The surface gets the grade; the shelter and the silo do not. Down there
+  // the light comes out of fittings on the wall and the only honest thing to
+  // do with it is leave it alone — run the split tone through a corridor and
+  // the strip lights go orange while the concrete goes blue, which is a
+  // different film entirely.
+  const outdoors = currentWorld === 'outside';
+  const daylight = outdoors ? (game.sky?.state.dayFactor ?? 0) : 0;
+  const overcast = outdoors ? (game.sky?.state.cloud ?? 0) : 0;
+  // Full strength in open sun, easing off after dark and under cloud, because
+  // both of those take the gold key away and leave only the cold half — and a
+  // split tone with one side missing is just a colour cast.
+  const graded = daylight * (1 - overcast * 0.45);
+  // Set, not damped. These follow dayFactor and cloud, which already move
+  // slowly, so damping them only adds a lag that nothing asked for — and on a
+  // slow renderer the lag never finishes converging, which quietly means the
+  // grade you look at in a capture is not the grade the game applies.
+  gradePass.uniforms.tone.value = outdoors ? 0.34 + graded * 0.52 : 0;
+  gradePass.uniforms.contrast.value = outdoors ? 1.04 + graded * 0.08 : 1.025;
+  gradePass.uniforms.saturation.value =
+    (outdoors ? 1.04 + graded * 0.22 : 0.96) - spent * 0.14;
+  // Outdoors the shadow floor is the sky, so it is blue and it is well off
+  // zero; a corridor lit by its own fittings keeps the near-neutral one it
+  // has always had. The vignette comes down out here too — half a stop of
+  // corner falloff on top of a low sun was taking the edges of the frame out
+  // entirely.
+  gradePass.uniforms.lift.value.copy(outdoors ? _liftOutside : _liftInside);
+  gradePass.uniforms.vignette.value = (outdoors ? 0.17 : 0.44) + spent * 0.16;
   // Aberration is fixed. Vignette and saturation only scale what is already
   // there, but aberration resamples the frame at an offset — so driving it off
   // a stamina bar that is always creeping back up shifted every pixel by a
