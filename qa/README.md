@@ -17,6 +17,7 @@ npm run qa:driving                # the car, the perimeter gate and the pad
 npm run qa:tdz                    # dead-zone reads, as part of every build
 npm run qa:boot                   # does the production build actually start
 npm run qa:look                   # the surface across the day, with its numbers
+npm run qa:sights                 # every weapon's aim pose, down its own sights
 ```
 
 `qa:look` shoots the compound at dawn, noon, gold hour, dusk, night and under

@@ -301,7 +301,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     // back, and it is the colour doing the work: at this tint the red channel
     // runs into the shoulder while green and blue still have somewhere to go,
     // so a lit wall goes amber instead of going white.
-    sun.intensity = Math.max(0, dayFactor) * 3.45 * weatherDim;
+    sun.intensity = Math.max(0, dayFactor) * 2.90 * weatherDim;
     sun.visible = sun.intensity > 0.01;
     // The shadow map is left on its automatic per-frame refresh. Holding it
     // and stepping it when the sun had moved a set amount traded a crawl for a
@@ -327,13 +327,13 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     // took the rake out of every morning and evening as well: at a low sun the
     // key lands at a glancing angle and is easily out-shouted, and the moment
     // it is, the ground stops being gold and goes the colour of the sky.
-    ambient.intensity = (0.55 + dayFactor * 0.95) * (1 - cloud * 0.18);
+    ambient.intensity = (0.95 + dayFactor * 1.25) * (1 - cloud * 0.18);
 
     // What the eye is stopped down to out here. A little under at noon, open
     // at night. The previous 0.80 was a stop and a half of correction on top
     // of a key that had already been cut, which is how the yard ended up
     // muddy: nothing was clipping and nothing was bright either.
-    state.exposure = THREE.MathUtils.lerp(1.16, 1.10, dayFactor)
+    state.exposure = THREE.MathUtils.lerp(1.24, 1.16, dayFactor)
       + cloud * 0.08 * dayFactor;
 
     if (scene.fog) {
@@ -345,7 +345,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
       // nothing on it past the wire; there is now half a kilometre of hedged
       // country and a town out there, and all of it was arriving as a white
       // wash. Weather still closes it down — a rainstorm is still a rainstorm.
-      scene.fog.density = 0.0032 + rain * 0.0115 + cloud * 0.0035;
+      scene.fog.density = 0.0026 + rain * 0.0115 + cloud * 0.0035;
     }
     return state;
   }

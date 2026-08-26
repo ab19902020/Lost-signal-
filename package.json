@@ -16,6 +16,7 @@
     "qa:tdz": "node qa/tdz.mjs",
     "qa:boot": "node qa/boot.mjs http://127.0.0.1:4173/Lost-signal-/",
     "qa:look": "node qa/look.mjs http://127.0.0.1:4175/Lost-signal-/ qa/out/look",
+    "qa:sights": "node qa/sights.mjs http://127.0.0.1:4175/Lost-signal-/ qa/out/ads",
     "assets": "node tools/externalize-glb-images.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },

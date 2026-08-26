@@ -70,6 +70,7 @@ await page.evaluate(() => { globalThis.__ls.world('outside'); globalThis.__ls.si
 
 for (const [name, t, x, z, yaw, weather] of [
   ['low-sun-road', 0.32, 2, 26, Math.PI, 0.10],
+  ['low-sun-gate', 0.315, 0, 12, Math.PI, 0.10],
   ['noon-yard', 0.50, 0, -6, Math.PI, 0.10],
   ['noon-fence', 0.50, -9, -13, 2.35, 0.10],
   ['noon-sunward', 0.50, -6, -2, -1.15, 0.10],

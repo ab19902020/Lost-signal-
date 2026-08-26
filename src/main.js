@@ -336,6 +336,7 @@ async function prepare() {
         // Every rack slot, so a harness can take each weapon down in turn and
         // fire it rather than testing the one the room happens to issue.
         weapons: () => Object.keys(WEAPONS),
+        usable: (key) => isUsable(key),
         weapon: () => ({
           key: weaponKey, name: weapon?.name, family: weapon?.family,
           kind: weapon?.kind, automatic: !!weapon?.automatic,
@@ -1846,7 +1847,7 @@ function updatePad(dt) {
 
 // Two shadow floors: the surface's is the sky it stands under, the shelter's
 // is the near-black the strip lights leave behind.
-const _liftOutside = new THREE.Color(0.026, 0.042, 0.062);
+const _liftOutside = new THREE.Color(0.062, 0.078, 0.098);
 const _liftInside = new THREE.Color(0x0b1113);
 
 const desiredVelocity = new THREE.Vector3();
@@ -2906,31 +2907,98 @@ const weaponHip = new THREE.Vector3(.32, -.38, -.72);
 const weaponAim = new THREE.Vector3(.03, -.13, -.64);
 const weaponTarget = new THREE.Vector3();
 
+// Looking through the sights.
+//
+// The old aim pose was three hand-typed numbers per family that shoved the
+// weapon toward the middle of the screen and left the player a floating
+// crosshair to aim with — the sights on top of the model were decoration, and
+// on anything but the scoped rifles the receiver ended up filling the frame.
+//
+// The weapon knows where its own sights are. Given the two points, there is
+// exactly one place to hold it: rotated so the line joining them runs straight
+// down the camera's axis, and slid so the rear sight sits one eye relief in
+// front of the eye. Then the rear notch, the front post and whatever is behind
+// them all land on the same pixel, and aiming is looking rather than reading a
+// crosshair. The stock ends up behind the near plane and is not drawn, which
+// is also what you see over a real set of irons.
+const EYE_RELIEF = {
+  rifle: .20, smg: .18, shotgun: .21, sniper: .19, pistol: .34, revolver: .34, blade: .30,
+};
+
+const _hipPosition = new THREE.Vector3();
+const _aimPosition = new THREE.Vector3();
+const _hipQuaternion = new THREE.Quaternion();
+const _aimQuaternion = new THREE.Quaternion();
+const _poseEuler = new THREE.Euler(0, 0, 0, 'ZYX');
+const _sightAxis = new THREE.Vector3();
+const _sightRight = new THREE.Vector3();
+const _sightUp = new THREE.Vector3();
+const _sightBasis = new THREE.Matrix4();
+const _worldUp = new THREE.Vector3(0, 1, 0);
+let aimBlend = 0;
+
+/** The transform that puts this weapon's sight line on the camera's axis. */
+function poseOnSights(sights, family) {
+  _sightAxis.copy(sights.front).sub(sights.rear);
+  if (_sightAxis.lengthSq() < 1e-8) return false;
+  _sightAxis.normalize();
+  _sightRight.crossVectors(_sightAxis, _worldUp);
+  if (_sightRight.lengthSq() < 1e-8) _sightRight.set(1, 0, 0);
+  _sightRight.normalize();
+  _sightUp.crossVectors(_sightRight, _sightAxis).normalize();
+  // The basis that maps the camera's axes onto the weapon's; the pose is its
+  // inverse, which is what turns the weapon to face down the camera instead.
+  _sightBasis.makeBasis(_sightRight, _sightUp, _sightAxis.clone().negate());
+  _aimQuaternion.setFromRotationMatrix(_sightBasis).invert();
+  const relief = EYE_RELIEF[family] ?? EYE_RELIEF.rifle;
+  _aimPosition.copy(sights.rear).applyQuaternion(_aimQuaternion).negate();
+  _aimPosition.z -= relief;
+  return true;
+}
+
 function updateWeapon(dt) {
   if (!armed) return;
-  const blend = aiming ? 1 : 0;
   const sway = Math.min(body.horizontalSpeed / 3, 1) * (aiming ? .22 : 1);
   const bob = body.distanceWalked * 3.4;
-  weaponHip.set(...hipPose(weapon));
-  weaponAim.set(...aimPose(weapon));
-  weaponTarget.lerpVectors(weaponHip, weaponAim, blend);
-  weaponTarget.x += Math.cos(bob * .5) * .014 * sway;
-  weaponTarget.y += Math.sin(bob) * .011 * sway + Math.sin(breath * .8) * .004 + recoil * .07;
-  weaponTarget.z += recoil * .13 + recoilPunch * .022 + (sprinting ? .05 : 0);
-  game.weaponView.position.x = THREE.MathUtils.damp(game.weaponView.position.x, weaponTarget.x, 15, dt);
-  game.weaponView.position.y = THREE.MathUtils.damp(game.weaponView.position.y, weaponTarget.y, 15, dt);
-  game.weaponView.position.z = THREE.MathUtils.damp(game.weaponView.position.z, weaponTarget.z, 15, dt);
-  game.weaponView.rotation.x = THREE.MathUtils.damp(game.weaponView.rotation.x,
-    (aiming ? .13 : -.04) - recoil * .5 - recoilPunch * .085 + (sprinting ? .22 : 0), 16, dt);
-  game.weaponView.rotation.y = THREE.MathUtils.damp(game.weaponView.rotation.y,
-    (aiming ? 0 : -.08) + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0), 16, dt);
-  game.weaponView.rotation.z = THREE.MathUtils.damp(game.weaponView.rotation.z,
-    (sprinting ? .24 : 0) + recoilPunch * .030, 16, dt);
+
+  // Where it hangs when nobody is aiming it.
+  _hipPosition.set(...hipPose(weapon));
+  _hipPosition.x += Math.cos(bob * .5) * .014 * sway;
+  _hipPosition.y += Math.sin(bob) * .011 * sway + Math.sin(breath * .8) * .004;
+  _hipPosition.z += sprinting ? .05 : 0;
+  _poseEuler.set(-.04 + (sprinting ? .22 : 0),
+    -.08 + Math.sin(bob * .5) * .02 * sway + (sprinting ? .3 : 0),
+    sprinting ? .24 : 0);
+  _hipQuaternion.setFromEuler(_poseEuler);
+
+  // Where it goes when they are. A weapon whose sights could not be found
+  // falls back to the old hand-set pose rather than to nothing.
+  const sights = game.heldSights?.();
+  if (!sights || !poseOnSights(sights, weapon?.family)) {
+    _aimPosition.set(...aimPose(weapon));
+    _poseEuler.set(.13, 0, 0);
+    _aimQuaternion.setFromEuler(_poseEuler);
+  }
+  // Breathing still moves it, even braced — just far less than at the hip.
+  _aimPosition.y += Math.sin(breath * .8) * .0016;
+
+  aimBlend = THREE.MathUtils.damp(aimBlend, aiming ? 1 : 0, 14, dt);
+  game.weaponView.position.lerpVectors(_hipPosition, _aimPosition, aimBlend);
+  game.weaponView.quaternion.slerpQuaternions(_hipQuaternion, _aimQuaternion, aimBlend);
+
+  // Recoil, on top of wherever the pose left it. A weapon climbs: the muzzle
+  // goes up and the whole thing comes back into the shoulder. Rotating the
+  // view model the other way had every shot in the game driving the barrel
+  // into the ground while the camera lifted off it.
+  game.weaponView.position.y += recoil * .07;
+  game.weaponView.position.z += recoil * .13 + recoilPunch * .022;
+  game.weaponView.rotateX(recoil * .5 + recoilPunch * .085);
+
   // Optics differ. A scoped rifle pulls the frame in much further than a
-  // pistol at arm's length, so the sight picture comes out of the catalogue.
-  // The optic does the magnifying now. The screen only eases in a little, so
-  // the world behind the tube settles rather than snapping.
-  const targetFov = aiming ? (weapon?.zoom ?? 52) : 70;
+  // pistol at arm's length, so the sight picture comes out of the catalogue;
+  // irons get a modest pull-in, enough to read the post without the world
+  // lurching.
+  const targetFov = aiming ? (weapon?.zoom ?? (sights ? 54 : 62)) : 70;
   // A scoped rifle is never quite still, and magnification is what makes that
   // visible. Breathing walks the aim; holding it steady is the player's job.
   if (scoped) {
@@ -3245,10 +3313,10 @@ function loop() {
   // slowly, so damping them only adds a lag that nothing asked for — and on a
   // slow renderer the lag never finishes converging, which quietly means the
   // grade you look at in a capture is not the grade the game applies.
-  gradePass.uniforms.tone.value = outdoors ? 0.34 + graded * 0.52 : 0;
-  gradePass.uniforms.contrast.value = outdoors ? 1.04 + graded * 0.08 : 1.025;
+  gradePass.uniforms.tone.value = outdoors ? 0.28 + graded * 0.38 : 0;
+  gradePass.uniforms.contrast.value = outdoors ? 1.00 + graded * 0.04 : 1.025;
   gradePass.uniforms.saturation.value =
-    (outdoors ? 1.04 + graded * 0.22 : 0.96) - spent * 0.14;
+    (outdoors ? 1.02 + graded * 0.16 : 0.96) - spent * 0.14;
   // Outdoors the shadow floor is the sky, so it is blue and it is well off
   // zero; a corridor lit by its own fittings keeps the near-neutral one it
   // has always had. The vignette comes down out here too — half a stop of
@@ -3273,8 +3341,8 @@ function loop() {
   // Bloom is for practicals — a strip light, a muzzle flash, the moon. Out in
   // daylight there is nothing to bleed and every bit of it lands on the sky,
   // so it comes down to a trace and only takes what is genuinely over white.
-  bloomPass.strength = currentWorld === 'outside' ? 0.065 : 0.2;
-  bloomPass.threshold = currentWorld === 'outside' ? 1.14 : 1.02;
+  bloomPass.strength = currentWorld === 'outside' ? 0.040 : 0.2;
+  bloomPass.threshold = currentWorld === 'outside' ? 1.30 : 1.02;
   composer.render();
   // The optic goes over the finished frame, so the post stack grades the world
   // and not the inside of the tube.

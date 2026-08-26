@@ -1016,25 +1016,10 @@ export function createGameWorld(assets, options = {}) {
   // Dust on the wind. Dry Berkshire pasture with nothing holding it down: the
   // air over the compound is never clean, and it is what sells the floodlight
   // beams and the low sun.
-  const outdoorDustCount = 420;
-  const outdoorDustGeo = new THREE.BufferGeometry();
-  const outdoorDustPositions = new Float32Array(outdoorDustCount * 3);
-  const outdoorDustDrift = [];
-  for (let i = 0; i < outdoorDustCount; i++) {
-    outdoorDustPositions[i * 3] = (Math.random() - .5) * 64;
-    outdoorDustPositions[i * 3 + 1] = Math.random() * 9;
-    outdoorDustPositions[i * 3 + 2] = (Math.random() - .5) * 70;
-    outdoorDustDrift.push(.25 + Math.random() * .7);
-  }
-  outdoorDustGeo.setAttribute('position', new THREE.BufferAttribute(outdoorDustPositions, 3));
-  // Warm, and lit by the same sun everything else is. Grey motes read as
-  // pollen in a damp field; this is grit off a dead one.
-  const outdoorDust = new THREE.Points(outdoorDustGeo, new THREE.PointsMaterial({
-    color: 0xe0bc86, size: .042, transparent: true, opacity: .22,
-    depthWrite: false, blending: THREE.AdditiveBlending,
-  }));
-  outdoorDust.frustumCulled = false;
-  outside.add(outdoorDust);
+  // There were four hundred motes drifting over the compound. They read as
+  // specks on the lens rather than as air, and at night they caught the moon
+  // and looked like snow. The atmosphere is in the sky's own scatter and the
+  // fog now, which is where it belongs.
 
   // The held weapon, as a first-person viewmodel. `weaponView` carries the
   // sway, bob and recoil the player controller drives; the model inside it is
@@ -1197,11 +1182,14 @@ export function createGameWorld(assets, options = {}) {
     root.traverse((part) => { if (part.isMesh || part.isSkinnedMesh) meshes.push(part); });
     return meshes;
   }
+  let heldSights = null;
+
   function setWeapon(key) {
     if (heldKey === key && heldModel) return heldModel;
     if (heldModel) {
       weaponAction.remove(heldModel);
       heldModel = null;
+      heldSights = null;
     }
     const source = (key && assets[key]) || armory?.weaponAsset || assets.rifle;
     if (!source) { heldKey = null; return null; }
@@ -1282,7 +1270,66 @@ export function createGameWorld(assets, options = {}) {
     model.name = `Equipped_${heldKey || 'Rifle'}`;
     weaponAction.add(model);
     heldModel = model;
+    heldSights = measureSights(model);
     return model;
+  }
+
+  // Where the eye has to be to look through this weapon's sights.
+  //
+  // Every model carries its irons as real geometry, but the families name them
+  // differently and two do not have separate parts at all: a shotgun is aimed
+  // off a bead and a rib, a revolver down a groove in the top strap. So the
+  // pair is resolved by name where names exist and measured off the top of the
+  // weapon where they do not. The result is two points in the rig's own frame,
+  // and the line joining them is the line the eye has to be on.
+  const REAR_SIGHT = /(Irons_RearAperture|^Sight_Rear$|_RearSight$|RearNotch)/;
+  const FRONT_SIGHT = /(Irons_FrontPost|^Sight_Front$|Bead_Post|_FrontBlade$)/;
+  const _sightBox = new THREE.Box3();
+  const _sightMin = new THREE.Vector3();
+  const _sightMax = new THREE.Vector3();
+
+  function namedPart(model, pattern) {
+    let found = null;
+    model.traverse((part) => {
+      if (!found && part.isMesh && pattern.test(part.name)) found = part;
+    });
+    return found;
+  }
+
+  function measureSights(model) {
+    // Measure with the action rig at rest. It carries the reload animation,
+    // and a weapon measured mid-cycle would have its sight line baked with a
+    // bolt throw in it.
+    const keepPosition = weaponAction.position.clone();
+    const keepRotation = weaponAction.rotation.clone();
+    weaponAction.position.set(0, 0, 0);
+    weaponAction.rotation.set(0, 0, 0);
+    weaponAction.updateWorldMatrix(true, true);
+    try {
+      const centreOf = (part) => part
+        ? weaponView.worldToLocal(_sightBox.setFromObject(part).getCenter(new THREE.Vector3()))
+        : null;
+      let rear = centreOf(namedPart(model, REAR_SIGHT));
+      let front = centreOf(namedPart(model, FRONT_SIGHT));
+      if (rear && front) return { rear, front, measured: true };
+
+      // Nothing named, or only the front bead. The weapon is held muzzle down
+      // -Z, so its own extents give the rest: the sight line runs along the top
+      // of it, from the back of the receiver to just short of the muzzle.
+      _sightBox.setFromObject(model);
+      weaponView.worldToLocal(_sightMin.copy(_sightBox.min));
+      weaponView.worldToLocal(_sightMax.copy(_sightBox.max));
+      const top = _sightMax.y - (_sightMax.y - _sightMin.y) * 0.06;
+      const x = (_sightMin.x + _sightMax.x) / 2;
+      const length = Math.abs(_sightMax.z - _sightMin.z);
+      if (!front) front = new THREE.Vector3(x, top, _sightMin.z + length * 0.08);
+      if (!rear) rear = new THREE.Vector3(x, front.y, _sightMax.z - length * 0.28);
+      return { rear, front, measured: false };
+    } finally {
+      weaponAction.position.copy(keepPosition);
+      weaponAction.rotation.copy(keepRotation);
+      weaponAction.updateWorldMatrix(true, true);
+    }
   }
 
   /** The model's extents in the rig's own frame, with its current transform. */
@@ -1490,18 +1537,6 @@ export function createGameWorld(assets, options = {}) {
       // Compound lighting is on a photocell, like every real yard light: it
       // burns through the night and shuts off when there is daylight to see by.
       // Dust settles in the wet and lifts when it is dry and bright.
-      const array = outdoorDustGeo.attributes.position.array;
-      for (let i = 0; i < outdoorDustCount; i++) {
-        array[i * 3] += outdoorDustDrift[i] * dt * 1.6;
-        array[i * 3 + 1] += Math.sin(elapsed * .6 + i) * dt * .08;
-        if (array[i * 3] > 32) {
-          array[i * 3] = -32;
-          array[i * 3 + 2] = (Math.random() - .5) * 70;
-        }
-      }
-      outdoorDustGeo.attributes.position.needsUpdate = true;
-      // Heaviest in full sun, because that is when you can see it at all.
-      outdoorDust.material.opacity = .05 + (1 - sky.state.rain) * .26 * (.3 + sky.state.dayFactor * .7);
       const night = 1 - sky.state.dayFactor;
       for (const light of floodLights) light.intensity = 4.5 * night;
       if (range?.lamp) range.lamp.intensity = 5.5 * night;
@@ -1537,6 +1572,7 @@ export function createGameWorld(assets, options = {}) {
     weaponView,weaponAction,blocked,colliders,spawnPoints,creatures,cctvScenes,nearestInteraction,setWorld,setArmed,
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
+    heldSights:()=>heldSights,
     bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,country,
     gateIsOpen:()=>gateOpen,
     gateTravel:()=>gateSlide,

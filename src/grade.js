@@ -26,8 +26,8 @@ export const GradeShader = {
     // ends apart in the grade is what stops the render splitting the
     // difference and handing back a uniform brown. `tone` is how much of it
     // applies, so the shelter's own strip lights are left alone.
-    shadowTint: { value: new THREE.Color(0.70, 0.97, 1.22) },
-    highlightTint: { value: new THREE.Color(1.24, 1.01, 0.70) },
+    shadowTint: { value: new THREE.Color(0.82, 0.99, 1.13) },
+    highlightTint: { value: new THREE.Color(1.17, 1.01, 0.80) },
     tone: { value: 0 },
     damage: { value: 0 },
   },
@@ -75,7 +75,16 @@ export const GradeShader = {
       // detail that makes a bright sky read as bright rather than as white.
       color = (color - 0.44) * contrast + 0.44;
       color = max(color, 0.0);
-      color = color / (1.0 + max(color - 0.92, 0.0));
+      // Roll the top off well before white. A low sun raking across open
+      // ground puts a strip of it far above everything else in the frame, and
+      // with the shoulder starting at 0.92 that strip slammed flat to yellow
+      // while the rest of the picture sat in the dark underneath it — bright
+      // enough to be blinding and carrying no detail at all. Compressing from
+      // two thirds up gives the highlight somewhere to go, which is what lets
+      // the rest of the frame be lifted without the lit half tearing.
+      const float KNEE = 0.62;
+      vec3 over = max(color - KNEE, 0.0);
+      color = min(color, vec3(KNEE)) + over / (1.0 + over * 2.2);
 
       float luma = dot(color, LUMA);
       // Warm end and cold end pulled apart before saturation, so saturation

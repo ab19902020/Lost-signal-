@@ -452,8 +452,20 @@ assert.ok(worldSource.includes('function setWeapon('),
   'the first-person viewmodel cannot swap weapons');
 assert.ok(mainSource.includes('createDecalField'), 'shots leave no marks on the world');
 assert.ok(mainSource.includes('resolvePersonHit'), 'shooting a person does nothing');
-assert.ok(mainSource.includes("targetFov = aiming ? (weapon?.zoom ?? 52) : 70"),
+assert.ok(/targetFov = aiming \? \(weapon\?\.zoom \?\?/.test(mainSource),
   'aiming does not use the held weapon\'s optic');
+// Aiming is looking through the weapon's own irons, not shoving it at a
+// crosshair: the pose is derived from where the sights actually are.
+assert.ok(worldSource.includes('function measureSights('),
+  'weapons do not report where their sights are');
+assert.ok(mainSource.includes('function poseOnSights('),
+  'aiming does not align the weapon on its own sight line');
+assert.ok(mainSource.includes('game.heldSights?.()'),
+  'the aim pose ignores the held weapon\'s sights');
+// A weapon climbs. Rotating the view model the other way pointed every barrel
+// in the game at the ground on every shot.
+assert.ok(/rotateX\(recoil \* \.5 \+ recoilPunch \* \.085\)/.test(mainSource),
+  'recoil drives the muzzle down instead of up');
 const creatureSource = await readFile(new URL('../src/creatures.js', import.meta.url), 'utf8');
 assert.ok(creatureSource.includes('this.groundY - eased * this.dropHeight'),
   'a body dropped on an upper gallery falls through it');
