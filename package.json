@@ -20,7 +20,8 @@
     "qa:flight": "node qa/flight.mjs http://127.0.0.1:4175/Lost-signal-/ qa/out/fly",
     "assets": "node tools/externalize-glb-images.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "qa:model": "node qa/model.mjs http://127.0.0.1:5173/Lost-signal-/qa/model.html qa/out/model"
+    "qa:model": "node qa/model.mjs http://127.0.0.1:5173/Lost-signal-/qa/model.html qa/out/model",
+    "qa:touch": "node qa/touch.mjs http://127.0.0.1:4175/Lost-signal-/"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

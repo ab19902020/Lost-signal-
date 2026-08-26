@@ -30,8 +30,6 @@ const ammoEl = document.getElementById('ammo');
 const foodEl = document.getElementById('foodStat');
 const healthEl = document.getElementById('healthStat');
 const motionEl = document.getElementById('motion');
-const staminaBar = document.getElementById('staminaBar');
-const staminaFill = document.getElementById('staminaFill');
 const taskListEl = document.getElementById('taskList');
 const dayEl = document.getElementById('dayStat');
 const clockEl = document.getElementById('clockStat');
@@ -133,7 +131,6 @@ let recoilYaw = 0;
 let recoilSettlePitch = 0;
 let recoilSettleYaw = 0;
 let sprinting = false;
-let stamina = 1;
 let seated = null;
 // The car, while you are in it. Driving replaces walking outright: the
 // capsule is parked at the seat, the weapon comes down and W/A/S/D go to
@@ -142,7 +139,9 @@ let driving = null;
 let flying = null;
 let aiming = false;
 let jumpQueued = false;
-const touch = { sprint: false, crouch: false };
+// The on-screen controls' own state. `throttle` is null until a finger has
+// touched the lever, so the keyboard and the pad keep it until then.
+const touch = { sprint: false, crouch: false, throttle: null, rudder: 0, brake: false };
 let breath = 0;
 const body = new CharacterBody();
 const clock = new THREE.Clock();
@@ -159,7 +158,7 @@ const gamepad = createGamepad();
 // Analogue movement and look, in the same shape mobile already supplies.
 const padMove = { x: 0, y: 0 };
 const padDrive = { active: false, throttle: 0, steer: 0, brake: false };
-const padFly = { active: false, pitch: 0, roll: 0, yaw: 0, throttle: 0 };
+const padFly = { active: false, pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: false };
 let padCrouchHeld = false;
 let padSprintLatch = false;
 let padSprintWas = false;
@@ -476,6 +475,16 @@ async function prepare() {
             new THREE.Vector3(0, 0, -1).applyQuaternion(flying.state.quaternion).y))).toFixed(4),
           vy: +flying.state.velocity.y.toFixed(3),
           controlPitch: +flying.state.controls.pitch.toFixed(3),
+          // The inputs, as handed to the aeroplane. The brakes leave no trace
+          // on its state — they are a deceleration applied and forgotten — so
+          // there is otherwise no way to ask whether a control reached them.
+          input: {
+            throttle: +flyControls.throttle.toFixed(3),
+            yaw: +flyControls.yaw.toFixed(3),
+            pitch: +flyControls.pitch.toFixed(3),
+            roll: +flyControls.roll.toFixed(3),
+            brake: !!flyControls.brake,
+          },
         } : null),
         stick: (pitchInput = 0, roll = 0, yawInput = 0, throttle = null, brake = false) => {
           keys.Space = !!brake;
@@ -494,6 +503,7 @@ async function prepare() {
           move: { ...gamepad.state.move }, look: { ...gamepad.state.look },
           l2: gamepad.state.l2, r2: gamepad.state.r2,
           down: { ...gamepad.state.down },
+          pressed: { ...gamepad.state.pressed },
         }),
         lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
         horn: () => hornSound(),
@@ -540,7 +550,10 @@ async function prepare() {
           objectives: [...completed] }),
         newRun: () => clearRun(),
         survival,
-        debug: () => ({ started, modal, cctv, keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
+        debug: () => ({ started, modal, cctv, aiming, holstered, sprinting, armed,
+          reloading, weaponKey, wheelOpen, touchSprint: touch.sprint, touchMode,
+          helpOpen: helpOpen(), driving: !!driving, flying: !!flying, seated: !!seated,
+          keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
           climbable,
           min: box.min.toArray().map(v => +v.toFixed(2)),
@@ -951,6 +964,8 @@ function leaveSeat(showMessage = true) {
   return true;
 }
 
+const helpOpen = () => document.getElementById('help').classList.contains('open');
+
 function toggleHelp(force) {
   const panel = document.getElementById('help');
   const open = force ?? !panel.classList.contains('open');
@@ -1053,8 +1068,22 @@ function setScoped(value) {
   return scoped;
 }
 
+/** Stop sprinting, and put every control that latches it back to off. */
+function releaseSprint() {
+  sprinting = false;
+  touch.sprint = false;
+  padSprintLatch = padSprintWas = false;
+  document.getElementById('sprintBtn')?.classList.remove('on');
+}
+
 function setAiming(value) {
-  const next = !!value && armed && !reloading && !modal && !cctv && !seated && !driving && !sprinting;
+  // Asking to aim while running stops the running, rather than the running
+  // refusing the aim. RUN is a latch on touch and on the pad, so the old rule
+  // made it possible to be stuck sprinting with the sights permanently
+  // unavailable and no obvious reason why — and once sprint stopped being
+  // limited by stamina, nothing ever released that latch on its own.
+  if (value && (sprinting || touch.sprint)) releaseSprint();
+  const next = !!value && armed && !reloading && !modal && !cctv && !seated && !driving;
   if (aiming === next) return aiming;
   aiming = next;
   document.body.classList.toggle('aiming', aiming);
@@ -1743,7 +1772,52 @@ cctvFrame.addEventListener('pointerdown',e=>{if(e.target.closest('button'))retur
 cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const dx=e.clientX-ptzX,dy=e.clientY-ptzY;ptzX=e.clientX;ptzY=e.clientY;camPan[currentCam]=Math.max(-1.35,Math.min(1.35,camPan[currentCam]-dx*.0033));camTilt[currentCam]=Math.max(-.7,Math.min(.6,camTilt[currentCam]-dy*.0028));updatePTZ()});
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
+// The on-screen throttle lever, painted from wherever the throttle actually
+// is — the keys, the pad triggers and the lever itself all move the same
+// number, so the lever has to follow it rather than own it.
+const throttleFillEl = document.getElementById('throttleFill');
+const throttleTextEl = document.getElementById('throttleText');
+const throttleNotchEl = document.getElementById('throttleNotch');
+let throttlePainted = -1;
+function paintThrottle(value) {
+  const shown = Math.round(value * 100);
+  if (shown === throttlePainted) return;      // do not touch layout every frame
+  throttlePainted = shown;
+  if (throttleFillEl) throttleFillEl.style.height = `${shown}%`;
+  if (throttleTextEl) throttleTextEl.textContent = `THR ${shown}%`;
+  if (throttleNotchEl) throttleNotchEl.style.bottom = `${shown}%`;
+}
+
+// Whether the thumb pads are on the glass.
+//
+// 'auto' is the old behaviour and the default: they are there until a pad is
+// plugged in, because a pad is a better set of on-screen controls than the
+// on-screen controls. 'on' and 'off' are the manual override, for anyone who
+// wants both at once or neither, and the choice is remembered.
+const TOUCH_MODES = ['auto', 'on', 'off'];
+let touchMode = 'auto';
+try { touchMode = localStorage.getItem('ls.touchMode') || 'auto'; } catch { /* private mode */ }
+if (!TOUCH_MODES.includes(touchMode)) touchMode = 'auto';
+
+function applyTouchMode() {
+  document.body.classList.toggle('touch-on', touchMode === 'on');
+  document.body.classList.toggle('touch-off', touchMode === 'off');
+  const button = document.getElementById('touchToggle');
+  if (button) button.textContent = `ON-SCREEN CONTROLS: ${touchMode.toUpperCase()}`;
+  try { localStorage.setItem('ls.touchMode', touchMode); } catch { /* private mode */ }
+}
+
+function cycleTouchMode() {
+  touchMode = TOUCH_MODES[(TOUCH_MODES.indexOf(touchMode) + 1) % TOUCH_MODES.length];
+  applyTouchMode();
+  flash(touchMode === 'auto' ? 'ON-SCREEN CONTROLS FOLLOW THE CONTROLLER'
+    : touchMode === 'on' ? 'ON-SCREEN CONTROLS ALWAYS ON'
+      : 'ON-SCREEN CONTROLS OFF', 2000);
+}
+
 function wireControls() {
+  applyTouchMode();
+  document.getElementById('touchToggle')?.addEventListener('click', cycleTouchMode);
   // The pad announces itself rather than being found: the Gamepad API hides a
   // controller until it is used, so the first press is the connection.
   gamepad.on((event, detail) => {
@@ -1822,6 +1896,60 @@ function wireControls() {
   latch('sprintBtn', 'sprint');
   latch('crouchBtn', 'crouch');
 
+  // Flying, on glass.
+  //
+  // The stick was already here — the left thumb pad becomes the stick the
+  // moment you are in the air — but the throttle was on W and S, the rudder
+  // on A and D and the brakes on the space bar, none of which a phone has. So
+  // the aeroplane could be walked up to, boarded and then not flown.
+  const track = document.getElementById('throttleTrack');
+  const setThrottleFrom = (event) => {
+    const box = track.getBoundingClientRect();
+    // Up is more, which is the way a lever works and the opposite of the way
+    // screen coordinates do.
+    touch.throttle = THREE.MathUtils.clamp(
+      (box.bottom - event.clientY) / box.height, 0, 1);
+    paintThrottle(touch.throttle);
+  };
+  let throttleId = null;
+  track?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    throttleId = event.pointerId;
+    track.setPointerCapture?.(throttleId);
+    setThrottleFrom(event);
+    clickSound(360, .03, .03);
+  });
+  track?.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== throttleId) return;
+    event.preventDefault();
+    setThrottleFrom(event);
+  });
+  const dropThrottle = () => { throttleId = null; };
+  track?.addEventListener('pointerup', dropThrottle);
+  track?.addEventListener('pointercancel', dropThrottle);
+
+  // Rudder and brakes are held, not latched: both are things you lean on for
+  // a moment and let go of.
+  const hold = (id, press, release) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    const down = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      button.classList.add('on');
+      press();
+    };
+    const up = () => { button.classList.remove('on'); release(); };
+    button.addEventListener('pointerdown', down);
+    button.addEventListener('pointerup', up);
+    button.addEventListener('pointercancel', up);
+    button.addEventListener('pointerleave', up);
+  };
+  hold('rudderL', () => { touch.rudder = -1; }, () => { if (touch.rudder < 0) touch.rudder = 0; });
+  hold('rudderR', () => { touch.rudder = 1; }, () => { if (touch.rudder > 0) touch.rudder = 0; });
+  hold('flyBrake', () => { touch.brake = true; }, () => { touch.brake = false; });
+
   // On a phone the wheel is opened by a button and closed by picking something
   // out of it, rather than held: there is no key to let go of.
   document.getElementById('wheelBtn')?.addEventListener('pointerdown', (event) => {
@@ -1860,6 +1988,7 @@ function updatePad(dt) {
     padDrive.brake = false;
     padFly.active = false;
     padFly.pitch = padFly.roll = padFly.yaw = padFly.throttle = 0;
+    padFly.brake = false;
     if (!state.connected) {
       padCrouchHeld = false;
       padSprintLatch = padSprintWas = false;
@@ -1874,6 +2003,11 @@ function updatePad(dt) {
     padMove.x = padMove.y = 0;
     if (state.pressed.circle || state.pressed.options || state.pressed.touchpad) closeCCTV();
     if (state.pressed.triangle) toggleNightVision();
+    if (state.pressed.square) {
+      camPan[currentCam] = 0; camTilt[currentCam] = 0;
+      camFov[currentCam] = [48, 50, 48, 42, 56][currentCam];
+      updatePTZ();
+    }
     if (state.pressed.r1) switchCam((currentCam + 1) % camNames.length);
     if (state.pressed.l1) switchCam((currentCam + camNames.length - 1) % camNames.length);
     if (state.pressed.up) zoom(-6);
@@ -1888,6 +2022,13 @@ function updatePad(dt) {
 
   if (state.pressed.options) toggleHelp();
   if (state.pressed.ps) document.exitPointerLock?.();
+  if (helpOpen()) {
+    padMove.x = padMove.y = 0;
+    if (state.pressed.circle || state.pressed.cross) toggleHelp(false);
+    // The one setting in the game, reachable from the pad that turns it off.
+    if (state.pressed.square || state.pressed.triangle) cycleTouchMode();
+    return;
+  }
   if (modal) { padMove.x = padMove.y = 0; return; }
 
   // L1 held is the wheel, steered with the right stick and taken by letting
@@ -1919,11 +2060,16 @@ function updatePad(dt) {
     padFly.pitch = state.move.y;
     padFly.yaw = (state.down.r1 ? 1 : 0) - (state.down.l1 ? 1 : 0);
     padFly.throttle = state.r2 - state.l2;
-    if (state.pressed.circle) use();
+    // Cross is the wheel brakes, which is the one control you need on the
+    // ground and could not reach from the pad at all: without it you could
+    // take off with a controller and then not stop after landing.
+    padFly.brake = state.down.cross;
+    if (state.pressed.circle || state.pressed.square) use();
     if (state.pressed.touchpad) openCCTV();
     return;
   }
   padFly.active = false;
+  padFly.brake = false;
 
   if (driving) {
     padMove.x = padMove.y = 0;
@@ -2131,11 +2277,31 @@ function enterAircraft(aircraft) {
   flyControls.throttle = 0;
   flyStick = { pitch: 0, roll: 0 };
   flyHeld = false;
+  // Whatever was latched on foot has no meaning in the air, and CROUCH doubles
+  // as the wheel brakes — climbing in with it held on would hold the brakes.
+  releaseSprint();
+  touch.crouch = false;
+  document.getElementById('crouchBtn')?.classList.remove('on');
+  resetFlightTouch();
   document.body.classList.add('flying');
   refreshWeaponView();
   startEngineAudio('aircraft');
-  flash(`${aircraft.label} — W OPENS THE THROTTLE · MOUSE IS THE STICK · [ E ] TO GET OUT`, 4200);
+  flash(coarse
+    ? `${aircraft.label} — THR IS THE THROTTLE · LEFT PAD IS THE STICK · USE TO GET OUT`
+    : `${aircraft.label} — W OPENS THE THROTTLE · MOUSE IS THE STICK · [ E ] TO GET OUT`,
+  4200);
   return true;
+}
+
+/** Put the on-screen flight controls back to neutral. */
+function resetFlightTouch() {
+  touch.throttle = null;
+  touch.rudder = 0;
+  touch.brake = false;
+  for (const id of ['rudderL', 'rudderR', 'flyBrake']) {
+    document.getElementById(id)?.classList.remove('on');
+  }
+  paintThrottle(0);
 }
 
 function leaveAircraft(showMessage = true) {
@@ -2150,6 +2316,7 @@ function leaveAircraft(showMessage = true) {
   flying = null;
   aircraft.occupied = false;
   document.body.classList.remove('flying');
+  resetFlightTouch();
   stopEngineAudio();
   if (holsteredForDrive) { holsteredForDrive = false; setHolstered(false, { announce: false }); }
   refreshWeaponView();
@@ -2167,8 +2334,18 @@ function updateFlying(dt) {
   const push = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   flyControls.throttle = THREE.MathUtils.clamp(
     flyControls.throttle + push * dt * 0.55 + (padFly.active ? padFly.throttle * dt * 0.9 : 0), 0, 1);
-  flyControls.yaw = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (padFly.active ? padFly.yaw : 0);
-  flyControls.brake = !!keys.Space || touch.crouch;
+  // The on-screen lever is absolute: it is where you last put it, and putting
+  // it somewhere is one drag. Anything that moves the throttle another way —
+  // the keys, the triggers — takes it back off the lever.
+  if (touch.throttle !== null) {
+    if (push || (padFly.active && padFly.throttle)) touch.throttle = null;
+    else flyControls.throttle = touch.throttle;
+  }
+  flyControls.yaw = THREE.MathUtils.clamp(
+    (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + touch.rudder
+    + (padFly.active ? padFly.yaw : 0), -1, 1);
+  flyControls.brake = !!keys.Space || touch.brake || touch.crouch
+    || (padFly.active && padFly.brake);
   // The stick self-centres, so letting go lets the aeroplane settle.
   if (padFly.active) { flyStick.pitch = padFly.pitch; flyStick.roll = padFly.roll; }
   else if (!flyHeld) {
@@ -2218,15 +2395,13 @@ function updateFlying(dt) {
   if (flySpeedEl) flySpeedEl.textContent = String(Math.round(speed * KNOTS));
   if (flyAltEl) flyAltEl.textContent = String(Math.max(0, Math.round(aircraft.altitude * FEET)));
   if (flyThrottleEl) flyThrottleEl.textContent = `${Math.round(flyControls.throttle * 100)}%`;
+  paintThrottle(flyControls.throttle);
   if (flyWarnEl) {
     flyWarnEl.textContent = aircraft.stalled ? 'STALL'
       : (!aircraft.grounded && speed * KNOTS < 55 ? 'SPEED' : '');
   }
 
   sprinting = false;
-  stamina = Math.min(1, stamina + dt / 4);
-  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
-  staminaBar.classList.toggle('on', stamina < 0.995);
 }
 
 const desiredVelocity = new THREE.Vector3();
@@ -2259,9 +2434,6 @@ function updatePlayer(dt) {
     game.camera.rotation.z = 0;
     breath += dt * 0.55;
     sprinting = false;
-    stamina = Math.min(1, stamina + dt / 4);
-    staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
-    staminaBar.classList.toggle('on', stamina < 0.995);
     return;
   }
 
@@ -2271,18 +2443,13 @@ function updatePlayer(dt) {
   if (magnitude > 1) { strafe /= magnitude; forward /= magnitude; }
 
   const crouching = !!keys.ControlLeft || !!keys.KeyC || touch.crouch;
-  const wantsSprint = (!!keys.ShiftLeft || !!keys.ShiftRight || touch.sprint) && forward > 0.1 && !crouching;
-  sprinting = wantsSprint && stamina > 0.05;
-  if (sprinting && aiming) setAiming(false);
-
-  // Sprinting drains stamina; standing still or walking refills it, with a
-  // short recovery lag so a spent player cannot immediately sprint again.
-  stamina = THREE.MathUtils.clamp(
-    stamina + (sprinting ? -dt / 6.5 : dt / (stamina < 0.2 ? 9 : 5)), 0, 1);
-  if (touch.sprint && stamina <= 0.02) {
-    touch.sprint = false;
-    document.getElementById('sprintBtn').classList.remove('on');
-  }
+  // Run for as long as you like. There was a stamina meter that gave about ten
+  // seconds of sprint and then cut it off, which on a map that is now two
+  // kilometres across turned every journey into a series of ten-second dashes
+  // separated by waiting. Nothing replaced it: no limp, no wheeze, no sway —
+  // the tiredness effects went with the meter that drove them.
+  sprinting = (!!keys.ShiftLeft || !!keys.ShiftRight || touch.sprint)
+    && forward > 0.1 && !crouching;
 
   const base = currentWorld === 'outside' ? 3.05 : 2.55;
   const speed = base * (sprinting ? 1.72 : 1) * (crouching ? 0.48 : 1);
@@ -2319,9 +2486,6 @@ function updatePlayer(dt) {
     + recoilRoll;
 
   footsteps(dt, speedRatio, crouching);
-
-  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
-  staminaBar.classList.toggle('on', stamina < 0.995);
 }
 
 // One frame behind the wheel. The car does the physics; this hands it the
@@ -2408,9 +2572,6 @@ function updateDriving(dt) {
   }
 
   sprinting = false;
-  stamina = Math.min(1, stamina + dt / 4);
-  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
-  staminaBar.classList.toggle('on', stamina < 0.995);
 }
 
 // One place that takes health off the player, so a crash, a bite and a night
@@ -3515,9 +3676,8 @@ function updateWeapon(dt) {
   // A scoped rifle is never quite still, and magnification is what makes that
   // visible. Breathing walks the aim; holding it steady is the player's job.
   if (scoped) {
-    const wander = Math.min(1, 0.35 + (1 - stamina) * 0.9);
-    yaw += Math.sin(breath * 0.83) * 0.00028 * wander;
-    pitch += Math.cos(breath * 0.61) * 0.00022 * wander;
+    yaw += Math.sin(breath * 0.83) * 0.00028 * 0.35;
+    pitch += Math.cos(breath * 0.61) * 0.00022 * 0.35;
   }
   const nextFov = THREE.MathUtils.damp(game.camera.fov, targetFov, 12, dt);
   if (Math.abs(nextFov - game.camera.fov) > .001) {
@@ -3673,9 +3833,9 @@ function renderScope(scene) {
 
   scopeMaterial.uniforms.aspect.value = innerWidth / innerHeight;
   scopeMaterial.uniforms.open.value = scopeOpen;
-  // Breathing and a spent shooter both move the eye behind the glass.
+  // Recoil moves the eye behind the glass.
   scopeMaterial.uniforms.shadow.value = THREE.MathUtils.clamp(
-    (1 - stamina) * 0.5 + Math.abs(recoilPitch) * 5.0, 0, 0.9);
+    Math.abs(recoilPitch) * 5.0, 0, 0.9);
   const previousAutoClear = renderer.autoClear;
   renderer.autoClear = false;
   renderer.render(scopeScene, scopeCamera);
@@ -3800,16 +3960,7 @@ function loop() {
   gradePass.uniforms.time.value = clock.elapsedTime;
   const wounded = THREE.MathUtils.clamp(1 - health / 100, 0, 1);
   gradePass.uniforms.damage.value = Math.max(hurtFlash * 0.8, wounded * 0.45);
-  // Exhaustion desaturates and tightens the frame; bloom eases off outdoors
-  // where there are no bright practicals to bleed.
-  // Exhaustion desaturates and tightens the frame. These are driven off
-  // stamina, which regenerates continuously, so writing them raw every frame
-  // walks the vignette radius and the aberration offset by a fraction of a
-  // pixel each time — which resamples the whole image and reads as concentric
-  // bands crawling over everything. Quantising the input holds the frame still
-  // between real changes in the player's condition.
-  const spent = 1 - stamina;
-
+  // Bloom eases off outdoors, where there are no bright practicals to bleed.
   // The surface gets the grade; the shelter and the silo do not. Down there
   // the light comes out of fittings on the wall and the only honest thing to
   // do with it is leave it alone — run the split tone through a corridor and
@@ -3829,19 +3980,17 @@ function loop() {
   gradePass.uniforms.tone.value = outdoors ? 0.28 + graded * 0.38 : 0;
   gradePass.uniforms.contrast.value = outdoors ? 1.00 + graded * 0.04 : 1.025;
   gradePass.uniforms.saturation.value =
-    (outdoors ? 1.02 + graded * 0.16 : 0.96) - spent * 0.14;
+    outdoors ? 1.02 + graded * 0.16 : 0.96;
   // Outdoors the shadow floor is the sky, so it is blue and it is well off
   // zero; a corridor lit by its own fittings keeps the near-neutral one it
   // has always had. The vignette comes down out here too — half a stop of
   // corner falloff on top of a low sun was taking the edges of the frame out
   // entirely.
   gradePass.uniforms.lift.value.copy(outdoors ? _liftOutside : _liftInside);
-  gradePass.uniforms.vignette.value = (outdoors ? 0.17 : 0.44) + spent * 0.16;
-  // Aberration is fixed. Vignette and saturation only scale what is already
-  // there, but aberration resamples the frame at an offset — so driving it off
-  // a stamina bar that is always creeping back up shifted every pixel by a
-  // fraction each frame, and the whole image crawled in concentric bands. It
-  // is a property of the lens, not of how tired the player is.
+  gradePass.uniforms.vignette.value = outdoors ? 0.17 : 0.44;
+  // Aberration is a property of the lens, and it is fixed. Driven off a meter
+  // that crept back up every frame it shifted every pixel by a fraction each
+  // time, and the whole image crawled in concentric bands.
   gradePass.uniforms.aberration.value = 0.0012;
   // The eye. Outdoors the surface says what it is stopped down to and the iris
   // walks there rather than jumping, so stepping out of the hatch at noon
