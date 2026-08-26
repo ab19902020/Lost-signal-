@@ -69,6 +69,8 @@ const shot = async (name) => {
 await page.evaluate(() => { globalThis.__ls.world('outside'); globalThis.__ls.simulate(60); });
 
 for (const [name, t, x, z, yaw, weather] of [
+  ['far-road', 0.40, 6, 240, 0.15, 0.10],
+  ['far-road-back', 0.40, 6, 300, 3.2, 0.10],
   ['low-sun-road', 0.32, 2, 26, Math.PI, 0.10],
   ['low-sun-gate', 0.315, 0, 12, Math.PI, 0.10],
   ['noon-yard', 0.50, 0, -6, Math.PI, 0.10],

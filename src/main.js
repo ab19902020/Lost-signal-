@@ -460,6 +460,8 @@ async function prepare() {
         }),
         lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
         horn: () => hornSound(),
+        holster: (on) => setHolstered(on === undefined ? !holstered : on, { announce: false }),
+        wheel: (open) => (open === false ? closeWheel(false) : openWheel()),
         // The perimeter gate runs itself off its approach loop; this sets the
         // mode switch on the post so a harness can pin it open or shut.
         gate: (mode) => {
@@ -850,7 +852,14 @@ const _carPoint = new THREE.Vector3();
 
 function enterVehicle(vehicle) {
   if (!vehicle || driving || currentWorld !== 'outside') return false;
+  // Both hands are on the wheel. The weapon goes away on the way in and comes
+  // back out on the way out, unless it was already put away — in which case it
+  // stays where the player left it.
+  closeWheel(false);
+  holsteredForDrive = armed && !holstered;
+  if (holsteredForDrive) setHolstered(true, { announce: false });
   driving = vehicle;
+  refreshWeaponView();
   vehicle.occupied = true;
   setAiming(false);
   setScoped(false);
@@ -876,6 +885,8 @@ function leaveVehicle(showMessage = true) {
   const vehicle = driving;
   const step = vehicle.doorstep();
   driving = null;
+  if (holsteredForDrive) { holsteredForDrive = false; setHolstered(false, { announce: false }); }
+  refreshWeaponView();
   vehicle.occupied = false;
   document.body.classList.remove('driving');
   stopEngineAudio();
@@ -995,7 +1006,7 @@ function setScoped(value) {
   if (scoped === next) return scoped;
   scoped = next;
   document.body.classList.toggle('scoped', scoped);
-  if (game) game.weaponView.visible = armed && !scoped;
+  refreshWeaponView();
   if (scoped && scopeRangeEl) scopeRangeEl.textContent = `${weapon.scope} — ${weapon.name}`;
   return scoped;
 }
@@ -1049,6 +1060,42 @@ function syncAmmo() {
 const CARRY_SLOTS = 4;
 const carried = [];
 
+// Putting it away.
+//
+// A weapon was drawn or it did not exist, so there was no way to walk up to
+// somebody with your hands empty, and getting into the car left a rifle
+// hanging in the chase camera behind the boot. Holstered is a third state: the
+// weapon is still on the player and still loaded, it is simply not out.
+let holstered = false;
+let holsteredForDrive = false;
+
+/**
+ * The one place that decides whether the weapon is on screen.
+ *
+ * Four things can take it off — not being armed at all, looking down a scope
+ * (the optic replaces the view), having put it away, and driving — and they
+ * were being written from four different places, so whichever ran last won.
+ */
+function refreshWeaponView() {
+  const carrying = armed && !holstered;
+  if (game) game.weaponView.visible = carrying && !scoped && !driving;
+  document.body.classList.toggle('armed', carrying);
+  document.body.classList.toggle('holstered', armed && holstered);
+}
+
+function setHolstered(value, { announce = true } = {}) {
+  const next = !!value && armed;
+  if (holstered === next) return holstered;
+  holstered = next;
+  if (holstered) setAiming(false);
+  refreshWeaponView();
+  if (announce && armed) {
+    flash(holstered ? `${weapon?.name || 'WEAPON'} HOLSTERED` : `${weapon?.name || 'WEAPON'} DRAWN`, 1400);
+    clickSound(holstered ? 280 : 380, .07, .045);
+  }
+  return holstered;
+}
+
 /** Draw a weapon already on the player. */
 function drawWeapon(key, { announce = true } = {}) {
   if (!isUsable(key) || !carried.includes(key)) return false;
@@ -1059,6 +1106,7 @@ function drawWeapon(key, { announce = true } = {}) {
   ammo = pool.magazine;
   reserve = pool.reserve;
   armed = true;
+  holstered = false;
   reloading = false;
   reloadTimer = 0;
   queuedReload = 0;
@@ -1066,7 +1114,7 @@ function drawWeapon(key, { announce = true } = {}) {
   setAiming(false);
   game.setArmed(key);
   game.armory?.setEquipped(carried);
-  document.body.classList.add('armed');
+  refreshWeaponView();
   updateAmmo();
   if (announce) {
     flash(weapon.kind === 'melee'
@@ -1653,14 +1701,15 @@ function wireControls() {
     flash(`${detail.dualsense ? 'DUALSENSE' : 'CONTROLLER'} CONNECTED — OPTIONS FOR CONTROLS`, 3200);
     gamepad.rumble(.3, .5, 240);
   });
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)cycleWeapon(1)}if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision();if(e.code==='KeyL'&&!e.repeat&&driving){const on=driving.toggleLights();flash(on?'HEADLAMPS ON':'HEADLAMPS OFF',1200)}if(e.code==='KeyB'&&!e.repeat&&driving)hornSound()});
-  addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false});
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)openWheel()}if(e.code==='KeyX'&&!e.repeat)setHolstered(!holstered);if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision();if(e.code==='KeyL'&&!e.repeat&&driving){const on=driving.toggleLights();flash(on?'HEADLAMPS ON':'HEADLAMPS OFF',1200)}if(e.code==='KeyB'&&!e.repeat&&driving)hornSound()});
+  addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false;if(e.code==='Tab')closeWheel(true)});
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement){triggerHeld=true;fire()}});
   renderer.domElement.addEventListener('pointerup',(e)=>{if(e.button===2)setAiming(false);if(e.button===0)triggerHeld=false});
   addEventListener('blur',()=>{triggerHeld=false});
   renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
-  addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement&&!modal){
+  addEventListener('mousemove',e=>{if(wheelOpen){steerWheel(e.movementX,e.movementY);return}
+    if(document.pointerLockElement===renderer.domElement&&!modal){
     // Glass slows the hand: at eight power a raw mouse delta throws the aim
     // clean off the target, which is what a magnified sight picture is for.
     const gain=scoped?(weapon?.zoom??52)/70:1;
@@ -1719,6 +1768,17 @@ function wireControls() {
   };
   latch('sprintBtn', 'sprint');
   latch('crouchBtn', 'crouch');
+
+  // On a phone the wheel is opened by a button and closed by picking something
+  // out of it, rather than held: there is no key to let go of.
+  document.getElementById('wheelBtn')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (wheelOpen) closeWheel(false); else openWheel();
+  });
+  wheelEl?.addEventListener('pointerdown', (event) => {
+    if (event.target === wheelEl) closeWheel(false);
+  });
 }
 
 // One frame of the controller.
@@ -1775,6 +1835,17 @@ function updatePad(dt) {
   if (state.pressed.ps) document.exitPointerLock?.();
   if (modal) { padMove.x = padMove.y = 0; return; }
 
+  // L1 held is the wheel, steered with the right stick and taken by letting
+  // go — the same gesture the mouse makes.
+  if (state.pressed.l1 && !driving) openWheel();
+  if (wheelOpen) {
+    padMove.x = padMove.y = 0;
+    if (state.look.magnitude > 0) steerWheel(state.look.x * 260, state.look.y * 260);
+    if (state.released.l1 || state.pressed.cross) closeWheel(true);
+    if (state.pressed.circle) closeWheel(false);
+    return;
+  }
+
   // Look. The right stick moves the head at a rate rather than by a delta, so
   // it is frame-rate independent, and it slows down behind glass exactly as
   // the mouse does.
@@ -1819,7 +1890,7 @@ function updatePad(dt) {
     if (padSprintLatch) { touch.crouch = false; padCrouchHeld = false; }
   }
 
-  if (state.pressed.circle || state.pressed.r3) {
+  if (state.pressed.circle) {
     padCrouchHeld = !padCrouchHeld;
     touch.crouch = padCrouchHeld;
     if (touch.crouch) { touch.sprint = false; padSprintLatch = padSprintWas = false; }
@@ -1829,11 +1900,11 @@ function updatePad(dt) {
   if (state.pressed.cross) queueJump();
   if (state.pressed.triangle) reload();
   if (state.pressed.r1) cycleWeapon(1);
-  if (state.pressed.l1) cycleWeapon(-1);
   if (state.pressed.up) selectSlot(0);
   if (state.pressed.right) selectSlot(1);
   if (state.pressed.down) selectSlot(2);
   if (state.pressed.left) selectSlot(3);
+  if (state.pressed.r3) setHolstered(!holstered);
   if (state.pressed.touchpad) openCCTV();
 
   // L2 sights the weapon, R2 fires it. Both are analogue on a DualSense, so
@@ -1854,6 +1925,107 @@ function updatePad(dt) {
 // light's job; this only stops black going dead.
 const _liftOutside = new THREE.Color(0.016, 0.022, 0.030);
 const _liftInside = new THREE.Color(0x0b1113);
+
+// The weapon wheel.
+//
+// Held open rather than toggled, because that is what makes it quick: you push
+// toward what you want and let go, and your thumb or your hand never leaves
+// where it was. The first slot is always HOLSTER, so putting the weapon away
+// is the same gesture as changing it rather than a separate control nobody
+// would find.
+const wheelEl = document.getElementById('wheel');
+const wheelRing = document.getElementById('wheelRing');
+const wheelName = document.getElementById('wheelName');
+const wheelAmmo = document.getElementById('wheelAmmo');
+let wheelOpen = false;
+let wheelEntries = [];
+let wheelChoice = 0;
+let wheelAimX = 0;
+let wheelAimY = 0;
+
+function wheelPlacement(index, count) {
+  // Straight up is the first slot, then clockwise.
+  const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
+  return { angle, x: 50 + Math.cos(angle) * 38, y: 50 + Math.sin(angle) * 38 };
+}
+
+function openWheel() {
+  if (wheelOpen || !started || modal || cctv || reloading) return false;
+  wheelEntries = [{ key: null, label: 'HOLSTER', detail: 'HANDS EMPTY' },
+    ...carried.map((key) => ({
+      key,
+      label: WEAPONS[key]?.name || key,
+      detail: WEAPONS[key]?.kind === 'melee' ? 'BLADE'
+        : `${loadout.for(key).magazine} / ${loadout.for(key).reserve}`,
+    }))];
+  if (wheelEntries.length < 2) return false;
+  wheelOpen = true;
+  wheelAimX = wheelAimY = 0;
+  const current = wheelEntries.findIndex((entry) => entry.key === weaponKey);
+  wheelChoice = holstered || !armed ? 0 : Math.max(0, current);
+  wheelRing.querySelectorAll('.wheel-slot').forEach((node) => node.remove());
+  wheelEntries.forEach((entry, index) => {
+    const node = document.createElement('div');
+    node.className = 'wheel-slot';
+    const place = wheelPlacement(index, wheelEntries.length);
+    node.style.left = `${place.x}%`;
+    node.style.top = `${place.y}%`;
+    node.textContent = entry.label;
+    node.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      wheelChoice = index;
+      paintWheel();
+      closeWheel(true);
+    });
+    wheelRing.appendChild(node);
+  });
+  document.body.classList.add('wheel-open');
+  paintWheel();
+  clickSound(620, .05, .035);
+  return true;
+}
+
+/** Push the wheel with a delta from the mouse or a stick. */
+function steerWheel(dx, dy) {
+  if (!wheelOpen) return;
+  wheelAimX += dx;
+  wheelAimY += dy;
+  const reach = Math.hypot(wheelAimX, wheelAimY);
+  // Under a short push there is no direction worth reading, so the highlight
+  // stays where it was rather than flickering around the ring.
+  if (reach < 26) return;
+  const limit = 150;
+  if (reach > limit) { wheelAimX *= limit / reach; wheelAimY *= limit / reach; }
+  const angle = Math.atan2(wheelAimY, wheelAimX);
+  let best = wheelChoice;
+  let closest = Infinity;
+  for (let index = 0; index < wheelEntries.length; index++) {
+    let delta = wheelPlacement(index, wheelEntries.length).angle - angle;
+    delta = Math.abs(Math.atan2(Math.sin(delta), Math.cos(delta)));
+    if (delta < closest) { closest = delta; best = index; }
+  }
+  if (best !== wheelChoice) { wheelChoice = best; paintWheel(); clickSound(760, .03, .022); }
+}
+
+function paintWheel() {
+  const slots = wheelRing.querySelectorAll('.wheel-slot');
+  slots.forEach((node, index) => node.classList.toggle('on', index === wheelChoice));
+  const entry = wheelEntries[wheelChoice];
+  wheelName.textContent = entry?.label || '';
+  wheelAmmo.textContent = entry?.detail || '';
+}
+
+function closeWheel(commit = true) {
+  if (!wheelOpen) return;
+  wheelOpen = false;
+  document.body.classList.remove('wheel-open');
+  const entry = wheelEntries[wheelChoice];
+  if (!commit || !entry) return;
+  if (!entry.key) setHolstered(true);
+  else if (entry.key === weaponKey) setHolstered(false);
+  else { drawWeapon(entry.key, { announce: false }); flash(entry.label, 1200); }
+}
 
 const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
