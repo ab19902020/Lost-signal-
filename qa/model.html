@@ -1,0 +1,77 @@
+<meta charset="utf-8"><title>model</title>
+<style>html,body{margin:0;background:#14161a;overflow:hidden}</style>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d22);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 400);
+
+// Key, fill and rim, so shape reads rather than just silhouette.
+const key = new THREE.DirectionalLight(0xffe6c0, 3.1);
+key.position.set(-6, 8, -7);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fc8ff, 1.15);
+fill.position.set(7, 3, 6);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 1.5);
+rim.position.set(3, 2, 9);
+scene.add(rim);
+scene.add(new THREE.HemisphereLight(0x8fb4e0, 0x33302c, 0.85));
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 120),
+  new THREE.MeshStandardMaterial({ color: 0x2b2b28, roughness: .95 }));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const root = new THREE.Group();
+scene.add(root);
+let model = null;
+
+const url = new URLSearchParams(location.search).get('glb')
+  || '../assets/blender/light_aircraft_v1.glb';
+new GLTFLoader().load(url, (gltf) => {
+  model = gltf.scene;
+  root.add(model);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const centre = box.getCenter(new THREE.Vector3());
+  // Sit it on the ground the way the game does: wheels down.
+  root.position.y = -box.min.y;
+  globalThis.__model = {
+    size: [+size.x.toFixed(2), +size.y.toFixed(2), +size.z.toFixed(2)],
+    centre: [+centre.x.toFixed(2), +centre.y.toFixed(2), +centre.z.toFixed(2)],
+    min: [+box.min.x.toFixed(2), +box.min.y.toFixed(2), +box.min.z.toFixed(2)],
+    nodes: [],
+  };
+  model.traverse((o) => { if (o.name) globalThis.__model.nodes.push(o.name); });
+  const disc = model.getObjectByName('Disc_Blur');
+  if (disc) disc.visible = false;      // the runtime shows it only under power
+  globalThis.__ready = true;
+});
+
+globalThis.__view = (azimuth, elevation, distance, target = 0.9) => {
+  const a = azimuth * Math.PI / 180, e = elevation * Math.PI / 180;
+  camera.position.set(Math.sin(a) * Math.cos(e) * distance,
+    Math.sin(e) * distance + target, Math.cos(a) * Math.cos(e) * distance);
+  camera.lookAt(0, target, 0);
+  renderer.render(scene, camera);
+};
+globalThis.__spin = (name, axis, radians) => {
+  const part = model?.getObjectByName(name);
+  if (part) part.rotation[axis] = radians;
+};
+globalThis.__show = (name, visible) => {
+  const part = model?.getObjectByName(name);
+  if (part) part.visible = visible;
+};
+__view(35, 12, 16);
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+</script>
