@@ -14,6 +14,7 @@
     "build": "node qa/unit.mjs && node qa/tdz.mjs && node qa/glb-floor.mjs && vite build",
     "qa:unit": "node qa/unit.mjs",
     "qa:tdz": "node qa/tdz.mjs",
+    "qa:boot": "node qa/boot.mjs http://127.0.0.1:4173/Lost-signal-/",
     "assets": "node tools/externalize-glb-images.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },

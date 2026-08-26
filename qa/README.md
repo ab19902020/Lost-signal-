@@ -14,7 +14,16 @@ npm run qa:game                   # screenshot the game as the player sees it
 npm run qa:physics                # raw collision / crouch / texture readings
 npm run qa:weapons                # the collection: fire, reload, recoil, gore
 npm run qa:driving                # the car, the perimeter gate and the pad
+npm run qa:tdz                    # dead-zone reads, as part of every build
+npm run qa:boot                   # does the production build actually start
 ```
+
+`qa:boot` is the only harness that walks in through the front door: a
+production bundle, served by `vite preview`, with the welcome menu clicked the
+way a player clicks it. Everything else boots a dev build through `__lsBoot()`,
+which skips the menu — so a crash on the player's own path went out once
+without a single check noticing. Build first, then `npm run preview` in one
+shell and `npm run qa:boot` in another.
 
 `qa:driving` fakes a controller by replacing `navigator.getGamepads` inside the
 page — Chromium has no gamepad emulation and CDP does not expose one, and the
