@@ -54,7 +54,9 @@ body.overlay-open #tasks{opacity:0}
 #crosshair:before,#crosshair:after{content:"";position:absolute;background:rgba(240,255,244,.86);box-shadow:0 0 5px #fff}
 #crosshair:before{width:11px;height:1px;left:3.5px;top:8.5px}
 #crosshair:after{width:1px;height:11px;left:8.5px;top:3.5px}
-body.aiming #crosshair:before,body.aiming #crosshair:after{background:rgba(255,226,180,.96);box-shadow:0 0 7px rgba(255,185,100,.8)}
+/* Aiming means looking through the weapon's own sights, so the crosshair
+   comes off the glass entirely rather than floating over the front post. */
+body.aiming #crosshair{display:none}
 /* Telescopic sight. Only the four precision rifles carry glass, and looking
    down one has to be a different act from lining up irons: the surround goes
    black, the frame narrows to the eyepiece, and a real reticle sits in it. */
@@ -145,7 +147,7 @@ body.pad #controls{display:none}
   #staminaBar{width:108px}
 }
 </style>
-  <script type="module" crossorigin src="./assets/index-CGJ0A5H9.js"></script>
+  <script type="module" crossorigin src="./assets/index-UmrDd0hb.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-GqZgNMNy.css">
 </head>
 <body>
