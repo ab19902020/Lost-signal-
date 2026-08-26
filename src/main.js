@@ -148,9 +148,13 @@ const clock = new THREE.Clock();
 const keys = {};
 const ray = new THREE.Raycaster();
 
-// The pad. Polled once a frame from simulate(), so it drives exactly the same
-// code the keyboard does and cannot drift out of step with it.
-const pad = createGamepad();
+// The controller. Polled once a frame from simulate(), so it drives exactly
+// the same code the keyboard does and cannot drift out of step with it.
+// Named `gamepad`, not `pad`: wireControls() has its own `pad` — the on-screen
+// movePad element — and a module-scope `pad` read from the top of that
+// function resolves to the local one, in its dead zone, which is a startup
+// crash rather than a shadowing warning.
+const gamepad = createGamepad();
 // Analogue movement and look, in the same shape mobile already supplies.
 const padMove = { x: 0, y: 0 };
 const padDrive = { active: false, throttle: 0, steer: 0, brake: false };
@@ -448,10 +452,10 @@ async function prepare() {
         park: () => leaveVehicle(false),
         // The controller, for a harness that fakes one with a virtual pad.
         pad: () => ({
-          connected: pad.connected, id: pad.id, dualsense: pad.dualsense,
-          move: { ...pad.state.move }, look: { ...pad.state.look },
-          l2: pad.state.l2, r2: pad.state.r2,
-          down: { ...pad.state.down },
+          connected: gamepad.connected, id: gamepad.id, dualsense: gamepad.dualsense,
+          move: { ...gamepad.state.move }, look: { ...gamepad.state.look },
+          l2: gamepad.state.l2, r2: gamepad.state.r2,
+          down: { ...gamepad.state.down },
         }),
         lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
         horn: () => hornSound(),
@@ -1408,9 +1412,9 @@ function kick(spec) {
   yaw += side;
   // The pad takes the same punch the camera does: a heavy rifle shoves and a
   // sub-gun buzzes, scaled by the profile rather than a fixed thump.
-  pad.rumble(Math.min(1, k.punch * .55), Math.min(1, k.shove * .5 + .12),
+  gamepad.rumble(Math.min(1, k.punch * .55), Math.min(1, k.shove * .5 + .12),
     60 + Math.min(90, k.punch * 70));
-  pad.kickTrigger(Math.min(1, .3 + k.punch * .3), 0, 50 + Math.min(60, k.punch * 40));
+  gamepad.kickTrigger(Math.min(1, .3 + k.punch * .3), 0, 50 + Math.min(60, k.punch * 40));
 
   // What the shooter feels: the weapon driven back into the shoulder, and the
   // whole picture rolled a little by a big cartridge.
@@ -1633,11 +1637,11 @@ cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 function wireControls() {
   // The pad announces itself rather than being found: the Gamepad API hides a
   // controller until it is used, so the first press is the connection.
-  pad.on((event, detail) => {
+  gamepad.on((event, detail) => {
     document.body.classList.toggle('pad', event === 'connected');
     if (event !== 'connected') { flash('CONTROLLER DISCONNECTED', 2200); return; }
     flash(`${detail.dualsense ? 'DUALSENSE' : 'CONTROLLER'} CONNECTED — OPTIONS FOR CONTROLS`, 3200);
-    pad.rumble(.3, .5, 240);
+    gamepad.rumble(.3, .5, 240);
   });
   addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)cycleWeapon(1)}if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision();if(e.code==='KeyL'&&!e.repeat&&driving){const on=driving.toggleLights();flash(on?'HEADLAMPS ON':'HEADLAMPS OFF',1200)}if(e.code==='KeyB'&&!e.repeat&&driving)hornSound()});
   addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false});
@@ -1723,7 +1727,7 @@ function wireControls() {
 //   D-pad        weapon slots 1-4      Options      controls
 //   Touchpad     camera desk           PS           release the mouse
 function updatePad(dt) {
-  const state = pad.poll(dt);
+  const state = gamepad.poll(dt);
   if (!state.connected || !started) {
     // A pad that has been unplugged must not leave a held trigger or a stuck
     // throttle behind it.
@@ -1990,7 +1994,7 @@ function updateDriving(dt) {
   const impact = vehicle.takeImpact();
   if (impact > 1.4) {
     crashSound(impact / vehicle.topSpeed);
-    pad.rumble(Math.min(1, impact / 12), Math.min(1, impact / 9), 130 + impact * 14);
+    gamepad.rumble(Math.min(1, impact / 12), Math.min(1, impact / 9), 130 + impact * 14);
     pitch = THREE.MathUtils.clamp(pitch + impact * 0.008, -1.25, 1.15);
     if (impact > 8) damage(Math.round(impact - 6));
   }
@@ -2015,7 +2019,7 @@ function updateDriving(dt) {
 function damage(amount) {
   if (amount <= 0) return health;
   health = Math.max(0, health - amount);
-  pad.rumble(Math.min(1, .25 + amount / 34), Math.min(1, .4 + amount / 40), 180);
+  gamepad.rumble(Math.min(1, .25 + amount / 34), Math.min(1, .4 + amount / 40), 180);
   hurtFlash = 1;
   recovery = 0;
   hurtSound();
@@ -2276,7 +2280,7 @@ function hornSound() {
     o.connect(band);
     o.start(t); o.stop(t + 0.32);
   }
-  pad.rumble(.22, .5, 220);
+  gamepad.rumble(.22, .5, 220);
 }
 
 function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.currentTime,.04)}
