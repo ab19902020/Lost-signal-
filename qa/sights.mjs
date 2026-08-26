@@ -107,6 +107,31 @@ for (const r of rows) {
   }
 }
 
+// Getting into the car left the weapon hanging in the chase camera behind the
+// boot, and holstering had no state of its own at all.
+const stowed = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  ls.arm('armoryAssault01');
+  ls.simulate(6);
+  const drawn = ls.game.weaponView.visible;
+  ls.holster(true);
+  ls.simulate(6);
+  const holstered = ls.game.weaponView.visible;
+  ls.holster(false);
+  ls.simulate(6);
+  ls.drive(0);
+  ls.simulate(10);
+  const driving = ls.game.weaponView.visible;
+  ls.park();
+  ls.simulate(10);
+  const afterDriving = ls.game.weaponView.visible;
+  return { drawn, holstered, driving, afterDriving };
+});
+if (!stowed.drawn) failures.push('a drawn weapon is not on screen');
+if (stowed.holstered) failures.push('a holstered weapon is still on screen');
+if (stowed.driving) failures.push('the weapon is still on screen while driving');
+if (!stowed.afterDriving) failures.push('the weapon did not come back out after driving');
+
 const named = rows.filter((r) => r.measured).length;
 console.log(JSON.stringify({ weapons: rows.length, named, derived: rows.length - named, rows }, null, 1));
 if (!named) {

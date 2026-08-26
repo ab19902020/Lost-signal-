@@ -291,6 +291,14 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     } else {
       _focus.set(0, 0, 0);
     }
+    // The sky travels with you. It is a sphere of finite radius centred on
+    // wherever it is put, and it was put on the world origin — so walking or
+    // driving out toward the town brought you up against its wall, and the far
+    // side of it stood on the horizon as an enormous black dome. Recentring it
+    // every frame is what makes a sky a sky rather than a very large object in
+    // the scene. Height is left alone so the horizon stays on the ground.
+    dome.position.set(_focus.x, dome.position.y, _focus.z);
+
     sun.target.position.copy(_focus);
     sun.target.updateMatrixWorld();
     sun.position.copy(_focus).addScaledVector(_sunDir, 120);
