@@ -93,6 +93,9 @@ body.armed #fire,body.armed #weaponHud{display:block}
 body.driving #driveHud{display:flex}
 body.driving #crosshair,body.driving #weaponHud,body.driving #weaponSlots,body.driving #fire,body.driving #aimBtn,body.driving #reloadBtn,body.driving #sprintBtn,body.driving #crouchBtn,body.driving #jumpBtn{display:none}
 body.armed #reloadBtn,body.armed #aimBtn{display:block}
+/* A pad is a better set of on-screen controls than the on-screen controls, so
+   plugging one in on a phone or a tablet takes the thumb pads off the glass. */
+body.pad #controls{display:none}
 #sprintBtn,#crouchBtn,#jumpBtn{position:absolute;left:calc(22px + 138px);width:70px;height:44px;border-radius:22px;border:1px solid rgba(255,255,255,.24);background:rgba(13,20,15,.5);color:#dff0e4;font:700 11px inherit;letter-spacing:.08em;pointer-events:auto;touch-action:none}
 #sprintBtn{bottom:calc(env(safe-area-inset-bottom) + 96px)}
 #crouchBtn{bottom:calc(env(safe-area-inset-bottom) + 44px)}
@@ -142,7 +145,7 @@ body.armed #reloadBtn,body.armed #aimBtn{display:block}
   #staminaBar{width:108px}
 }
 </style>
-  <script type="module" crossorigin src="./assets/index-C9fPmSEl.js"></script>
+  <script type="module" crossorigin src="./assets/index-B9Qh2RiS.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-GqZgNMNy.css">
 </head>
 <body>
@@ -169,7 +172,26 @@ body.armed #reloadBtn,body.armed #aimBtn{display:block}
 <tr><td>E</td><td>Get into the estate car at the gate, and out again</td></tr>
 <tr><td>W / S</td><td>Throttle and reverse — S against travel is the brake</td></tr>
 <tr><td>A / D</td><td>Steer. The lock winds off as the speed comes up</td></tr>
-<tr><td>Space</td><td>Handbrake</td></tr>
+<tr><td>Space</td><td>Handbrake — locks the rears and swings the tail</td></tr>
+<tr><td>L</td><td>Headlamps</td></tr>
+<tr><td>B</td><td>Horn</td></tr>
+</table>
+<p>The perimeter gate is automatic. Drive or walk up the road and it runs back on its own — the faster you are coming, the earlier it starts — and it closes again once you are clear. The switch on the post cycles it between automatic, held open and locked shut.</p>
+<h3>CONTROLLER — DUALSENSE / DUALSHOCK / XBOX</h3>
+<p>Plug in or pair a pad and press anything; it is picked up mid-game and can be put down again at any point. Sticks and triggers are analogue, and the pad takes the recoil, the crashes and the hits.</p><table>
+<tr><td>Left stick</td><td>Move · steer</td></tr>
+<tr><td>Right stick</td><td>Look · pan and tilt a camera feed</td></tr>
+<tr><td>R2</td><td>Fire · throttle</td></tr>
+<tr><td>L2</td><td>Aim down the sights · brake and reverse</td></tr>
+<tr><td>&#10005; Cross</td><td>Jump · handbrake</td></tr>
+<tr><td>&#9633; Square</td><td>Interact · horn</td></tr>
+<tr><td>&#9651; Triangle</td><td>Reload · headlamps · infrared on a feed</td></tr>
+<tr><td>&#9711; Circle</td><td>Crouch · get out of the car · leave a screen</td></tr>
+<tr><td>L1 / R1</td><td>Previous and next weapon · previous and next camera</td></tr>
+<tr><td>L3 / R3</td><td>Sprint · crouch</td></tr>
+<tr><td>D-pad</td><td>Weapon slots 1&ndash;4 · zoom a camera feed</td></tr>
+<tr><td>Touchpad</td><td>CCTV console</td></tr>
+<tr><td>Options</td><td>This manual</td></tr>
 </table>
 <h3>TOUCH</h3><table>
 <tr><td>Left stick</td><td>Move</td></tr>
