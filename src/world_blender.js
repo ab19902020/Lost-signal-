@@ -46,7 +46,7 @@ export function createGameWorld(assets, options = {}) {
   // and the whole surface strobed. The viewmodel's nearest point sits about
   // 0.17 m from the eye, so 0.15 is as far out as the near plane can go, and
   // it buys three times the precision everywhere.
-  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.15, 900);
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.15, 2600);
   const _cullPoint = new THREE.Vector3();   // reused: light culling runs every frame
   const _interactionPoint = new THREE.Vector3();
   const _interactionCamera = new THREE.Vector3();
@@ -60,11 +60,15 @@ export function createGameWorld(assets, options = {}) {
   const colliders = {
     bunker: new ColliderSet({ minX: -6.55, maxX: 6.55, minZ: -6.85, maxZ: 6.85 }),
     // The surface used to be a hard box the size of the compound, which is why
-    // walking out of the gate put you straight back inside it. The world now
-    // runs from the compound to the town, so the bound is the edge of the
-    // ground itself; what actually stops the player is the fence, and where
-    // the fence is down, nothing does.
-    outside: new ColliderSet({ minX: -320, maxX: 140, minZ: -70, maxZ: 540 }),
+    // walking out of the gate put you straight back inside it. Then it was a
+    // box drawn around the compound, the road and the town — which was fine
+    // until there was an airfield, and then it was an invisible wall between
+    // the player and an aeroplane they could see. What actually stops anyone
+    // is the fence, and where the fence is down, nothing does; this is only
+    // the edge of the ground itself, and it is now a long way out on every
+    // side, because the point of having something with a wing on it is being
+    // able to go somewhere with it.
+    outside: new ColliderSet({ minX: -1000, maxX: 1000, minZ: -1000, maxZ: 1100 }),
     // The silo's enclosure is its ring of wall panels, not a rectangle.
     silo: new ColliderSet(null),
   };
@@ -602,17 +606,31 @@ export function createGameWorld(assets, options = {}) {
   // across the road's line rather than along it so the two never argue about
   // the same ground, with a light single parked on the threshold pointing down
   // it. The road goes to the town; this goes anywhere.
-  const AIRSTRIP_AT = [176, 0, -58];
+  // Well clear of the compound. Laid at 176 it reached back to x = -40, which
+  // put four hundred metres of runway straight through the yard — and the box
+  // that was collided around it was an invisible wall across the whole east
+  // side of the map.
+  const AIRSTRIP_AT = [300, 0, -180];
   const AIRSTRIP_HEADING = Math.PI / 2;
   const aircraft = [];
   if (assets.airstrip) {
-    place(assets.airstrip, outside, AIRSTRIP_AT, [0, AIRSTRIP_HEADING, 0], 1,
-      { collide: true, shrink: .2 });
+    // Never collided as one object: it is flat, and a box around it is a wall
+    // the size of the airfield. Only the hangar is something to walk into.
+    const strip = place(assets.airstrip, outside, AIRSTRIP_AT, [0, AIRSTRIP_HEADING, 0], 1,
+      { collide: false });
+    // Walls and drums are solid, one box each so each box is the size of the
+    // thing it is around. The roof is not: there is nothing up there to walk
+    // into, and a box around it would be a ceiling over the apron.
+    strip.traverse((part) => {
+      if (part.isMesh && /^Hangar_(Wall|Back|Drum)/.test(part.name)) {
+        colliders.outside.addObject(part, { shrink: .1 });
+      }
+    });
   }
   const strip = createAircraft({
     scene: outside, colliders: colliders.outside, assets, place, addInteraction,
-    // On the numbers at the near end, lined up down the strip.
-    position: [AIRSTRIP_AT[0] - 176, 1.36, AIRSTRIP_AT[2]],
+    // On the numbers at the western threshold, lined up down the strip.
+    position: [AIRSTRIP_AT[0] - 190, 1.36, AIRSTRIP_AT[2]],
     heading: -Math.PI / 2,
     name: 'Airstrip_Cessna', label: 'LIGHT AIRCRAFT',
   });
@@ -680,6 +698,51 @@ export function createGameWorld(assets, options = {}) {
         roadPoint(distance, side * (8.5 + (i % 3) * 1.4)),
         [0, i * 1.1, 0], 0.85 + (i % 4) * 0.08, { collide: false });
     }
+  }
+
+  // Two people still out there.
+  //
+  // The town has been a silhouette on the horizon and nothing else. These are
+  // the first two things in it that are alive: they stand at the near edge
+  // where the road runs in, they do not wander, and they can be shot — which
+  // is the whole point of putting them somewhere you have to travel to reach.
+  const townsfolk = [];
+  const TOWNSFOLK = [
+    { asset: assets.residentStillA, along: 484, across: 7.5, turn: 2.5,
+      line: 'You came up the road. Nobody comes up the road. Is the shelter still standing?' },
+    { asset: assets.residentStillD || assets.residentStillB, along: 493, across: -8.5, turn: -1.2,
+      line: 'There were forty of us. Do not go past the church — whatever is in there is not us.' },
+  ];
+  TOWNSFOLK.forEach((person, index) => {
+    if (!person.asset) return;
+    const at = roadPoint(person.along, person.across);
+    const root = place(person.asset, outside, at, [0, TOWN_BEARING + person.turn, 0], 1,
+      { collide: false });
+    root.name = `Townsfolk_${index}`;
+    root.userData.kind = 'resident';
+    root.userData.alive = true;
+    root.userData.hp = 100;
+    root.userData.resident = { line: person.line };
+    root.userData.collider = colliders.outside.addOrientedBox({
+      cx: at[0], cz: at[2], halfX: .34, halfZ: .34, minY: 0, maxY: 1.84,
+    });
+    addInteraction(root, 'SURVIVOR', 'outside', () => {
+      if (root.userData.alive === false) return;
+      window.dispatchEvent(new CustomEvent('lostsignal:resident', {
+        detail: { line: person.line },
+      }));
+    });
+    townsfolk.push(root);
+  });
+
+  /** Put one of them on the ground, and take their collider with them. */
+  function downTownsfolk(root) {
+    if (!root || root.userData.alive === false) return false;
+    root.userData.alive = false;
+    if (root.userData.collider) root.userData.collider.enabled = false;
+    root.rotation.z = (Math.random() < .5 ? -1 : 1) * Math.PI / 2;
+    root.position.y -= .28;
+    return true;
   }
 
   // The town, on the horizon to the south-west past the gate. Not a place you
@@ -1668,7 +1731,7 @@ export function createGameWorld(assets, options = {}) {
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
     heldSights:()=>heldSights,
-    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,aircraft,country,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,aircraft,townsfolk,downTownsfolk,country,
     gateIsOpen:()=>gateOpen,
     gateTravel:()=>gateSlide,
     gateMode:()=>gateMode,

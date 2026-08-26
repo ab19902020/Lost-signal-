@@ -468,7 +468,8 @@ async function prepare() {
           vy: +flying.state.velocity.y.toFixed(3),
           controlPitch: +flying.state.controls.pitch.toFixed(3),
         } : null),
-        stick: (pitchInput = 0, roll = 0, yawInput = 0, throttle = null) => {
+        stick: (pitchInput = 0, roll = 0, yawInput = 0, throttle = null, brake = false) => {
+          keys.Space = !!brake;
           flyStick.pitch = pitchInput;
           flyStick.roll = roll;
           keys.KeyD = yawInput > 0;
@@ -1200,6 +1201,11 @@ function livingTargets() {
       if (root.parent && root.userData.alive !== false) targets.push(root);
     }
   }
+  if (currentWorld === 'outside') {
+    for (const root of game.townsfolk || []) {
+      if (root.parent && root.userData.alive !== false) targets.push(root);
+    }
+  }
   const eli = game.armory?.quartermaster;
   if (currentWorld === 'bunker' && eli?.parent && eli.userData.alive !== false) targets.push(eli);
   return targets;
@@ -1401,8 +1407,12 @@ function resolvePersonHit(target, point, damage, direction = ray.ray.direction) 
     return;
   }
 
+  // Three kinds of person, three places that know how to put one down: the
+  // silo's own crowd, the quartermaster, and the two still in the town.
   const agent = game.residents?.agentFor?.(target);
-  const downed = agent ? agent.kill() : game.armory?.downQuartermaster?.();
+  const downed = agent ? agent.kill()
+    : (game.townsfolk?.includes(target) ? game.downTownsfolk(target)
+      : game.armory?.downQuartermaster?.());
   if (downed !== false) {
     bloodPool(target);
     flash(headshot ? `${name} DOWN — HEADSHOT` : `${name} DOWN`, 2200);
@@ -1741,8 +1751,8 @@ function wireControls() {
   addEventListener('blur',()=>{triggerHeld=false});
   renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
   addEventListener('mousemove',e=>{if(wheelOpen){steerWheel(e.movementX,e.movementY);return}
-    if(flying){flyHeld=false;flyStick.roll=THREE.MathUtils.clamp(flyStick.roll+e.movementX*.010,-1,1);
-      flyStick.pitch=THREE.MathUtils.clamp(flyStick.pitch+e.movementY*.008,-1,1);return}
+    if(flying){flyHeld=false;flyStick.roll=THREE.MathUtils.clamp(flyStick.roll+e.movementX*.0050,-1,1);
+      flyStick.pitch=THREE.MathUtils.clamp(flyStick.pitch+e.movementY*.0042,-1,1);return}
     if(document.pointerLockElement===renderer.domElement&&!modal){
     // Glass slows the hand: at eight power a raw mouse delta throws the aim
     // clean off the target, which is what a magnified sight picture is for.
