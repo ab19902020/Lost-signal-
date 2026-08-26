@@ -1847,7 +1847,12 @@ function updatePad(dt) {
 
 // Two shadow floors: the surface's is the sky it stands under, the shelter's
 // is the near-black the strip lights leave behind.
-const _liftOutside = new THREE.Color(0.062, 0.078, 0.098);
+// A shadow floor, not a fog machine. At (0.062, 0.078, 0.098) this was adding
+// a tenth of full brightness to every dark pixel in the frame — which is
+// exactly what a haze filter does, and it sat over the whole surface and over
+// everything seen through a scope as well. Shadow visibility is the fill
+// light's job; this only stops black going dead.
+const _liftOutside = new THREE.Color(0.016, 0.022, 0.030);
 const _liftInside = new THREE.Color(0x0b1113);
 
 const desiredVelocity = new THREE.Vector3();
@@ -2921,8 +2926,15 @@ const weaponTarget = new THREE.Vector3();
 // them all land on the same pixel, and aiming is looking rather than reading a
 // crosshair. The stock ends up behind the near plane and is not drawn, which
 // is also what you see over a real set of irons.
+// How far in front of the eye the rear sight sits, by family. Not a style
+// choice: it is where that class of weapon is actually held. A long gun is
+// against the shoulder with the eye just behind the receiver; a handgun is out
+// at arm's length, which is half a metre further away, and holding one at
+// carbine distance put the cylinder of a revolver across the whole screen.
+// The shotgun's rear reference is its receiver rather than a rear sight — it
+// is aimed off a bead and a rib — so it needs the extra room to clear it.
 const EYE_RELIEF = {
-  rifle: .20, smg: .18, shotgun: .21, sniper: .19, pistol: .34, revolver: .34, blade: .30,
+  rifle: .20, smg: .19, shotgun: .32, sniper: .20, pistol: .50, revolver: .52, blade: .34,
 };
 
 const _hipPosition = new THREE.Vector3();

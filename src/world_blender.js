@@ -1034,6 +1034,22 @@ export function createGameWorld(assets, options = {}) {
   // reads as the weapon moving in the hands rather than the camera lurching.
   const weaponAction = new THREE.Group();
   weaponView.add(weaponAction);
+
+  // The held weapon carries its own floor of light.
+  //
+  // Lit by the world alone it was a black cut-out at any hour the sun was
+  // behind the player — no receiver, no sights, nothing to aim with. A pair of
+  // lights on their own layer is the obvious answer and it does not work:
+  // three.js gathers a light if its layers match the *camera*, and after that
+  // it lights everything in the pass, so a viewmodel key washed out the whole
+  // compound behind it. Instead each held weapon's own materials get a small
+  // emissive floor mixed from their base colour, which lifts the thing in the
+  // player's hands off black and reaches nothing else at all.
+// A share of the material's own colour plus a flat floor. A share alone does
+// nothing for a phosphate receiver, whose albedo is about five per cent to
+// begin with — sixteen per cent of almost nothing is still almost nothing.
+  const VIEWMODEL_GLOW = 0.38;
+  const VIEWMODEL_FLOOR = [0.013, 0.014, 0.017];
   let heldModel = null;
   let heldKey = null;
 
@@ -1268,6 +1284,21 @@ export function createGameWorld(assets, options = {}) {
     model.position.set(nudge[0] - _weaponCentre.x, nudge[1] - _weaponCentre.y,
       nudge[2] - _weaponCentre.z);
     model.name = `Equipped_${heldKey || 'Rifle'}`;
+    model.traverse((part) => {
+      if (!part.isMesh || !part.material) return;
+      const materials = Array.isArray(part.material) ? part.material : [part.material];
+      part.material = materials.map((source) => {
+        if (!source.emissive) return source;
+        const lit = source.clone();
+        lit.emissive.setRGB(
+          lit.color.r * VIEWMODEL_GLOW + VIEWMODEL_FLOOR[0],
+          lit.color.g * VIEWMODEL_GLOW + VIEWMODEL_FLOOR[1],
+          lit.color.b * VIEWMODEL_GLOW + VIEWMODEL_FLOOR[2]);
+        return lit;
+      });
+      if (!Array.isArray(part.material)) part.material = part.material;
+      else if (part.material.length === 1) part.material = part.material[0];
+    });
     weaponAction.add(model);
     heldModel = model;
     heldSights = measureSights(model);
@@ -1282,18 +1313,49 @@ export function createGameWorld(assets, options = {}) {
   // pair is resolved by name where names exist and measured off the top of the
   // weapon where they do not. The result is two points in the rig's own frame,
   // and the line joining them is the line the eye has to be on.
-  const REAR_SIGHT = /(Irons_RearAperture|^Sight_Rear$|_RearSight$|RearNotch)/;
-  const FRONT_SIGHT = /(Irons_FrontPost|^Sight_Front$|Bead_Post|_FrontBlade$)/;
+  const REAR_SIGHT = /^Aim_Rear$|Irons_RearAperture|^Sight_Rear$|RearNotch/;
+  const FRONT_SIGHT = /^Aim_Front$|Irons_FrontPost|^Sight_Front$|Bead_Post/;
   const _sightBox = new THREE.Box3();
-  const _sightMin = new THREE.Vector3();
-  const _sightMax = new THREE.Vector3();
+  const _sightLocal = new THREE.Matrix4();
+  const _sightCorner = new THREE.Vector3();
 
   function namedPart(model, pattern) {
     let found = null;
+    // Not isMesh: the aim points are empties, which arrive as bare Object3Ds.
     model.traverse((part) => {
-      if (!found && part.isMesh && pattern.test(part.name)) found = part;
+      if (!found && pattern.test(part.name)) found = part;
     });
     return found;
+  }
+
+  /**
+   * The model's extents in the rig's own frame.
+   *
+   * Box3.setFromObject gives a world-space box, and its min and max corners
+   * put through worldToLocal are just two arbitrary corners of it — under any
+   * rotation the transformed "min" can sit further down an axis than the
+   * transformed "max". That is what flipped some weapons end for end when they
+   * were raised: front and rear came out swapped, the sight line reversed, and
+   * the aim pose dutifully turned the weapon around to point at the player.
+   */
+  function localBounds(model, target) {
+    target.makeEmpty();
+    _sightLocal.copy(weaponView.matrixWorld).invert();
+    model.traverse((part) => {
+      if (!part.isMesh || !part.geometry) return;
+      if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+      const box = part.geometry.boundingBox;
+      if (!box) return;
+      const m = _sightCorner;
+      for (let corner = 0; corner < 8; corner++) {
+        m.set(corner & 1 ? box.max.x : box.min.x,
+          corner & 2 ? box.max.y : box.min.y,
+          corner & 4 ? box.max.z : box.min.z);
+        m.applyMatrix4(part.matrixWorld).applyMatrix4(_sightLocal);
+        target.expandByPoint(m);
+      }
+    });
+    return target;
   }
 
   function measureSights(model) {
@@ -1306,24 +1368,32 @@ export function createGameWorld(assets, options = {}) {
     weaponAction.rotation.set(0, 0, 0);
     weaponAction.updateWorldMatrix(true, true);
     try {
-      const centreOf = (part) => part
-        ? weaponView.worldToLocal(_sightBox.setFromObject(part).getCenter(new THREE.Vector3()))
-        : null;
+      const centreOf = (part) => {
+        if (!part) return null;
+        const point = new THREE.Vector3();
+        // An aim marker is an empty and has no geometry to take a centre from.
+        if (part.isMesh && part.geometry) _sightBox.setFromObject(part).getCenter(point);
+        else part.getWorldPosition(point);
+        return weaponView.worldToLocal(point);
+      };
       let rear = centreOf(namedPart(model, REAR_SIGHT));
       let front = centreOf(namedPart(model, FRONT_SIGHT));
-      if (rear && front) return { rear, front, measured: true };
+      // The rig holds every weapon muzzle down -Z, so the front sight is always
+      // the one further down -Z. If a pair says otherwise the pair is wrong,
+      // whatever it is called, and aiming down it would spin the weapon round.
+      if (rear && front && front.z > rear.z) { const swap = rear; rear = front; front = swap; }
+      if (rear && front && rear.z - front.z > 0.02) return { rear, front, measured: true };
+      rear = front = null;
 
       // Nothing named, or only the front bead. The weapon is held muzzle down
       // -Z, so its own extents give the rest: the sight line runs along the top
       // of it, from the back of the receiver to just short of the muzzle.
-      _sightBox.setFromObject(model);
-      weaponView.worldToLocal(_sightMin.copy(_sightBox.min));
-      weaponView.worldToLocal(_sightMax.copy(_sightBox.max));
-      const top = _sightMax.y - (_sightMax.y - _sightMin.y) * 0.06;
-      const x = (_sightMin.x + _sightMax.x) / 2;
-      const length = Math.abs(_sightMax.z - _sightMin.z);
-      if (!front) front = new THREE.Vector3(x, top, _sightMin.z + length * 0.08);
-      if (!rear) rear = new THREE.Vector3(x, front.y, _sightMax.z - length * 0.28);
+      localBounds(model, _sightBox);
+      const top = _sightBox.max.y - (_sightBox.max.y - _sightBox.min.y) * 0.06;
+      const x = (_sightBox.min.x + _sightBox.max.x) / 2;
+      const length = Math.abs(_sightBox.max.z - _sightBox.min.z);
+      if (!front) front = new THREE.Vector3(x, top, _sightBox.min.z + length * 0.08);
+      if (!rear) rear = new THREE.Vector3(x, front.y, _sightBox.max.z - length * 0.28);
       return { rear, front, measured: false };
     } finally {
       weaponAction.position.copy(keepPosition);
