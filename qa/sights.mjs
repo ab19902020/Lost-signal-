@@ -64,7 +64,34 @@ const rows = await page.evaluate(() => {
   return out;
 });
 
+// The fault that shipped: a weapon drawn while the rig was already rotated —
+// which is what happens every time you switch weapons with the sights up —
+// measured its own extents through a world-space box whose corners had been
+// swapped by that rotation, so front and rear came out the wrong way round and
+// the aim pose turned the weapon to point at the player. Draw every weapon
+// again from a rotated, aiming rig and the line must come out the same way.
+const whileAiming = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const out = [];
+  ls.aim(true);
+  ls.simulate(40);
+  for (const key of ls.weapons()) {
+    if (!ls.usable(key)) continue;
+    ls.arm(key);
+    ls.simulate(30);
+    const sights = ls.game.heldSights?.();
+    out.push({ key, forward: sights ? +(sights.rear.z - sights.front.z).toFixed(4) : null });
+  }
+  ls.aim(false);
+  ls.simulate(10);
+  return out;
+});
+
 const failures = [];
+for (const r of whileAiming) {
+  if (r.forward === null) failures.push(`${r.key}: lost its sight line when drawn while aiming`);
+  else if (r.forward <= 0) failures.push(`${r.key}: drawn while aiming, it points at the player (${r.forward})`);
+}
 for (const r of rows) {
   if (!r.found) { failures.push(`${r.key}: no sight line at all`); continue; }
   if (r.forward <= 0) failures.push(`${r.key}: sight line runs backwards (${r.forward})`);

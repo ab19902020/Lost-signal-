@@ -171,7 +171,35 @@ def triangles():
                for o in bpy.context.scene.objects if o.type == 'MESH')
 
 
+# Where the eye goes.
+#
+# Every weapon here is built with real irons, but join_all merges the whole
+# thing into one mesh on the way out and every part name goes with it — so the
+# game could never find the rear aperture or the front post and had to guess a
+# sight line off the top of the receiver. These two empties survive the join
+# and the export, and they are placed by the same numbers that place the
+# sights, so the line the game aims down is the line the weapon actually has.
+AIM = {}
+
+
+def aim(rear_z, front_z, y, x=0.0):
+    AIM['rear'] = (x, y, rear_z)
+    AIM['front'] = (x, y, front_z)
+
+
+def aim_markers():
+    for tag in ('rear', 'front'):
+        point = AIM.get(tag)
+        if point is None:
+            continue
+        bpy.ops.object.empty_add(type='PLAIN_AXES', location=point)
+        bpy.context.object.name = f'Aim_{tag.capitalize()}'
+        bpy.context.object.empty_display_size = .004
+    AIM.clear()
+
+
 def export(name):
+    aim_markers()
     bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
     bpy.context.object.name = ORIENTATION_MARKER
     bpy.context.object.empty_display_size = .01
@@ -396,6 +424,7 @@ def build_rifle(spec, M):
     picatinny('Rail', -.058, .078 + handguard * .96, .0206, .0092, M)
 
     iron_sights('Irons', .0250, .078 + handguard * .90, -.046, M)
+    aim(-.046, .078 + handguard * .90, .0250 + .0185)
     muzzle_brake('Muzzle', .078 + barrel, bore * 1.75, M,
                  ports=spec.get('ports', 5))
 
@@ -490,6 +519,7 @@ def build_smg(spec, M):
         muzzle_brake('Muzzle', .058 + barrel, .0048, M, ports=3, length=.030)
     picatinny('Rail', -.052, .046, .0208, .0085, M, tooth=.0085)
     iron_sights('Irons', .0250, .040, -.040, M, hooded=False)
+    aim(-.040, .040, .0250 + .0185)
     block('Charging', (-.0175, .0130, -.028), (.0075, .0032, .0110), M['steel'], edge=.0009)
     block('EjectionPort', (.0178, .0060, .014), (.0020, .0068, .0140), M['body'], edge=.0009)
     tube('Selector', (-.0165, -.0090, .022), .0042, .0055, M['steel'],
@@ -541,6 +571,7 @@ def build_shotgun(spec, M):
     for i in range(9):
         block(f'Pump_Groove_{i}', (0, -.0195, pump_z - .032 + i * .0080),
               (.0140, .0022, .0026), M['body'], edge=.0005, segments=1)
+    aim(-.030, .052 + barrel - .004, .0232)
     block('Bead_Post', (0, .0175, .052 + barrel - .004), (.0016, .0055, .0016),
           M['steel'], edge=.0004)
     tube('Bead', (0, .0232, .052 + barrel - .004), .0026, .0026, M['brass'],
@@ -605,6 +636,7 @@ def scope(spec, M, top):
     z = spec.get('scope_at', -.010)
     body = spec.get('scope_body', .0170)
     length = spec.get('scope_length', .200)
+    aim(z - length * .48, z + length * .48, top + .034)
     tube('Scope_Tube', (0, top + .034, z), body, length, M['body'], verts=30)
     tube('Scope_Bell', (0, top + .034, z + length * .44), body * 1.42, length * .22,
          M['body'], verts=30)
@@ -664,6 +696,7 @@ def build_pistol(spec, M):
     tube('Barrel', (0, .0130, barrel * .96), .0052, .020, M['steel'], verts=20)
     tube('Bore', (0, .0130, barrel * 1.02), .0030, .008, M['grip'], verts=16, edge=0)
     # Dovetail sights.
+    aim(-.046, barrel * .84, .0300)
     block('Sight_Rear', (0, .0272, -.046), (.0105, .0042, .0050), M['steel'], edge=.0008)
     for side in (-1, 1):
         block(f'Sight_RearBlade_{side}', (side * .0062, .0300, -.046),
@@ -704,6 +737,7 @@ def build_revolver(spec, M):
     tube('Barrel', (0, .0120, .022 + barrel / 2), .0072, barrel, M['steel'], verts=24)
     block('Underlug', (0, .0020, .022 + barrel * .48), (.0072, .0072, barrel * .46),
           M['steel'], edge=.0014)
+    aim(.022, .022 + barrel - .004, .0238)
     block('TopStrap', (0, .0208, .022 + barrel * .46), (.0060, .0026, barrel * .46),
           M['steel'], edge=.0010)
     for i in range(9):

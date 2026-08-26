@@ -107,8 +107,8 @@ const FRAGMENT = /* glsl */`
     // that is the air itself full of dust. The last is what makes looking
     // toward the sun feel like looking through something.
     float sunGlow = pow(max(sunAngle, 0.0), 220.0) * 0.55
-                  + pow(max(sunAngle, 0.0), 12.0) * 0.16
-                  + pow(max(sunAngle, 0.0), 2.5) * 0.09;
+                  + pow(max(sunAngle, 0.0), 12.0) * 0.11
+                  + pow(max(sunAngle, 0.0), 3.5) * 0.035;
 
     // The moon: smaller, colder, with a faint halo.
     float moonAngle = dot(dir, moonDirection);
@@ -129,7 +129,7 @@ const FRAGMENT = /* glsl */`
     // Wider and hotter at a low sun, which is when there is most air between
     // the eye and the light: the far field glows instead of ending in a band
     // of the same navy as the near ground.
-    colour += sunColor * horizonDust * (0.085 + 0.10 * (1.0 - sunAbove))
+    colour += sunColor * horizonDust * (0.045 + 0.055 * (1.0 - sunAbove))
             * smoothstep(-0.2, 0.35, sunDirection.y) * (1.0 - cloud * 0.6);
 
     // Overcast flattens everything — toward dust-grey, not toward neutral.
@@ -345,7 +345,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
       // nothing on it past the wire; there is now half a kilometre of hedged
       // country and a town out there, and all of it was arriving as a white
       // wash. Weather still closes it down — a rainstorm is still a rainstorm.
-      scene.fog.density = 0.0026 + rain * 0.0115 + cloud * 0.0035;
+      scene.fog.density = 0.0014 + rain * 0.0090 + cloud * 0.0018;
     }
     return state;
   }
