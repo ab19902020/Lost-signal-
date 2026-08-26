@@ -89,9 +89,19 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
 
   // Parked, it is something you walk around; flown, its own hull must not be
   // the first thing it hits.
+  //
+  // This used to be one box 11.6 m across, drawn round the wingtips — which
+  // made the aeroplane unreachable. The prompt to get in reaches 3.15 m and
+  // needs the player within 4.24 m of the model's origin, and the box held
+  // them 6.16 m away from the centreline on every side, so there was no
+  // standing position anywhere on the airfield from which you could board it.
+  // What is actually solid is the fuselage. The wings sit 2.36 m off the
+  // ground at the root and higher outboard, so you walk under them, which is
+  // what you do to reach the door of a real high-wing single.
+  const HULL_AT = new THREE.Vector3(0, 0, 0.75);   // fuselage centre, not the origin
   const hull = colliders.addOrientedBox({
     cx: state.position.x, cz: state.position.z,
-    halfX: 5.8, halfZ: 4.4, rotationY: heading, minY: 0.2, maxY: 2.6,
+    halfX: 0.82, halfZ: 4.15, rotationY: heading, minY: 0.2, maxY: 2.4,
   });
 
   const _forward = new THREE.Vector3();
@@ -103,6 +113,7 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
   const _turn = new THREE.Quaternion();
   const _flow = new THREE.Vector3();
   const _out = new THREE.Vector3();
+  const _hullCentre = new THREE.Vector3();
   const _level = new THREE.Euler(0, 0, 0, 'YXZ');
   const _levelQuat = new THREE.Quaternion();
 
@@ -261,20 +272,50 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
 
     root.position.copy(state.position);
     root.quaternion.copy(state.quaternion);
-    hull.cx = state.position.x;
-    hull.cz = state.position.z;
     axes();
+    toWorld(HULL_AT, _hullCentre);
+    hull.cx = _hullCentre.x;
+    hull.cz = _hullCentre.z;
     const facing = Math.atan2(-_forward.x, -_forward.z);
     hull.cos = Math.cos(facing);
     hull.sin = Math.sin(facing);
     hull.enabled = !state.occupied && state.grounded;
 
-    // The propeller, the surfaces and the nosewheel.
-    state.propSpin += dt * (6 + state.throttle * 190);
-    if (prop) prop.rotation.z = state.propSpin;
-    const spinning = state.throttle > 0.22;
-    if (propDisc) propDisc.visible = spinning;
-    if (prop) prop.visible = !spinning || state.throttle < 0.5;
+    // The propeller.
+    //
+    // Two things were wrong with it. It turned whether or not anybody was in
+    // the aeroplane, so a parked one sat on the apron with its engine
+    // apparently running; and it turned at up to 190 rad/s, which at sixty
+    // frames a second is 181 degrees a frame. A two-blade propeller repeats
+    // every 180, so the blades landed almost exactly back where they started
+    // each frame and the whole thing crawled, stopped and ran backwards —
+    // the wagon-wheel effect, and there is no frame rate at which it looks
+    // like anything but a fault.
+    //
+    // So the blades never turn fast enough to alias, and the disc they blur
+    // into fades up with the power rather than being switched on at a
+    // threshold. Both are drawn at once, which is what a propeller under
+    // power actually looks like.
+    const running = state.occupied;
+    if (running) {
+      state.propSpin = (state.propSpin + dt * (9 + state.throttle * 17)) % (Math.PI * 2);
+    }
+    if (prop) {
+      prop.rotation.z = state.propSpin;
+      prop.visible = true;
+    }
+    const blur = running
+      ? THREE.MathUtils.smoothstep(state.throttle, 0.10, 0.62) : 0;
+    if (propDisc) {
+      propDisc.visible = blur > 0.02;
+      propDisc.traverse((part) => {
+        if (part.material) {
+          part.material.transparent = true;
+          part.material.opacity = blur * 0.42;
+          part.material.depthWrite = false;
+        }
+      });
+    }
     if (aileronL) aileronL.rotation.x = state.controls.roll * 0.42;
     if (aileronR) aileronR.rotation.x = -state.controls.roll * 0.42;
     if (elevator) elevator.rotation.x = -state.controls.pitch * 0.40;
@@ -285,7 +326,12 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
     return speed;
   }
 
-  const pilotEye = (target = new THREE.Vector3()) => toWorld(EYE, target);
+  // The model carries an empty on the pilot's eye. Trust it over the
+  // constant: the constant is only a fallback for a model that has not
+  // got one, and a cabin that moves in Blender should not need a code
+  // change here to keep the pilot's head in it.
+  const eyeAt = seat ? seat.position.clone() : EYE;
+  const pilotEye = (target = new THREE.Vector3()) => toWorld(eyeAt, target);
 
   /** Where the pilot stands when they climb out. */
   function doorstep() {

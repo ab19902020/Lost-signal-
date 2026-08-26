@@ -308,7 +308,11 @@ async function prepare() {
         // interaction tests, without making screenshots depend on browser UI.
         start: () => { opening.hide(); beginGame({ restore: false }); },
         look: (y, p = pitch) => { yaw = y; pitch = p; },
-        moveTo: (x, z) => body.teleport(x, body.position.y, z),
+        // The height is optional and defaults to keeping the one they have,
+        // which is wrong after climbing out of an aeroplane at altitude:
+        // a harness that only sets x and z then drops the player from
+        // seven hundred feet and photographs the fall.
+        moveTo: (x, z, y = body.position.y) => body.teleport(x, y, z),
         world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); setShotSpace(name); },
         openCam: (i) => { currentCam = i; openCCTV(); },
         exposure: (v) => {
@@ -339,6 +343,11 @@ async function prepare() {
         // fire it rather than testing the one the room happens to issue.
         weapons: () => Object.keys(WEAPONS),
         usable: (key) => isUsable(key),
+        // What the player is being offered where they stand and look. The
+        // aeroplane was unreachable for a whole release because nothing
+        // checked this: the route to it was clear and the prompt to board it
+        // could still never appear.
+        prompt: () => game.nearestInteraction(currentWorld)?.name ?? null,
         weapon: () => ({
           key: weaponKey, name: weapon?.name, family: weapon?.family,
           kind: weapon?.kind, automatic: !!weapon?.automatic,
