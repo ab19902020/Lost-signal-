@@ -8,6 +8,7 @@ import { buildGarrison } from './garrison.js';
 import { createRange } from './range.js';
 import { createSky } from './sky.js';
 import { createVehicle } from './vehicle.js';
+import { createAircraft } from './aircraft.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -595,6 +596,27 @@ export function createGameWorld(assets, options = {}) {
     name: 'Gate_Estate_Car', label: 'ESTATE CAR',
   });
   if (gateCar) vehicles.push(gateCar);
+
+  // --- The airstrip -------------------------------------------------------
+  // Four hundred metres of tarmac in the fields east of the compound, laid
+  // across the road's line rather than along it so the two never argue about
+  // the same ground, with a light single parked on the threshold pointing down
+  // it. The road goes to the town; this goes anywhere.
+  const AIRSTRIP_AT = [176, 0, -58];
+  const AIRSTRIP_HEADING = Math.PI / 2;
+  const aircraft = [];
+  if (assets.airstrip) {
+    place(assets.airstrip, outside, AIRSTRIP_AT, [0, AIRSTRIP_HEADING, 0], 1,
+      { collide: true, shrink: .2 });
+  }
+  const strip = createAircraft({
+    scene: outside, colliders: colliders.outside, assets, place, addInteraction,
+    // On the numbers at the near end, lined up down the strip.
+    position: [AIRSTRIP_AT[0] - 176, 1.36, AIRSTRIP_AT[2]],
+    heading: -Math.PI / 2,
+    name: 'Airstrip_Cessna', label: 'LIGHT AIRCRAFT',
+  });
+  if (strip) aircraft.push(strip);
 
   // --- The road out -------------------------------------------------------
   // A B-road running from the gate to the town, half a kilometre of it, laid as
@@ -1584,6 +1606,9 @@ export function createGameWorld(assets, options = {}) {
     for (const vehicle of vehicles) {
       if (world === 'outside' && !vehicle.state.occupied) vehicle.update(dt, IDLE_CONTROLS);
     }
+    for (const plane of aircraft) {
+      if (world === 'outside' && !plane.state.occupied) plane.update(dt, IDLE_CONTROLS);
+    }
     // Time passes wherever the player is standing. The sky is a few dozen
     // sums and a handful of uniform writes, so it runs every frame and the
     // surface is never waiting at the moment you left it.
@@ -1643,7 +1668,7 @@ export function createGameWorld(assets, options = {}) {
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
     heldSights:()=>heldSights,
-    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,country,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,aircraft,country,
     gateIsOpen:()=>gateOpen,
     gateTravel:()=>gateSlide,
     gateMode:()=>gateMode,

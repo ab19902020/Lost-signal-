@@ -139,6 +139,7 @@ let seated = null;
 // capsule is parked at the seat, the weapon comes down and W/A/S/D go to
 // the pedals instead of the legs.
 let driving = null;
+let flying = null;
 let aiming = false;
 let jumpQueued = false;
 const touch = { sprint: false, crouch: false };
@@ -158,6 +159,7 @@ const gamepad = createGamepad();
 // Analogue movement and look, in the same shape mobile already supplies.
 const padMove = { x: 0, y: 0 };
 const padDrive = { active: false, throttle: 0, steer: 0, brake: false };
+const padFly = { active: false, pitch: 0, roll: 0, yaw: 0, throttle: 0 };
 let padCrouchHeld = false;
 let padSprintLatch = false;
 let padSprintWas = false;
@@ -450,7 +452,32 @@ async function prepare() {
           keys.KeyA = steer < 0;
           keys.Space = !!brake;
         },
-        park: () => leaveVehicle(false),
+        park: () => leaveVehicle(false) || leaveAircraft(false),
+        // Flying, for a harness: get in, hold the stick and the throttle, read
+        // the state off the aeroplane.
+        fly: (index = 0) => enterAircraft(game.aircraft?.[index]),
+        flying: () => (flying ? {
+          airspeed: +flying.state.airspeed.toFixed(3),
+          altitude: +flying.state.altitude.toFixed(3),
+          throttle: +flying.state.throttle.toFixed(3),
+          grounded: flying.state.grounded,
+          stalled: flying.state.stalled,
+          alpha: +flying.state.alpha.toFixed(4),
+          nose: +Math.asin(Math.max(-1, Math.min(1,
+            new THREE.Vector3(0, 0, -1).applyQuaternion(flying.state.quaternion).y))).toFixed(4),
+          vy: +flying.state.velocity.y.toFixed(3),
+          controlPitch: +flying.state.controls.pitch.toFixed(3),
+        } : null),
+        stick: (pitchInput = 0, roll = 0, yawInput = 0, throttle = null) => {
+          flyStick.pitch = pitchInput;
+          flyStick.roll = roll;
+          keys.KeyD = yawInput > 0;
+          keys.KeyA = yawInput < 0;
+          if (throttle !== null) flyControls.throttle = throttle;
+          // The stick is held, not flicked: stop it self-centring under the
+          // harness between one simulate() and the next.
+          flyHeld = true;
+        },
         // The controller, for a harness that fakes one with a virtual pad.
         pad: () => ({
           connected: gamepad.connected, id: gamepad.id, dualsense: gamepad.dualsense,
@@ -716,6 +743,10 @@ function wireGameEvents() {
     enterVehicle(e.detail?.vehicle);
   });
 
+  addEventListener('lostsignal:fly', (e) => {
+    enterAircraft(e.detail?.aircraft);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -965,6 +996,7 @@ function nearestResident() {
 
 function use() {
   if (!started || modal || cctv) return;
+  if (flying) { leaveAircraft(); return; }
   if (leaveVehicle()) return;
   if (leaveSeat()) return;
   const interaction = game.nearestInteraction(currentWorld);
@@ -1709,6 +1741,8 @@ function wireControls() {
   addEventListener('blur',()=>{triggerHeld=false});
   renderer.domElement.addEventListener('contextmenu',(e)=>e.preventDefault());
   addEventListener('mousemove',e=>{if(wheelOpen){steerWheel(e.movementX,e.movementY);return}
+    if(flying){flyHeld=false;flyStick.roll=THREE.MathUtils.clamp(flyStick.roll+e.movementX*.010,-1,1);
+      flyStick.pitch=THREE.MathUtils.clamp(flyStick.pitch+e.movementY*.008,-1,1);return}
     if(document.pointerLockElement===renderer.domElement&&!modal){
     // Glass slows the hand: at eight power a raw mouse delta throws the aim
     // clean off the target, which is what a magnified sight picture is for.
@@ -1805,6 +1839,8 @@ function updatePad(dt) {
     padDrive.active = false;
     padDrive.throttle = padDrive.steer = 0;
     padDrive.brake = false;
+    padFly.active = false;
+    padFly.pitch = padFly.roll = padFly.yaw = padFly.throttle = 0;
     if (!state.connected) {
       padCrouchHeld = false;
       padSprintLatch = padSprintWas = false;
@@ -1837,7 +1873,7 @@ function updatePad(dt) {
 
   // L1 held is the wheel, steered with the right stick and taken by letting
   // go — the same gesture the mouse makes.
-  if (state.pressed.l1 && !driving) openWheel();
+  if (state.pressed.l1 && !driving && !flying) openWheel();
   if (wheelOpen) {
     padMove.x = padMove.y = 0;
     if (state.look.magnitude > 0) steerWheel(state.look.x * 260, state.look.y * 260);
@@ -1854,6 +1890,21 @@ function updatePad(dt) {
     yaw -= state.look.x * gain;
     pitch = THREE.MathUtils.clamp(pitch - state.look.y * gain * 0.82, -1.25, 1.15);
   }
+
+  if (flying) {
+    padMove.x = padMove.y = 0;
+    // Left stick is the stick, the triggers are the throttle lever, and the
+    // shoulders are the rudder pedals.
+    padFly.active = true;
+    padFly.roll = state.move.x;
+    padFly.pitch = state.move.y;
+    padFly.yaw = (state.down.r1 ? 1 : 0) - (state.down.l1 ? 1 : 0);
+    padFly.throttle = state.r2 - state.l2;
+    if (state.pressed.circle) use();
+    if (state.pressed.touchpad) openCCTV();
+    return;
+  }
+  padFly.active = false;
 
   if (driving) {
     padMove.x = padMove.y = 0;
@@ -2027,6 +2078,138 @@ function closeWheel(commit = true) {
   else { drawWeapon(entry.key, { announce: false }); flash(entry.label, 1200); }
 }
 
+// Flying.
+//
+// The car is steered with the same keys you walk with and watched from behind.
+// An aeroplane cannot be: pitch is a control, not a look, so while the wheels
+// are off the ground the mouse is the stick and the camera simply follows.
+// Throttle stays on W and S, the rudder on A and D, and the brakes on the same
+// key the handbrake is on, so nothing has to be unlearned.
+const flySpeedEl = document.getElementById('flySpeed');
+const flyAltEl = document.getElementById('flyAlt');
+const flyThrottleEl = document.getElementById('flyThrottle');
+const flyWarnEl = document.getElementById('flyWarn');
+const flyControls = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: false };
+const _planePoint = new THREE.Vector3();
+const _planeEye = new THREE.Vector3();
+const _chase = new THREE.Vector3();
+const KNOTS = 1.94384;
+const FEET = 3.28084;
+let flyStick = { pitch: 0, roll: 0 };
+let flyHeld = false;
+let flyShake = 0;
+
+function enterAircraft(aircraft) {
+  if (!aircraft || flying || driving || currentWorld !== 'outside') return false;
+  closeWheel(false);
+  holsteredForDrive = armed && !holstered;
+  if (holsteredForDrive) setHolstered(true, { announce: false });
+  flying = aircraft;
+  aircraft.occupied = true;
+  setAiming(false);
+  setScoped(false);
+  seated = null;
+  flyControls.throttle = 0;
+  flyStick = { pitch: 0, roll: 0 };
+  flyHeld = false;
+  document.body.classList.add('flying');
+  refreshWeaponView();
+  startEngineAudio('aircraft');
+  flash(`${aircraft.label} — W OPENS THE THROTTLE · MOUSE IS THE STICK · [ E ] TO GET OUT`, 4200);
+  return true;
+}
+
+function leaveAircraft(showMessage = true) {
+  if (!flying) return false;
+  const aircraft = flying;
+  // Nobody steps out at ninety knots.
+  if (!aircraft.grounded || aircraft.airspeed > 3) {
+    if (showMessage) flash('BRING IT TO A STOP FIRST', 1800);
+    return false;
+  }
+  const step = aircraft.doorstep();
+  flying = null;
+  aircraft.occupied = false;
+  document.body.classList.remove('flying');
+  stopEngineAudio();
+  if (holsteredForDrive) { holsteredForDrive = false; setHolstered(false, { announce: false }); }
+  refreshWeaponView();
+  body.teleport(step.x, step.y + 0.05, step.z);
+  game.player.position.copy(body.position);
+  game.camera.position.set(0, body.eyeHeight, 0);
+  pitch = -0.02;
+  if (showMessage) flash('OUT OF THE AIRCRAFT');
+  return true;
+}
+
+function updateFlying(dt) {
+  const aircraft = flying;
+  // Throttle is a lever, not a pedal: it stays where it is put.
+  const push = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+  flyControls.throttle = THREE.MathUtils.clamp(
+    flyControls.throttle + push * dt * 0.55 + (padFly.active ? padFly.throttle * dt * 0.9 : 0), 0, 1);
+  flyControls.yaw = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (padFly.active ? padFly.yaw : 0);
+  flyControls.brake = !!keys.Space || touch.crouch;
+  // The stick self-centres, so letting go lets the aeroplane settle.
+  if (padFly.active) { flyStick.pitch = padFly.pitch; flyStick.roll = padFly.roll; }
+  else if (!flyHeld) {
+    flyStick.pitch = THREE.MathUtils.damp(flyStick.pitch, 0, 1.6, dt);
+    flyStick.roll = THREE.MathUtils.damp(flyStick.roll, 0, 2.4, dt);
+  }
+  flyControls.pitch = THREE.MathUtils.clamp(flyStick.pitch + (game.mobileMove?.y || 0), -1, 1);
+  flyControls.roll = THREE.MathUtils.clamp(flyStick.roll + (game.mobileMove?.x || 0), -1, 1);
+
+  const speed = aircraft.update(dt, flyControls);
+
+  // The walking body rides along underneath, so every distance test in the
+  // game keeps working off one position.
+  aircraft.position(_planePoint);
+  body.teleport(_planePoint.x, _planePoint.y, _planePoint.z);
+  body.velocity.set(0, 0, 0);
+  body.grounded = true;
+  game.player.position.copy(_planePoint);
+
+  // A chase camera behind and above, rolled with the airframe so a turn reads
+  // as a turn rather than as the world sliding sideways.
+  aircraft.seat(_planeEye);
+  const heading = aircraft.heading();
+  yaw = heading;
+  pitch = THREE.MathUtils.damp(pitch, -0.12, 4, dt);
+  const bump = Math.min(1, speed / 70) * (aircraft.grounded ? 1 : 0.25);
+  flyShake = THREE.MathUtils.damp(flyShake, bump, 4, dt);
+  breath += dt * (1.4 + bump * 5);
+  _chase.set(0, 0, 1).applyQuaternion(aircraft.state.quaternion).multiplyScalar(13.5);
+  _chase.y += 3.6;
+  game.camera.position.set(
+    _chase.x + Math.sin(breath * 3.3) * 0.02 * flyShake,
+    _chase.y + Math.sin(breath * 4.1) * 0.03 * flyShake,
+    _chase.z);
+  game.camera.quaternion.copy(aircraft.state.quaternion);
+  game.camera.rotateX(-0.13);
+
+  const hit = aircraft.takeImpact();
+  if (hit > 1) {
+    crashSound(Math.min(1, hit / 14));
+    gamepad.rumble(Math.min(1, hit / 14), Math.min(1, hit / 11), 160 + hit * 12);
+    if (hit > 9) damage(Math.round(hit - 7));
+  }
+
+  engineAudio(0.18 + flyControls.throttle * 0.82, flyControls.throttle);
+
+  if (flySpeedEl) flySpeedEl.textContent = String(Math.round(speed * KNOTS));
+  if (flyAltEl) flyAltEl.textContent = String(Math.max(0, Math.round(aircraft.altitude * FEET)));
+  if (flyThrottleEl) flyThrottleEl.textContent = `${Math.round(flyControls.throttle * 100)}%`;
+  if (flyWarnEl) {
+    flyWarnEl.textContent = aircraft.stalled ? 'STALL'
+      : (!aircraft.grounded && speed * KNOTS < 55 ? 'SPEED' : '');
+  }
+
+  sprinting = false;
+  stamina = Math.min(1, stamina + dt / 4);
+  staminaFill.style.transform = `scaleX(${stamina.toFixed(3)})`;
+  staminaBar.classList.toggle('on', stamina < 0.995);
+}
+
 const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
 const rightAxis = new THREE.Vector3();
@@ -2035,6 +2218,11 @@ function updatePlayer(dt) {
   if (!started || modal) return;
   game.camera.rotation.y = yaw;
   game.camera.rotation.x = pitch;
+
+  if (flying) {
+    updateFlying(dt);
+    return;
+  }
 
   if (driving) {
     updateDriving(dt);
@@ -2323,7 +2511,7 @@ function updateAmbience() {
 // it climbs through a gearbox instead of sirening straight to the top.
 let engine = null;
 
-function startEngineAudio() {
+function startEngineAudio(kind = 'car') {
   if (!ac || engine) return;
   const out = ac.createGain();
   out.gain.value = 0;
@@ -2368,7 +2556,26 @@ function startEngineAudio() {
   inductionGain.connect(out);
   induction.start();
 
-  engine = { out, filter, block, exhaust, induction, inductionGain, revs: 0 };
+  // An aeroplane adds the propeller: a blade-pass tone an order below the
+  // engine note that beats against it, which is the whole character of a
+  // piston single heard from behind. A car has no such thing.
+  let prop = null;
+  let propGain = null;
+  if (kind === 'aircraft') {
+    prop = ac.createOscillator();
+    prop.type = 'triangle';
+    prop.frequency.value = 60;
+    propGain = ac.createGain();
+    propGain.gain.value = 0.07;
+    const propBand = ac.createBiquadFilter();
+    propBand.type = 'lowpass';
+    propBand.frequency.value = 1400;
+    prop.connect(propGain); propGain.connect(propBand); propBand.connect(out);
+    prop.start();
+  }
+
+  engine = { out, filter, block, exhaust, induction, inductionGain, prop, propGain,
+    kind, revs: 0 };
   out.gain.setTargetAtTime(0.5, ac.currentTime, 0.35);
 }
 
@@ -2381,6 +2588,7 @@ function stopEngineAudio() {
   setTimeout(() => {
     for (const o of dying.block) { try { o.stop(); } catch { /* already stopped */ } }
     try { dying.exhaust.stop(); } catch { /* already stopped */ }
+    try { dying.prop?.stop(); } catch { /* already stopped */ }
     try { dying.induction.stop(); } catch { /* already stopped */ }
     dying.out.disconnect();
   }, 600);
@@ -2392,6 +2600,7 @@ const GEARS = 5;
 
 function engineAudio(speedRatio, throttle) {
   if (!engine || !ac) return;
+  if (engine.kind === 'aircraft') return aircraftAudio(speedRatio, throttle);
   const gear = Math.min(GEARS - 1, Math.floor(speedRatio * GEARS));
   const within = speedRatio * GEARS - gear;
   const revs = 0.22 + within * 0.78;
@@ -2403,6 +2612,29 @@ function engineAudio(speedRatio, throttle) {
   engine.filter.frequency.setTargetAtTime(300 + revs * 900 + load * 700, t, 0.09);
   engine.inductionGain.gain.setTargetAtTime(0.012 + load * 0.05, t, 0.1);
   engine.out.gain.setTargetAtTime(0.34 + load * 0.30, t, 0.1);
+}
+
+/**
+ * A piston single, which has no gearbox to change.
+ *
+ * The note climbs straight with the throttle instead of falling every time a
+ * car would shift, and the propeller sits about a fifth below the engine and
+ * beats against it — the slow throb that makes a light aircraft sound like a
+ * light aircraft rather than like a lawnmower.
+ */
+function aircraftAudio(power, throttle) {
+  const t = ac.currentTime;
+  const revs = THREE.MathUtils.clamp(power, 0, 1);
+  const base = 62 + revs * 88;
+  for (const o of engine.block) o.frequency.setTargetAtTime(base, t, 0.14);
+  engine.exhaust.frequency.setTargetAtTime(base * 0.5, t, 0.14);
+  if (engine.prop) engine.prop.frequency.setTargetAtTime(base * 0.41, t, 0.16);
+  if (engine.propGain) engine.propGain.gain.setTargetAtTime(0.03 + revs * 0.075, t, 0.14);
+  engine.filter.frequency.setTargetAtTime(360 + revs * 1250, t, 0.14);
+  // Slipstream: the faster it goes the more of the noise is air rather than
+  // engine, which is what you hear when the throttle comes back in a glide.
+  engine.inductionGain.gain.setTargetAtTime(0.018 + revs * 0.055, t, 0.14);
+  engine.out.gain.setTargetAtTime(0.30 + revs * 0.34, t, 0.14);
 }
 
 // Two tonnes of estate car into a fence post.
@@ -2702,11 +2934,89 @@ function blastLayer(out, { at, hz, q, decay, level, type = 'bandpass', sweepTo =
   source.stop(at + hold + decay + .04);
 }
 
+/**
+ * The brass hitting the ground.
+ *
+ * A case leaves the port, turns over in the air and lands about half a second
+ * later, and on a hard floor it bounces twice more. Nobody would list it if
+ * asked what a rifle sounds like, and every shot without it sounds like it was
+ * fired in a vacuum. Shotguns and revolvers do not throw anything: a pump gun
+ * ejects on the stroke, and a revolver keeps its brass until you tip it out.
+ */
+function casingSound(spec) {
+  if (!ac || !master) return;
+  const family = spec?.family;
+  if (family === 'shotgun' || family === 'revolver' || spec?.kind === 'melee') return;
+  const hard = currentWorld !== 'outside';
+  const t = ac.currentTime;
+  const size = family === 'sniper' ? 0.72 : family === 'pistol' ? 1.22 : 1.0;
+  const bounces = hard ? 3 : 2;
+  for (let i = 0; i < bounces; i++) {
+    // Each bounce is quieter, later and a little higher than the one before.
+    const at = t + 0.34 + i * (0.13 + Math.random() * 0.07) + Math.random() * 0.05;
+    const level = (hard ? 0.052 : 0.030) * Math.pow(0.55, i);
+    const hz = (2400 + Math.random() * 1500) * size * (1 + i * 0.14);
+    noiseBurst({ at, hz, q: 9 + Math.random() * 7, decay: 0.055 - i * 0.012, level });
+    // A ring on top of the tap, which is what makes it read as brass rather
+    // than as a stone.
+    const ring = ac.createOscillator();
+    const gain = ac.createGain();
+    ring.type = 'triangle';
+    ring.frequency.value = hz * (1.6 + Math.random() * 0.5);
+    gain.gain.setValueAtTime(level * 0.55, at);
+    gain.gain.exponentialRampToValueAtTime(0.0004, at + 0.09);
+    ring.connect(gain); gain.connect(master);
+    ring.start(at); ring.stop(at + 0.10);
+  }
+}
+
+/**
+ * The action closing again.
+ *
+ * The sear before the primer was already there; this is the other half — the
+ * bolt going back, the case leaving, and the next round being stripped off the
+ * magazine — which arrives just late enough after the blast to be heard under
+ * its tail.
+ */
+function actionCycleSound(spec) {
+  if (!ac || !master || spec?.kind === 'melee') return;
+  const t = ac.currentTime + 0.045;
+  const heft = spec?.family === 'sniper' ? 1.5 : spec?.family === 'pistol' ? 0.7 : 1.0;
+  noiseBurst({ at: t, hz: 1500 / heft, q: 3.4, decay: 0.035, level: 0.055 });
+  noiseBurst({ at: t + 0.030 * heft, hz: 900 / heft, q: 2.6, decay: 0.045, level: 0.045 });
+}
+
+/**
+ * The report coming back off the treeline.
+ *
+ * The convolution gives the space its character, but out in open country what
+ * you actually hear is two discrete slaps — one off whatever is a hundred
+ * metres away and a fainter one off whatever is three hundred — and no
+ * reverb tail reproduces that. Indoors there is nothing far enough away for it,
+ * so it does not run.
+ */
+function shotEchoes(spec) {
+  if (!ac || !master || currentWorld !== 'outside') return;
+  const voice = spec?.audio?.fire;
+  if (!voice || voice.level < 0.22) return;
+  const t = ac.currentTime;
+  for (const [delay, level, hz] of [[0.21, 0.16, 900], [0.46, 0.075, 520]]) {
+    noiseBurst({
+      at: t + delay + Math.random() * 0.02,
+      hz, q: 0.8, decay: 0.16 + delay, level: voice.level * level, type: 'lowpass',
+    });
+  }
+}
+
 function weaponFireSound(spec) {
   if (!ac || !master) return;
   const voice = spec?.audio?.fire;
   if (!voice) return;
   ensureShotBus();
+  // Everything that happens because of the shot rather than during it.
+  actionCycleSound(spec);
+  casingSound(spec);
+  shotEchoes(spec);
   const t = ac.currentTime;
   const out = shotOut();
   // No two rounds out of the same barrel are identical, and 950 rounds a

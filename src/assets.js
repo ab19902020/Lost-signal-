@@ -192,6 +192,8 @@ const exteriorUrls = {
   // The same car with its wheels left as separate objects, hub origins and
   // all, so one of them can be driven instead of parked.
   carDrivable: `${BASE}assets/blender/car_drivable_v1.glb`,
+  airstrip: `${BASE}assets/blender/airstrip_v1.glb`,
+  lightAircraft: `${BASE}assets/blender/light_aircraft_v1.glb`,
   // The countryside. Everything here is scattered in the dozens or the
   // hundreds through instanced draws, so each one is built to a budget.
   hedgerow: `${BASE}assets/blender/hedgerow_v1.glb`,
