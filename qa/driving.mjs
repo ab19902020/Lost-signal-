@@ -17,7 +17,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion'],
 });
-const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+const page = await browser.newPage({ viewport: { width: 640, height: 400 } });
 const errors = [];
 page.on('pageerror', e => errors.push(String(e).slice(0, 200)));
 page.on('crash', () => errors.push('PAGE CRASHED'));
@@ -33,7 +33,14 @@ await page.waitForFunction(() => globalThis.__ls?.debug?.().started === true, nu
 
 const results = {};
 const failures = [];
-const step = () => {};
+// Progress, on stderr: this harness runs a few thousand simulation steps under
+// software rendering, and a silent run is indistinguishable from a hung one.
+let stepAt = Date.now();
+const step = (name) => {
+  const now = Date.now();
+  console.error(`  ${name} (+${((now - stepAt) / 1000).toFixed(1)}s)`);
+  stepAt = now;
+};
 const check = (name, condition, detail) => {
   if (!condition) failures.push(`${name}: ${detail}`);
 };
@@ -99,23 +106,46 @@ check('wheels turn', Math.abs(results.throttle.spin) > 5,
 check('tracks straight', results.throttle.headingDrift < 0.02,
   `heading wandered ${results.throttle.headingDrift} rad with no steering`);
 
-// Steering. Full lock for two seconds must bend the heading and the car must
-// end up somewhere other than straight ahead.
+// Steering. Full lock for two seconds must bend the heading, and it must bend
+// it the way the driver asked: right lock puts the car to the right of where
+// its nose was pointing. Getting this backwards is invisible to a test that
+// only measures how much it turned.
 step('steering');
 results.steering = await page.evaluate(() => {
   const ls = globalThis.__ls;
-  const before = ls.driving();
-  ls.pedals(1, 1);
-  ls.simulate(120);
-  ls.pedals(0, 0);
-  const after = ls.driving();
-  return {
-    turned: +(after.heading - before.heading).toFixed(3),
-    steer: after.steer,
+  const lock = (steer) => {
+    const car = ls.game.vehicles[0];
+    car.state.x = -2;
+    car.state.z = 0;
+    car.state.heading = -Math.PI / 2;
+    car.state.speed = 0;
+    car.state.steer = 0;
+    ls.simulate(2);
+    const before = ls.driving();
+    ls.pedals(1, steer);
+    ls.simulate(120);
+    ls.pedals(0, 0);
+    const after = ls.driving();
+    const dx = after.x - before.x;
+    const dz = after.z - before.z;
+    return {
+      turned: +(after.heading - before.heading).toFixed(3),
+      // Positive is to the driver's right of the heading they set off on.
+      lateral: +(dx * Math.cos(before.heading) - dz * Math.sin(before.heading)).toFixed(2),
+      wheel: +ls.game.vehicles[0].state.steer.toFixed(3),
+    };
   };
+  return { right: lock(1), left: lock(-1) };
 });
-check('steers', Math.abs(results.steering.turned) > 0.3,
-  `heading moved ${results.steering.turned} rad on full lock`);
+check('steers', Math.abs(results.steering.right.turned) > 0.3,
+  `heading moved ${results.steering.right.turned} rad on full lock`);
+check('right lock goes right', results.steering.right.lateral > 1.5,
+  `right lock put the car ${results.steering.right.lateral} m to its right`);
+check('left lock goes left', results.steering.left.lateral < -1.5,
+  `left lock put the car ${results.steering.left.lateral} m to its right`);
+check('front wheels follow the turn',
+  results.steering.right.wheel < 0 && results.steering.left.wheel > 0,
+  `wheels at ${results.steering.right.wheel} / ${results.steering.left.wheel} rad`);
 
 // Braking, then reverse.
 step('braking');
@@ -158,11 +188,20 @@ results.fence = await page.evaluate(() => {
 check('the fence stops a car', results.fence.x > 12 && results.fence.x < 20,
   `ended at x=${results.fence.x}; the east fence is at 20`);
 
-// A shut gate is a wall; an open one is the way to the road.
+// The gate. A locked one is a wall; an automatic one reads the approach,
+// runs back before you get there, and shuts again once the drive is clear.
 step('gate');
 results.gate = await page.evaluate(async () => {
   const ls = globalThis.__ls;
   const car = ls.game.vehicles[0];
+  const park = (z, frames = 420) => {
+    car.state.x = 0;
+    car.state.z = z;
+    car.state.heading = Math.PI;
+    car.state.speed = 0;
+    ls.simulate(frames);
+    return ls.gate().travel;
+  };
   const runAtGate = () => {
     car.state.x = 0;
     car.state.z = 10;
@@ -173,18 +212,76 @@ results.gate = await page.evaluate(async () => {
     ls.pedals(0, 0);
     return +car.state.z.toFixed(2);
   };
-  ls.gate(false);
-  ls.simulate(60);
+
+  // Locked: the leaves stay across the road however close you get.
+  ls.gate('lock');
+  const lockedNear = park(9, 300);
   const shut = runAtGate();
-  const open = ls.gate(true);
-  ls.simulate(300);        // the leaves take a few seconds to run back
+
+  // Automatic, and nothing near it: shut.
+  ls.gate('auto');
+  const away = park(-14, 420);
+
+  // Automatic, and something sitting on the approach: open, unprompted.
+  const sensed = park(9, 300);
   const through = runAtGate();
-  return { shut, open, through, leaf: +ls.game.gateIsOpen() };
+
+  // Clear of it: the gate closes behind.
+  const behind = park(64, 420);
+  return {
+    shut, through,
+    lockedNear: +lockedNear.toFixed(3),
+    away: +away.toFixed(3),
+    sensed: +sensed.toFixed(3),
+    behind: +behind.toFixed(3),
+    mode: ls.gate().mode,
+  };
 });
-check('a shut gate stops a car', results.gate.shut < 16,
-  `drove to z=${results.gate.shut} through a shut gate`);
+check('a locked gate stays shut', results.gate.lockedNear < 0.02,
+  `locked leaves ran to ${results.gate.lockedNear} with a car on the loop`);
+check('a locked gate stops a car', results.gate.shut < 16,
+  `drove to z=${results.gate.shut} through a locked gate`);
+check('an empty drive leaves it shut', results.gate.away < 0.02,
+  `gate sat at ${results.gate.away} with nothing near it`);
+check('it opens on approach', results.gate.sensed > 0.98,
+  `gate only reached ${results.gate.sensed} with a car on the loop`);
 check('an open gate lets it out', results.gate.through > 24,
   `only reached z=${results.gate.through} with the gate open`);
+check('it closes behind you', results.gate.behind < 0.02,
+  `gate sat at ${results.gate.behind} once the drive was clear`);
+
+// The same loop reads someone on foot.
+step('gate on foot');
+results.gateWalk = await page.evaluate(async () => {
+  const ls = globalThis.__ls;
+  const car = ls.game.vehicles[0];
+  ls.park();
+  ls.simulate(4);
+  car.state.x = 26;
+  car.state.z = -20;            // the car well out of the way
+  ls.gate('auto');
+  ls.moveTo(0, -16);
+  ls.simulate(420);
+  const away = ls.gate().travel;
+  ls.moveTo(0, 8);
+  ls.simulate(300);
+  const near = ls.gate().travel;
+  ls.moveTo(0, -22);
+  ls.simulate(480);
+  const after = +ls.gate().travel.toFixed(3);
+  // Put the car and the driver back where the rest of the run expects them.
+  car.state.x = -2;
+  car.state.z = 0;
+  car.state.heading = 0;
+  car.state.speed = 0;
+  ls.drive(0);
+  ls.simulate(6);
+  return { away: +away.toFixed(3), near: +near.toFixed(3), after };
+});
+check('a walker opens it', results.gateWalk.near > 0.98,
+  `gate reached ${results.gateWalk.near} with someone standing on the loop`);
+check('it shuts behind a walker', results.gateWalk.after < 0.02,
+  `gate sat at ${results.gateWalk.after} after they walked away`);
 
 // Getting out puts the player on the ground, next to the car, not inside it.
 step('exit');
@@ -221,6 +318,94 @@ check('parked car is solid', results.solid.inside === true,
   'the player can walk straight through the parked car');
 check('collider is car-sized', results.solid.clear === false,
   'the car collider reaches 4.5 m to the side');
+
+// The controller. Chromium has no gamepad emulation and CDP does not expose
+// one, but navigator.getGamepads is the only thing the game reads — so a plain
+// object carrying the standard mapping is, as far as Shelter 47 is concerned,
+// a DualSense.
+step('gamepad');
+results.gamepad = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const buttons = Array.from({ length: 18 }, () => ({ pressed: false, touched: false, value: 0 }));
+  const fake = {
+    id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
+    index: 0, connected: true, mapping: 'standard', timestamp: 0,
+    axes: [0, 0, 0, 0], buttons,
+    vibrationActuator: { playEffect: () => Promise.resolve('complete') },   // haptics, accepted and ignored
+  };
+  const original = navigator.getGamepads?.bind(navigator);
+  navigator.getGamepads = () => [fake];
+  const stick = (lx = 0, ly = 0, rx = 0, ry = 0) => { fake.axes = [lx, ly, rx, ry]; };
+  const hold = (index, value = 1) => { buttons[index].pressed = value > .5; buttons[index].value = value; };
+  const clear = () => { stick(); for (const b of buttons) { b.pressed = false; b.value = 0; } };
+
+  try {
+    ls.park();
+    ls.world('outside');
+    ls.simulate(20);
+    const seen = ls.pad();
+
+    // Walking, then looking — measured apart, because a stick that walks and a
+    // stick that turns at the same time walk the player round in a circle and
+    // leave them back where they started.
+    ls.moveTo(-6, -6);
+    ls.look(0, 0);
+    ls.simulate(10);
+    const from = ls.body.position.clone();
+    stick(0, -1, 0, 0);
+    ls.simulate(90);
+    const walked = +ls.body.position.distanceTo(from).toFixed(2);
+    clear();
+    ls.simulate(10);
+
+    const yawFrom = ls.aim2().yaw;
+    stick(0, 0, 0.9, 0);
+    ls.simulate(60);
+    const turned = +(ls.aim2().yaw - yawFrom).toFixed(3);
+    clear();
+    ls.simulate(10);
+
+    // Driving. R2 is the throttle and the left stick is the lock.
+    const car = ls.game.vehicles[0];
+    car.state.x = -2; car.state.z = 0; car.state.heading = -Math.PI / 2;
+    car.state.speed = 0; car.state.steer = 0;
+    ls.drive(0);
+    ls.simulate(6);
+    hold(7, 1);                     // R2 down
+    ls.simulate(90);
+    const throttled = +car.state.speed.toFixed(2);
+    stick(1, 0, 0, 0);              // full right lock
+    const headingFrom = car.state.heading;
+    ls.simulate(90);
+    const steered = +(car.state.heading - headingFrom).toFixed(3);
+    clear();
+    hold(1, 1);                     // Circle: get out
+    ls.simulate(4);
+    hold(1, 0);
+    ls.simulate(4);
+    const out = ls.driving();
+    clear();
+    ls.simulate(4);
+    return {
+      connected: seen.connected, dualsense: seen.dualsense,
+      walked, turned, throttled, steered, out,
+    };
+  } finally {
+    if (original) navigator.getGamepads = original;
+  }
+});
+check('a pad is picked up', results.gamepad.connected === true, 'the game never saw the controller');
+check('it knows a DualSense', results.gamepad.dualsense === true,
+  'a DualSense id was not recognised');
+check('the left stick walks', results.gamepad.walked > 2,
+  `the stick moved the player ${results.gamepad.walked} m in a second and a half`);
+check('the right stick looks', Math.abs(results.gamepad.turned) > 0.5,
+  `the stick turned the head ${results.gamepad.turned} rad`);
+check('R2 is the throttle', results.gamepad.throttled > 5,
+  `full trigger reached ${results.gamepad.throttled} m/s`);
+check('the stick steers right', results.gamepad.steered < -0.3,
+  `right lock moved the heading ${results.gamepad.steered} rad`);
+check('circle gets out', results.gamepad.out === null, 'still driving after Circle');
 
 console.log(JSON.stringify(results, null, 1));
 if (failures.length) {

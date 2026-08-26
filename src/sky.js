@@ -185,6 +185,8 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   const state = {
     timeOfDay: startAt,
     dayFactor: 0,
+    // The exposure the surface wants, filled in by update().
+    exposure: 1,
     cloud,
     rain,
     // Something for the shelter's own copy to talk about.
@@ -239,7 +241,13 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     const weatherDim = 1 - cloud * 0.72;
     sun.position.copy(_sunDir).multiplyScalar(120);
     sun.color.copy(lightColour);
-    sun.intensity = Math.max(0, dayFactor) * 3.6 * weatherDim;
+    // A key of 3.6 with a hemisphere fill of 2.1 over it put nearly six units
+    // of light on a pale wall, and ACES clips a long way before that: the yard
+    // came out as white shapes with no surface on them. The compound is
+    // concrete, rust and grass — none of it is meant to reach paper white, and
+    // the sun's job is to put a shadow on the ground, not to burn the ground
+    // off. Half a stop under is where the render keeps its mid-tones.
+    sun.intensity = Math.max(0, dayFactor) * 2.35 * weatherDim;
     sun.visible = sun.intensity > 0.01;
     // The shadow map is left on its automatic per-frame refresh. Holding it
     // and stepping it when the sun had moved a set amount traded a crawl for a
@@ -249,12 +257,23 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
     // the crawl on their own.
 
     moon.position.copy(_moonDir).multiplyScalar(120);
-    moon.intensity = Math.max(0, 1 - dayFactor) * 2.4 * (1 - cloud * 0.55);
+    moon.intensity = Math.max(0, 1 - dayFactor) * 2.55 * (1 - cloud * 0.55);
     moon.visible = moon.intensity > 0.01;
 
     ambient.color.copy(ambientSky);
     ambient.groundColor.copy(ambientGround);
-    ambient.intensity = (0.85 + dayFactor * 1.25) * (1 - cloud * 0.25);
+    // Fill, not a second sun. It lifts the shadow side off black and no more;
+    // above about one it starts washing out the very contrast the key light is
+    // there to create, and overcast — which is all fill — needs less of it,
+    // not more, because the sky itself has already gone flat.
+    ambient.intensity = (0.52 + dayFactor * 0.74) * (1 - cloud * 0.18);
+
+    // What the eye is stopped down to out here. Full daylight is nearly a
+    // stop under the shelter's flat interior; the small hours open back up so
+    // a moonlit yard is legible instead of merely dark, and cloud — which
+    // takes the highlights away — gets a little of it back.
+    state.exposure = THREE.MathUtils.lerp(1.16, 0.80, dayFactor)
+      + cloud * 0.10 * dayFactor;
 
     if (scene.fog) {
       // The fog matches the horizon, so distance runs out into haze rather
