@@ -10,8 +10,12 @@ permissions:
   pages: write
   id-token: write
 
+# Keyed by ref, not just "pages". A single group meant a push to a feature
+# branch cancelled the run for the push to main that went with it — and since
+# the github-pages environment only accepts the default branch, the surviving
+# branch run could not deploy either. The site silently stopped updating.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,10 +44,13 @@ jobs:
   # Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
   # The workflow token is not allowed to create the site itself, so this job is
   # allowed to fail without failing the build above.
+  # Only the default branch can deploy: the github-pages environment rejects
+  # anything else, and a rejected job that is allowed to fail looks exactly
+  # like a successful one from the outside.
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
