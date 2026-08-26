@@ -340,9 +340,19 @@ export function createGameWorld(assets, options = {}) {
   // it is down is where anything gets in.
   const GATE_Z = 17;
   const GATE_SLIDE = 4.05;      // how far each leaf runs out behind the fence
+  const GATE_RATE = 0.52;       // fraction of the travel per second
+  const GATE_SENSE = 12;        // metres up the drive the loop reads
+  const GATE_LEAD = 2.6;        // seconds of closing speed it looks ahead
+  const GATE_LANE = 6.5;        // half-width of the approach corridor
+  const GATE_DWELL = 2.4;       // seconds held open after the drive clears
   let gateOpen = false;
   let gateSlide = 0;
+  let gateMode = 'auto';        // auto | hold | lock
+  let gateDwell = 0;
+  let gateRoot = null;
+  let gateSensed = false;
   const gateLeaves = [];
+  const _gateWas = new THREE.Vector3();
   const BREACH = new Set(['N:-2', 'W:3', 'S:-4']);
   const LEANING = new Set(['N:2', 'E:-3', 'E:2', 'W:-2', 'S:3']);
   // One bay in five carries the warning plate, as a real run does.
@@ -394,15 +404,66 @@ export function createGameWorld(assets, options = {}) {
         }),
       });
     }
-    addInteraction(root, 'PERIMETER GATE — OPEN', 'outside', () => {
-      gateOpen = !gateOpen;
-      root.userData.interaction.name = `PERIMETER GATE — ${gateOpen ? 'CLOSE' : 'OPEN'}`;
-      window.dispatchEvent(new CustomEvent('lostsignal:gate', { detail: { open: gateOpen } }));
+    gateRoot = root;
+    // The switch on the post is a mode switch, not a button: the gate runs
+    // itself, and the three positions are the three things a gate on a road
+    // has to be able to be.
+    addInteraction(root, gateLabel(), 'outside', () => {
+      gateMode = gateMode === 'auto' ? 'hold' : (gateMode === 'hold' ? 'lock' : 'auto');
+      gateDwell = 0;
+      root.userData.interaction.name = gateLabel();
+      window.dispatchEvent(new CustomEvent('lostsignal:gatemode', { detail: { mode: gateMode } }));
     });
   }
 
-  function updateGate(dt) {
+  function gateLabel() {
+    return gateMode === 'auto' ? 'PERIMETER GATE — AUTO · HOLD OPEN'
+      : gateMode === 'hold' ? 'PERIMETER GATE — HELD OPEN · LOCK SHUT'
+        : 'PERIMETER GATE — LOCKED SHUT · SET AUTO';
+  }
+
+  function setGateMode(mode) {
+    if (mode !== 'auto' && mode !== 'hold' && mode !== 'lock') return gateMode;
+    gateMode = mode;
+    gateDwell = 0;
+    if (gateRoot?.userData.interaction) gateRoot.userData.interaction.name = gateLabel();
+    return gateMode;
+  }
+
+  // The induction loop. A gate on a road opens because something is coming up
+  // to it, not because somebody got out and pressed a button, so it reads the
+  // approach corridor and — because a car at forty covers the whole sensing
+  // range in the time the leaves take to run back — reads how fast whatever
+  // is on it is closing, and starts that much earlier.
+  function gateSenses(dt, subject) {
+    if (!subject) { gateSensed = false; return false; }
+    const lateral = Math.abs(subject.x);
+    const along = subject.z - GATE_Z;
+    let closing = 0;
+    if (gateSensed && dt > 1e-5) closing = (Math.abs(_gateWas.z - GATE_Z) - Math.abs(along)) / dt;
+    _gateWas.copy(subject);
+    gateSensed = true;
+    if (lateral > GATE_LANE) return false;
+    const trip = GATE_SENSE + THREE.MathUtils.clamp(closing, 0, 26) * GATE_LEAD;
+    return Math.abs(along) < trip;
+  }
+
+  function updateGate(dt, subject) {
     if (!gateLeaves.length) return;
+    // Read the loop even when the gate is locked, so the tracked position
+    // stays current and unlocking it does not register a phantom sprint.
+    const sensed = gateSenses(dt, subject);
+    const near = gateMode !== 'lock' && sensed;
+    // Hold it open for a beat after the drive clears, so it does not start
+    // shutting on the back bumper of a car that is still in the throat.
+    gateDwell = near ? GATE_DWELL : Math.max(0, gateDwell - dt);
+    const want = gateMode === 'lock' ? false : (gateMode === 'hold' || near || gateDwell > 0);
+    if (want !== gateOpen) {
+      gateOpen = want;
+      window.dispatchEvent(new CustomEvent('lostsignal:gate', {
+        detail: { open: gateOpen, auto: gateMode === 'auto' },
+      }));
+    }
     const target = gateOpen ? 1 : 0;
     if (Math.abs(gateSlide - target) < 0.0005) {
       gateSlide = target;
@@ -410,7 +471,7 @@ export function createGameWorld(assets, options = {}) {
     }
     // A powered gate runs at a fixed speed rather than easing in, so it is
     // driven at a rate instead of damped toward the end stop.
-    gateSlide = THREE.MathUtils.clamp(gateSlide + Math.sign(target - gateSlide) * dt * 0.34, 0, 1);
+    gateSlide = THREE.MathUtils.clamp(gateSlide + Math.sign(target - gateSlide) * dt * GATE_RATE, 0, 1);
     for (const { leaf, side, rest, collider } of gateLeaves) {
       leaf.position.x = rest + side * GATE_SLIDE * gateSlide;
       collider.cx = leaf.position.x;
@@ -1396,7 +1457,7 @@ export function createGameWorld(assets, options = {}) {
       garrison?.update(dt, playerPosition);
     }
     if (world === 'outside') range?.update(dt);
-    updateGate(dt);
+    updateGate(dt, world === 'outside' ? playerPosition : null);
     // Vehicles settle onto the ground and keep their collider in step whether
     // anyone is driving or not, so a parked car is still something you have to
     // walk around.
@@ -1474,6 +1535,9 @@ export function createGameWorld(assets, options = {}) {
     heldWeapon:()=>heldKey,
     bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,country,
     gateIsOpen:()=>gateOpen,
+    gateTravel:()=>gateSlide,
+    gateMode:()=>gateMode,
+    setGateMode,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,
   };

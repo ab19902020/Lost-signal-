@@ -65,6 +65,42 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // axle across the car. Roll is added in front of that, never instead of it.
   const restY = wheels.filter(Boolean).map((wheel) => wheel.rotation.y);
 
+  // Lamps. The glass is modelled; the light and the glow are runtime, so a car
+  // at night has beams on the road instead of two painted white circles.
+  const headLamps = [];
+  const tailLamps = [];
+  root.traverse((part) => {
+    if (!part.isMesh) return;
+    if (/^Car_Headlamp_/.test(part.name)) headLamps.push(part);
+    else if (/^Car_(Taillamp_|Backlight)/.test(part.name)) tailLamps.push(part);
+  });
+  for (const lamp of [...headLamps, ...tailLamps]) {
+    if (lamp.material) lamp.material = lamp.material.clone();
+  }
+  const _glow = new THREE.Color();
+  function setLampGlow(lamps, level, tint) {
+    for (const lamp of lamps) {
+      const material = lamp.material;
+      if (!material || !material.emissive) continue;
+      material.emissive.copy(_glow.set(tint));
+      // Intensity only. `toneMapped` is part of three.js's program cache key,
+      // so flipping it every time the brake lights come on would recompile the
+      // lamp's shader at every junction.
+      material.emissiveIntensity = level;
+    }
+  }
+  const beams = [];
+  for (const side of [-1, 1]) {
+    const beam = new THREE.SpotLight(0xfff0d2, 26, 46, 0.44, 0.52, 1.4);
+    beam.position.set(side * 0.62, 0.72, -2.02);
+    beam.target.position.set(side * 0.30, -0.55, -18);
+    // An invisible light is not in the render's light list at all, so a car
+    // with its lamps off costs the scene nothing.
+    beam.visible = false;
+    root.add(beam, beam.target);
+    beams.push(beam);
+  }
+
   const state = {
     x: position[0], y: position[1], z: position[2],
     heading,
@@ -73,6 +109,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     wheelSpin: 0,
     lean: 0,
     pitch: 0,
+    slide: 0,
+    lights: false,
     occupied: false,
     // Set when the car has just hit something, so the game can play the bang
     // and shake the camera. Read and cleared by takeImpact().
@@ -137,14 +175,18 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     const lock = MAX_STEER * (fast > GRIP_SPEED
       ? THREE.MathUtils.lerp(1, 0.42, Math.min(1, (fast - GRIP_SPEED) / (TOP_SPEED - GRIP_SPEED)))
       : 1);
-    state.steer = THREE.MathUtils.damp(state.steer, steerInput * lock,
+    // Positive steer means right. The heading here is the player's yaw, and
+    // three.js yaw runs the angle *down* as you turn right, so the lock the
+    // wheels take is the negative of the input. Doing it once here keeps the
+    // body, the front wheels and the weight transfer all turning the same way.
+    state.steer = THREE.MathUtils.damp(state.steer, -steerInput * lock,
       steerInput ? 9 : 6, dt);
 
     // Longitudinal forces. Throttle against travel is the brake pedal, which
     // is how every arcade car since Out Run has worked.
     let accel;
     if (controls.brake) {
-      accel = -Math.sign(state.speed) * BRAKE;
+      accel = -Math.sign(state.speed) * BRAKE * (state.slide > .5 ? .62 : 1);
     } else if (throttle > 0) {
       accel = state.speed < -0.4 ? BRAKE : ENGINE * throttle;
     } else if (throttle < 0) {
@@ -159,11 +201,18 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
       ? 0
       : THREE.MathUtils.clamp(next, -REVERSE_SPEED, TOP_SPEED);
 
+    // Handbrake. Locking the rears takes the back axle out of the equation, so
+    // the car keeps rotating for a moment after the front wheels have stopped
+    // asking it to. It only bites above walking pace — a handbrake on a
+    // stationary car is a parking brake and nothing else.
+    const wantSlide = controls.brake && fast > 4 ? 1 : 0;
+    state.slide = THREE.MathUtils.damp(state.slide, wantSlide, wantSlide ? 7 : 2.4, dt);
+
     // A car turns because its front wheels point somewhere else, so the rate
     // depends on how fast it is going. Standing still it does not turn at all,
     // which is why you cannot spin it on the spot.
     const yawRate = Math.abs(state.speed) > 0.05
-      ? (state.speed / WHEELBASE) * Math.tan(state.steer)
+      ? (state.speed / WHEELBASE) * Math.tan(state.steer) * (1 + state.slide * 1.25)
       : 0;
     const facing = state.heading + yawRate * dt;
 
@@ -206,7 +255,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
     // Weight transfer, purely for the look of it: the shell rolls out of the
     // corner and squats under power.
-    state.lean = THREE.MathUtils.damp(state.lean, -state.steer * (fast / TOP_SPEED) * 0.16, 6, dt);
+    state.lean = THREE.MathUtils.damp(state.lean,
+      -state.steer * (fast / TOP_SPEED) * 0.16 * (1 + state.slide * .5), 6, dt);
     state.pitch = THREE.MathUtils.damp(state.pitch, THREE.MathUtils.clamp(-accel * 0.006, -0.05, 0.05), 5, dt);
     if (shell) {
       shell.rotation.z = state.lean;
@@ -221,6 +271,11 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
       wheel.rotation.set(state.wheelSpin, restY[i], 0);
     });
     for (const pivot of steerPivots) pivot.rotation.y = state.steer;
+
+    const braking = !!controls.brake || (throttle < 0 && state.speed > 0.4);
+    setLampGlow(tailLamps, state.lights ? (braking ? 2.6 : .55) : (braking ? 2.0 : 0), 0xff2a17);
+    setLampGlow(headLamps, state.lights ? 2.2 : 0, 0xfff3d6);
+    for (const beam of beams) beam.visible = state.lights;
 
     return state.speed;
   }
@@ -253,6 +308,9 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     get speed() { return state.speed; },
     get heading() { return state.heading; },
     get occupied() { return state.occupied; },
+    get lights() { return state.lights; },
+    setLights(on) { state.lights = !!on; return state.lights; },
+    toggleLights() { state.lights = !state.lights; return state.lights; },
     set occupied(value) { state.occupied = !!value; hull.enabled = !value; },
     position: (target = new THREE.Vector3()) => target.set(state.x, state.y, state.z),
     topSpeed: TOP_SPEED,

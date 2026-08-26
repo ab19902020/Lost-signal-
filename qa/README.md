@@ -12,7 +12,14 @@ npm run dev                       # in one shell
 npm run qa                        # every check, pass/fail (what CI runs)
 npm run qa:game                   # screenshot the game as the player sees it
 npm run qa:physics                # raw collision / crouch / texture readings
+npm run qa:weapons                # the collection: fire, reload, recoil, gore
+npm run qa:driving                # the car, the perimeter gate and the pad
 ```
+
+`qa:driving` fakes a controller by replacing `navigator.getGamepads` inside the
+page — Chromium has no gamepad emulation and CDP does not expose one, and the
+game reads nothing else, so a plain object with the standard mapping is a
+DualSense as far as Shelter 47 is concerned.
 
 `npm run qa` fails the build on the regressions this project has actually
 shipped: a player walking through a wall, a crouch that never stands back up,
@@ -38,6 +45,13 @@ http://127.0.0.1:5173/Lost-signal-/qa/orient.html?files=deer_v3.glb,bed.glb&view
 
 `src/main.js` exposes `globalThis.__ls` on dev builds only (`import.meta.env.DEV`),
 with `moveTo`, `look`, `world`, `openCam`, `freecam`, `boxes` and `simulate`.
+
+Under software rendering (`--use-angle=swiftshader`, which is all a headless
+container has) the boot alone — assets, three worlds, every shader — takes many
+minutes before the first assertion runs. That is the harness working, not
+hanging; give it a real timeout and leave it alone. Editing anything under
+`src/` while a harness is running makes Vite reload the page underneath it and
+the run dies with "Execution context was destroyed".
 
 `simulate(frames, dt)` advances the world by a fixed timestep. Headless Chromium
 does not run `requestAnimationFrame` on an idle page, so a test that waits on

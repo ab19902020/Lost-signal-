@@ -25,6 +25,9 @@ const LEFT_WALL = [
   'armoryBayonet', 'armoryCombatKnife',
 ];
 
+// The pegboard is 2.6 m tall, so the row pitch on each wall is whatever fits
+// its own column count underneath that: five rows down the left at half a
+// metre, four down the right and across the back at a little more.
 const RIGHT_WALL = [
   'armorySniper03', 'armorySniper04',
   'armorySmg01', 'armorySmg02',
@@ -33,19 +36,45 @@ const RIGHT_WALL = [
 
 export const ARMORY_WEAPON_KEYS = [...BACK_WALL, ...LEFT_WALL, ...RIGHT_WALL];
 
+// How long each thing reads on the wall, in metres. Measured and fitted rather
+// than scaled by a factor, so swapping the models out again cannot silently
+// shrink the whole armoury to nothing.
+function displayLength(key) {
+  if (/Bipod|Scope|Tripod/.test(key)) return .24;
+  if (/Bayonet|CombatKnife/.test(key)) return .33;
+  if (/Pistol|Glock/.test(key)) return .30;
+  if (/Revolver/.test(key)) return .34;
+  if (/Smg/.test(key)) return .62;
+  if (/ShotgunSawed/.test(key)) return .58;
+  if (/Sniper/.test(key)) return 1.04;
+  return .92;
+}
+
 const _box = new THREE.Box3();
 const _centre = new THREE.Vector3();
 const _target = new THREE.Vector3();
+const _size = new THREE.Vector3();
 
-function mountModel({ assets, scene, place }, key, position, rotation, scale) {
+function mountModel({ assets, scene, place }, key, position, rotation, length) {
   const gltf = assets[key];
   if (!gltf) return null;
   // Place at the origin first, then move the actual geometry centre onto the
-  // rack point. Quaternius models use sensible axes but different pivots.
-  const root = place(gltf, scene, [0, 0, 0], rotation, scale, {
+  // rack point. Every weapon is authored muzzle-forward down +Z with +Y up, so
+  // a rack turns the length along its own wall: the back wall wants a quarter
+  // turn, the side walls leave the length on Z and only choose which way the
+  // muzzles point.
+  const root = place(gltf, scene, [0, 0, 0], rotation, 1, {
     world: 'bunker', collide: false,
   });
   root.name = `Armory_Display_${key}`;
+  // Fit to a real length on the rack, measured, rather than to a hand-typed
+  // scale factor. The factors that suited the pack models put the built ones
+  // on the wall at eight centimetres, which is how an armoury holding
+  // twenty-six weapons came to look like an empty room.
+  root.updateWorldMatrix(true, true);
+  _box.setFromObject(root).getSize(_size);
+  const longest = Math.max(_size.x, _size.y, _size.z);
+  if (longest > 1e-4) root.scale.setScalar(length / longest);
   root.updateWorldMatrix(true, true);
   _box.setFromObject(root).getCenter(_centre);
   _target.copy(ARMORY_ORIGIN).add(new THREE.Vector3(...position));
@@ -106,10 +135,9 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     const column = i % 3;
     const row = Math.floor(i / 3);
     const key = BACK_WALL[i];
-    const longGun = !/Sawed/.test(key);
     const root = mountModel({ assets, scene, place }, key,
       [-1.44 + column * 1.44, .58 + row * .55, 1.75],
-      [0, 0, 0], longGun ? .165 : .185);
+      [0, -Math.PI / 2, 0], displayLength(key));
     if (root) displayWeapons.push(root);
   }
 
@@ -117,10 +145,9 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     const column = i % 2;
     const row = Math.floor(i / 2);
     const key = LEFT_WALL[i];
-    const blade = /Bayonet|CombatKnife/.test(key);
     const root = mountModel({ assets, scene, place }, key,
-      [-2.01, .55 + row * .55, -.84 + column * 1.68],
-      [0, -Math.PI / 2, 0], blade ? .25 : .18);
+      [-2.01, .50 + row * .50, -.84 + column * 1.68],
+      [0, 0, 0], displayLength(key));
     if (root) displayWeapons.push(root);
   }
 
@@ -128,10 +155,9 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     const column = i % 2;
     const row = Math.floor(i / 2);
     const key = RIGHT_WALL[i];
-    const compact = /Bipod|Scope|Tripod/.test(key);
     const root = mountModel({ assets, scene, place }, key,
-      [2.01, .65 + row * .69, .84 - column * 1.68],
-      [0, Math.PI / 2, 0], compact ? .25 : .17);
+      [2.01, .62 + row * .55, .84 - column * 1.68],
+      [0, Math.PI, 0], displayLength(key));
     if (root) displayWeapons.push(root);
   }
 

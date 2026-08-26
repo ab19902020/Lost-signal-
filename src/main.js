@@ -15,6 +15,7 @@ import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose
   from './weapons.js';
 import { createDecalField } from './decals.js';
 import { createOpeningExperience } from './opening.js';
+import { createGamepad } from './gamepad.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -146,7 +147,22 @@ const body = new CharacterBody();
 const clock = new THREE.Clock();
 const keys = {};
 const ray = new THREE.Raycaster();
+
+// The pad. Polled once a frame from simulate(), so it drives exactly the same
+// code the keyboard does and cannot drift out of step with it.
+const pad = createGamepad();
+// Analogue movement and look, in the same shape mobile already supplies.
+const padMove = { x: 0, y: 0 };
+const padDrive = { active: false, throttle: 0, steer: 0, brake: false };
+let padCrouchHeld = false;
+let padSprintLatch = false;
+let padSprintWas = false;
+let padAimWas = false;
+let padTriggerHeld = false;
 let msgTimer = 0;
+// The iris. Walked toward whatever the world the player is standing in asks
+// for, so a cut from the shelter to a noon compound is a settle, not a flash.
+let exposure = 1;
 
 // The world the player is standing in: shelter, surface compound or silo.
 function activeScene() {
@@ -289,7 +305,10 @@ async function prepare() {
         moveTo: (x, z) => body.teleport(x, body.position.y, z),
         world: (name) => { currentWorld = name; const spawn = game.setWorld(name); body.teleport(spawn.x, spawn.y, spawn.z); setShotSpace(name); },
         openCam: (i) => { currentCam = i; openCCTV(); },
-        exposure: (v) => { renderer.toneMappingExposure = v; },
+        exposure: (v) => {
+          if (v !== undefined) { exposure = v; renderer.toneMappingExposure = v; }
+          return renderer.toneMappingExposure;
+        },
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
         // Walk under the same input path the player uses, from inside an
         // evaluated block where synthetic key events are not available.
@@ -427,12 +446,22 @@ async function prepare() {
           keys.Space = !!brake;
         },
         park: () => leaveVehicle(false),
-        // The perimeter gate, so a harness can drive out of the compound.
-        gate: (open) => {
-          const node = game.interactions.find((o) => o.name === 'Perimeter_Gate');
-          if (!node) return null;
-          if (open === undefined || !!open !== game.gateIsOpen()) node.userData.interaction.onUse();
-          return game.gateIsOpen();
+        // The controller, for a harness that fakes one with a virtual pad.
+        pad: () => ({
+          connected: pad.connected, id: pad.id, dualsense: pad.dualsense,
+          move: { ...pad.state.move }, look: { ...pad.state.look },
+          l2: pad.state.l2, r2: pad.state.r2,
+          down: { ...pad.state.down },
+        }),
+        lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
+        horn: () => hornSound(),
+        // The perimeter gate runs itself off its approach loop; this sets the
+        // mode switch on the post so a harness can pin it open or shut.
+        gate: (mode) => {
+          if (mode !== undefined) {
+            game.setGateMode(mode === true ? 'hold' : (mode === false ? 'lock' : mode));
+          }
+          return { mode: game.gateMode(), open: game.gateIsOpen(), travel: game.gateTravel() };
         },
         aim2: () => ({ yaw, pitch }),
         time: (value) => { game.sky?.setTimeOfDay(value); updateStats(); },
@@ -652,7 +681,19 @@ function wireGameEvents() {
   });
 
   addEventListener('lostsignal:gate', (e) => {
-    flash(e.detail.open ? 'PERIMETER GATE RUNNING BACK' : 'PERIMETER GATE CLOSING', 2400);
+    // The gate shuts itself once the drive is clear, and the drive is clear
+    // the moment you go down the hatch. Nobody in the shelter can hear it.
+    if (currentWorld !== 'outside') return;
+    gateSound(e.detail.open);
+    flash(e.detail.open
+      ? 'PERIMETER GATE — LOOP DETECT · RUNNING BACK'
+      : 'PERIMETER GATE — DRIVE CLEAR · CLOSING', 2200);
+  });
+
+  addEventListener('lostsignal:gatemode', (e) => {
+    flash(e.detail.mode === 'auto' ? 'PERIMETER GATE SET TO AUTOMATIC'
+      : e.detail.mode === 'hold' ? 'PERIMETER GATE HELD OPEN'
+        : 'PERIMETER GATE LOCKED SHUT', 2400);
   });
 
   addEventListener('lostsignal:drive', (e) => {
@@ -1365,6 +1406,11 @@ function kick(spec) {
   recoilRecover = k.recover;
   pitch = Math.min(1.15, pitch + up);
   yaw += side;
+  // The pad takes the same punch the camera does: a heavy rifle shoves and a
+  // sub-gun buzzes, scaled by the profile rather than a fixed thump.
+  pad.rumble(Math.min(1, k.punch * .55), Math.min(1, k.shove * .5 + .12),
+    60 + Math.min(90, k.punch * 70));
+  pad.kickTrigger(Math.min(1, .3 + k.punch * .3), 0, 50 + Math.min(60, k.punch * 40));
 
   // What the shooter feels: the weapon driven back into the shoulder, and the
   // whole picture rolled a little by a big cartridge.
@@ -1585,7 +1631,15 @@ cctvFrame.addEventListener('pointermove',e=>{if(e.pointerId!==ptzId)return;const
 cctvFrame.addEventListener('pointerup',()=>ptzId=null);
 
 function wireControls() {
-  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)cycleWeapon(1)}if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision()});
+  // The pad announces itself rather than being found: the Gamepad API hides a
+  // controller until it is used, so the first press is the connection.
+  pad.on((event, detail) => {
+    document.body.classList.toggle('pad', event === 'connected');
+    if (event !== 'connected') { flash('CONTROLLER DISCONNECTED', 2200); return; }
+    flash(`${detail.dualsense ? 'DUALSENSE' : 'CONTROLLER'} CONNECTED — OPTIONS FOR CONTROLS`, 3200);
+    pad.rumble(.3, .5, 240);
+  });
+  addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyE'&&!e.repeat)use();if(e.code==='KeyR'&&!e.repeat)reload();if(e.code==='KeyF'&&!e.repeat){triggerHeld=true;fire()}if(e.code==='KeyQ'&&!e.repeat)setAiming(!aiming);if(/^Digit[1-4]$/.test(e.code)&&!e.repeat)selectSlot(+e.code.slice(5)-1);if(e.code==='Tab'){e.preventDefault();if(!e.repeat)cycleWeapon(1)}if(e.code==='KeyH'){e.preventDefault();toggleHelp()}if(e.code==='Space'){e.preventDefault();if(!e.repeat)queueJump()}if(e.code==='Escape'&&document.getElementById('help').classList.contains('open'))toggleHelp(false);else if(e.code==='Escape'&&cctv)closeCCTV();if(e.code==='KeyN'&&cctv)toggleNightVision();if(e.code==='KeyL'&&!e.repeat&&driving){const on=driving.toggleLights();flash(on?'HEADLAMPS ON':'HEADLAMPS OFF',1200)}if(e.code==='KeyB'&&!e.repeat&&driving)hornSound()});
   addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyF')triggerHeld=false});
   renderer.domElement.addEventListener('click',()=>{if(started&&!coarse&&!modal)Promise.resolve(renderer.domElement.requestPointerLock?.()).catch(()=>{})});
   renderer.domElement.addEventListener('pointerdown',(e)=>{if(!started||coarse||modal)return;if(e.button===2){e.preventDefault();setAiming(true)}else if(e.button===0&&document.pointerLockElement===renderer.domElement){triggerHeld=true;fire()}});
@@ -1653,6 +1707,130 @@ function wireControls() {
   latch('crouchBtn', 'crouch');
 }
 
+// One frame of the controller.
+//
+// Everything here calls the same functions the keyboard and the touch buttons
+// call. A pad is a third way of asking for the things the game already does,
+// not a second implementation of them — which is why a DualSense can be
+// picked up mid-game and put down again without the game noticing.
+//
+//   Left stick   move / steer          Right stick  look
+//   R2           fire / throttle       L2           aim / brake
+//   Cross        jump / handbrake      Circle       crouch / get out
+//   Square       use                   Triangle     reload / headlamps
+//   L1 · R1      previous · next weapon
+//   L3           sprint                R3           crouch toggle
+//   D-pad        weapon slots 1-4      Options      controls
+//   Touchpad     camera desk           PS           release the mouse
+function updatePad(dt) {
+  const state = pad.poll(dt);
+  if (!state.connected || !started) {
+    // A pad that has been unplugged must not leave a held trigger or a stuck
+    // throttle behind it.
+    padMove.x = padMove.y = 0;
+    padDrive.active = false;
+    padDrive.throttle = padDrive.steer = 0;
+    padDrive.brake = false;
+    if (!state.connected) {
+      padCrouchHeld = false;
+      padSprintLatch = padSprintWas = false;
+      if (padTriggerHeld) { padTriggerHeld = false; triggerHeld = false; }
+    }
+    return;
+  }
+
+  // The camera desk is a screen, not a place: the pad drives the PTZ and gets
+  // you back out of it.
+  if (cctv) {
+    padMove.x = padMove.y = 0;
+    if (state.pressed.circle || state.pressed.options || state.pressed.touchpad) closeCCTV();
+    if (state.pressed.triangle) toggleNightVision();
+    if (state.pressed.r1) switchCam((currentCam + 1) % camNames.length);
+    if (state.pressed.l1) switchCam((currentCam + camNames.length - 1) % camNames.length);
+    if (state.pressed.up) zoom(-6);
+    if (state.pressed.down) zoom(6);
+    if (state.look.magnitude > 0) {
+      camPan[currentCam] = THREE.MathUtils.clamp(camPan[currentCam] - state.look.x * 0.55, -1.35, 1.35);
+      camTilt[currentCam] = THREE.MathUtils.clamp(camTilt[currentCam] - state.look.y * 0.5, -0.7, 0.6);
+      updatePTZ();
+    }
+    return;
+  }
+
+  if (state.pressed.options) toggleHelp();
+  if (state.pressed.ps) document.exitPointerLock?.();
+  if (modal) { padMove.x = padMove.y = 0; return; }
+
+  // Look. The right stick moves the head at a rate rather than by a delta, so
+  // it is frame-rate independent, and it slows down behind glass exactly as
+  // the mouse does.
+  if (state.look.magnitude > 0) {
+    const gain = scoped ? (weapon?.zoom ?? 52) / 70 : 1;
+    yaw -= state.look.x * gain;
+    pitch = THREE.MathUtils.clamp(pitch - state.look.y * gain * 0.82, -1.25, 1.15);
+  }
+
+  if (driving) {
+    padMove.x = padMove.y = 0;
+    // Pedals are the triggers and steering is the stick, which is the whole
+    // reason to drive with a pad: both are analogue, so part throttle and a
+    // quarter of lock are things you can actually ask for.
+    padDrive.throttle = state.r2 - state.l2;
+    padDrive.steer = state.move.x;
+    padDrive.brake = state.down.cross;
+    padDrive.active = true;
+    if (state.pressed.circle) use();
+    if (state.pressed.triangle) {
+      const on = driving.toggleLights();
+      flash(on ? 'HEADLAMPS ON' : 'HEADLAMPS OFF', 1200);
+    }
+    if (state.pressed.square) hornSound();
+    if (state.pressed.touchpad) openCCTV();
+    return;
+  }
+  padDrive.active = false;
+
+  padMove.x = state.move.x;
+  padMove.y = state.move.y;
+
+  // Sprint is the stick click: press it while pushing the stick and it holds
+  // until the stick comes back to centre, which is how a pad sprint has
+  // worked since the first one. Written on the edge only, so the on-screen
+  // sprint button and the pad are not fighting over the same flag every frame.
+  if (state.pressed.l3 && state.move.magnitude > .2) padSprintLatch = true;
+  if (state.move.magnitude < .2) padSprintLatch = false;
+  if (padSprintLatch !== padSprintWas) {
+    padSprintWas = padSprintLatch;
+    touch.sprint = padSprintLatch;
+    if (padSprintLatch) { touch.crouch = false; padCrouchHeld = false; }
+  }
+
+  if (state.pressed.circle || state.pressed.r3) {
+    padCrouchHeld = !padCrouchHeld;
+    touch.crouch = padCrouchHeld;
+    if (touch.crouch) { touch.sprint = false; padSprintLatch = padSprintWas = false; }
+  }
+
+  if (state.pressed.square) use();
+  if (state.pressed.cross) queueJump();
+  if (state.pressed.triangle) reload();
+  if (state.pressed.r1) cycleWeapon(1);
+  if (state.pressed.l1) cycleWeapon(-1);
+  if (state.pressed.up) selectSlot(0);
+  if (state.pressed.right) selectSlot(1);
+  if (state.pressed.down) selectSlot(2);
+  if (state.pressed.left) selectSlot(3);
+  if (state.pressed.touchpad) openCCTV();
+
+  // L2 sights the weapon, R2 fires it. Both are analogue on a DualSense, so
+  // the aim comes up progressively and the trigger has a real first stage.
+  const wantAim = state.l2 > .38;
+  if (wantAim !== padAimWas) { padAimWas = wantAim; setAiming(wantAim); }
+  const squeezed = state.r2 > .55;
+  if (squeezed && !padTriggerHeld) { triggerHeld = true; padTriggerHeld = true; fire(); }
+  else if (!squeezed && padTriggerHeld) { padTriggerHeld = false; triggerHeld = false; }
+}
+
 const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
 const rightAxis = new THREE.Vector3();
@@ -1684,8 +1862,8 @@ function updatePlayer(dt) {
     return;
   }
 
-  let strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
-  let forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
+  let strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0) + padMove.x;
+  let forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0) - padMove.y;
   const magnitude = Math.hypot(strafe, forward);
   if (magnitude > 1) { strafe /= magnitude; forward /= magnitude; }
 
@@ -1757,9 +1935,15 @@ let driveShake = 0;
 
 function updateDriving(dt) {
   const vehicle = driving;
-  driveControls.throttle = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
-  driveControls.steer = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
-  driveControls.brake = !!keys.Space || touch.crouch;
+  // Keys are on or off; a pad is not. Whichever is asking for more wins, so
+  // you can take a hand off the pad and finish the corner on the keyboard.
+  const keyThrottle = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - (game.mobileMove?.y || 0);
+  const keySteer = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + (game.mobileMove?.x || 0);
+  driveControls.throttle = padDrive.active && Math.abs(padDrive.throttle) > Math.abs(keyThrottle)
+    ? padDrive.throttle : keyThrottle;
+  driveControls.steer = padDrive.active && Math.abs(padDrive.steer) > Math.abs(keySteer)
+    ? padDrive.steer : keySteer;
+  driveControls.brake = !!keys.Space || touch.crouch || (padDrive.active && padDrive.brake);
 
   const speed = vehicle.update(dt, driveControls);
 
@@ -1806,6 +1990,7 @@ function updateDriving(dt) {
   const impact = vehicle.takeImpact();
   if (impact > 1.4) {
     crashSound(impact / vehicle.topSpeed);
+    pad.rumble(Math.min(1, impact / 12), Math.min(1, impact / 9), 130 + impact * 14);
     pitch = THREE.MathUtils.clamp(pitch + impact * 0.008, -1.25, 1.15);
     if (impact > 8) damage(Math.round(impact - 6));
   }
@@ -1830,6 +2015,7 @@ function updateDriving(dt) {
 function damage(amount) {
   if (amount <= 0) return health;
   health = Math.max(0, health - amount);
+  pad.rumble(Math.min(1, .25 + amount / 34), Math.min(1, .4 + amount / 40), 180);
   hurtFlash = 1;
   recovery = 0;
   hurtSound();
@@ -2039,6 +2225,58 @@ function crashSound(strength = 1) {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
   o.connect(g); g.connect(master);
   o.start(t); o.stop(t + 0.27);
+}
+
+// The gate motor: a warning chirp, then the contactor thump and the long
+// rumble of a cantilever leaf running out on its rollers.
+function gateSound(opening = true) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  clickSound(opening ? 880 : 620, .09, .05);
+  noiseBurst({ at: t + 0.16, hz: 90, q: 0.8, decay: 0.09, level: 0.20, type: 'lowpass' });
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  const band = ac.createBiquadFilter();
+  band.type = 'bandpass';
+  band.frequency.value = 260;
+  band.Q.value = 1.6;
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(46, t + 0.16);
+  o.frequency.linearRampToValueAtTime(opening ? 62 : 52, t + 0.7);
+  o.frequency.linearRampToValueAtTime(40, t + 2.0);
+  g.gain.setValueAtTime(0.0001, t + 0.16);
+  g.gain.linearRampToValueAtTime(0.075, t + 0.42);
+  g.gain.setValueAtTime(0.075, t + 1.5);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + 2.1);
+  o.connect(band); band.connect(g); g.connect(master);
+  o.start(t + 0.16); o.stop(t + 2.15);
+}
+
+// The horn. Two detuned square waves through a resonant band, which is what a
+// pair of horn trumpets a semitone apart actually sounds like.
+let hornUntil = 0;
+function hornSound() {
+  if (!ac || ac.currentTime < hornUntil) return;
+  const t = ac.currentTime;
+  hornUntil = t + 0.30;
+  const g = ac.createGain();
+  const band = ac.createBiquadFilter();
+  band.type = 'bandpass';
+  band.frequency.value = 900;
+  band.Q.value = 1.1;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.085, t + 0.02);
+  g.gain.setValueAtTime(0.085, t + 0.22);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + 0.30);
+  band.connect(g); g.connect(master);
+  for (const hz of [420, 445]) {
+    const o = ac.createOscillator();
+    o.type = 'square';
+    o.frequency.value = hz;
+    o.connect(band);
+    o.start(t); o.stop(t + 0.32);
+  }
+  pad.rumble(.22, .5, 220);
 }
 
 function setRadioNoise(v){if(radioGain&&ac)radioGain.gain.setTargetAtTime(v,ac.currentTime,.04)}
@@ -2901,6 +3139,7 @@ function renderCameraFeed() {
 // advance the world by a fixed timestep instead of depending on the browser's
 // frame clock, which headless Chromium does not run on an idle page.
 function simulate(dt) {
+  updatePad(dt);
   updatePlayer(dt);
   activeScene().updateMatrixWorld();
   updatePrompt();
@@ -2979,7 +3218,19 @@ function loop() {
   // fraction each frame, and the whole image crawled in concentric bands. It
   // is a property of the lens, not of how tired the player is.
   gradePass.uniforms.aberration.value = 0.0012;
-  bloomPass.strength = currentWorld === 'outside' ? 0.12 : 0.2;
+  // The eye. Outdoors the surface says what it is stopped down to and the iris
+  // walks there rather than jumping, so stepping out of the hatch at noon
+  // opens on a bright frame that settles instead of a white one that stays.
+  // The shelter and the silo are lit by their own fittings and want no
+  // correction at all.
+  const wantExposure = currentWorld === 'outside' ? (game.sky?.state.exposure ?? 1) : 1;
+  exposure = THREE.MathUtils.damp(exposure, wantExposure, 1.9, dt);
+  renderer.toneMappingExposure = exposure;
+  // Bloom is for practicals — a strip light, a muzzle flash, the moon. Out in
+  // daylight there is nothing to bleed and every bit of it lands on the sky,
+  // so it comes down to a trace and only takes what is genuinely over white.
+  bloomPass.strength = currentWorld === 'outside' ? 0.065 : 0.2;
+  bloomPass.threshold = currentWorld === 'outside' ? 1.14 : 1.02;
   composer.render();
   // The optic goes over the finished frame, so the post stack grades the world
   // and not the inside of the tube.
