@@ -30,6 +30,10 @@ const stopPump = await pumpFrames(page);
 await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
 // Nobody is here to choose CONTINUE or NEW GAME, and the menu is what starts
 // the world loading, so boot it directly.
+// __lsBoot is published while main.js evaluates, which can finish after the
+// load event. Waiting for it beats racing it.
+await page.waitForFunction(() => typeof globalThis.__lsBoot === 'function', null,
+  { timeout: 90000, polling: 50 });
 await page.evaluate(() => globalThis.__lsBoot());
 // The welcome menu enables its own start control before the world has
 // finished loading, so waiting on the button alone can run ahead of the

@@ -1285,11 +1285,64 @@ def build_estate_car():
             # A cylinder is authored along Z. The axle runs across the car, so
             # it turns onto X — a quarter turn about Y, not about Z, which is
             # what had the wheels mounted facing fore-and-aft like discs.
-            cyl(f'Wheel_Tyre_{tag}', (x, .34, z), .34, .21, tyre,
-                rotation=(0, math.pi / 2, 0), verts=20, edge=.02)
-            cyl(f'Wheel_Rim_{tag}', (x + sx * .02, .34, z), .21, .19, rim,
-                rotation=(0, math.pi / 2, 0), verts=14, edge=.015)
+            # A wheel you watch spin has to be round. Twenty segments on the
+            # tyre and fourteen on the rim strobe like a cog the moment the car
+            # moves; the carcass is 40-sided now, the rim 24, and the tread and
+            # spokes give the eye something that reads as rotation rather than
+            # as a flickering polygon.
+            AX = (0, math.pi / 2, 0)          # cylinders are authored along Z
+            OUT = x + sx * .105               # the outboard face of the wheel
+            # Carcass, with the shoulders rolled off rather than square.
+            cyl(f'Wheel_Tyre_{tag}', (x, .34, z), .335, .195, tyre,
+                rotation=AX, verts=40, edge=.035)
+            for k in (-1, 1):
+                cyl(f'Wheel_Shoulder_{k}_{tag}', (x + k * .075, .34, z), .318, .05, tyre,
+                    rotation=AX, verts=40, edge=.030)
+            # Sidewall: a raised rib and a lettering band, both sides.
+            for k in (-1, 1):
+                cyl(f'Wheel_Wall_{k}_{tag}', (x + k * .098, .34, z), .285, .012, tyre,
+                    rotation=AX, verts=36, edge=.008)
+                cyl(f'Wheel_Band_{k}_{tag}', (x + k * .103, .34, z), .245, .008, trim,
+                    rotation=AX, verts=32, edge=.004)
+            # Tread: blocks round the circumference, in two rows with a groove
+            # between them, angled so the pattern reads as it turns.
+            for b in range(22):
+                a = b * math.tau / 22
+                by, bz = math.sin(a) * .333, math.cos(a) * .333
+                for row, off in enumerate((-.055, .055)):
+                    cube(f'Wheel_Tread_{b}_{row}_{tag}',
+                         (x + off, .34 + by, z + bz), (.042, .026, .010), tyre,
+                         rotation=(-a + (0.22 if row else -0.22), math.pi / 2, 0), edge=.005)
+            # Rim: a dish, a lip, five spokes, a hub cap and the nuts.
+            cyl(f'Wheel_Rim_{tag}', (x + sx * .055, .34, z), .215, .085, rim,
+                rotation=AX, verts=24, edge=.012)
+            cyl(f'Wheel_RimLip_{tag}', (x + sx * .098, .34, z), .232, .028, rim,
+                rotation=AX, verts=24, edge=.008)
+            for spk in range(5):
+                a = spk * math.tau / 5 + .3
+                cube(f'Wheel_Spoke_{spk}_{tag}',
+                     (OUT - sx * .012, .34 + math.sin(a) * .115, z + math.cos(a) * .115),
+                     (.020, .105, .038), rim, rotation=(-a, math.pi / 2, 0), edge=.008)
+            cyl(f'Wheel_Hub_{tag}', (OUT - sx * .004, .34, z), .072, .040, rim,
+                rotation=AX, verts=18, edge=.010)
+            for nut in range(4):
+                a = nut * math.tau / 4 + .5
+                cyl(f'Wheel_Nut_{nut}_{tag}',
+                    (OUT + sx * .006, .34 + math.sin(a) * .046, z + math.cos(a) * .046),
+                    .013, .022, trim, rotation=AX, verts=6, edge=.003)
+            # A brake disc behind the spokes, so the wheel is not hollow.
+            cyl(f'Wheel_Disc_{tag}', (x - sx * .045, .34, z), .155, .022, trim,
+                rotation=AX, verts=20, edge=.006)
             wheel_names.append((tag, x, z))
+
+    # Every wheel part has to end in its tag, because that suffix is what the
+    # join below selects on. A part named Wheel_Tread_LF_3 rather than
+    # Wheel_Tread_3_LF joins neither the wheel nor the shell: it is left loose
+    # in the scene, exported on its own, and sits under the car not turning.
+    for o in bpy.context.scene.objects:
+        if o.type == 'MESH' and o.name.startswith('Wheel_'):
+            assert any(o.name.endswith(f'_{t}') for t, _, _ in wheel_names), \
+                f'wheel part {o.name} does not end in a wheel tag'
 
     # Everything that is not a wheel becomes the shell.
     bpy.ops.object.select_all(action='DESELECT')

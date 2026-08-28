@@ -61,9 +61,30 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     wheel.position.set(0, 0, 0);
     return pivot;
   });
-  // The wheels are exported lying on their rest quarter-turn, which puts the
-  // axle across the car. Roll is added in front of that, never instead of it.
-  const restY = wheels.filter(Boolean).map((wheel) => wheel.rotation.y);
+  // Roll each wheel about its own axle, and work out which axis that is from
+  // the mesh rather than assuming the rest rotation. A wheel is a disc: it is
+  // wide in two directions and narrow in the third, so the thinnest axis of its
+  // local bounding box is the axle. Composing the roll as an Euler in front of
+  // the rest rotation only happens to work while every wheel shares the same
+  // quarter-turn; the moment one does not, the tyre cones out of the arch.
+  const _axleBox = new THREE.Box3();
+  const _axleSize = new THREE.Vector3();
+  const wheelRest = wheels.map((wheel) => {
+    if (!wheel) return null;
+    wheel.updateMatrixWorld(true);
+    _axleBox.makeEmpty();
+    wheel.traverse((part) => {
+      if (!part.isMesh) return;
+      part.geometry.computeBoundingBox();
+      _axleBox.union(part.geometry.boundingBox);
+    });
+    _axleBox.getSize(_axleSize);
+    const axle = _axleSize.x <= _axleSize.y && _axleSize.x <= _axleSize.z
+      ? new THREE.Vector3(1, 0, 0)
+      : (_axleSize.y <= _axleSize.z ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1));
+    return { quaternion: wheel.quaternion.clone(), axle };
+  });
+  const _roll = new THREE.Quaternion();
 
   // Lamps. The glass is modelled; the light and the glow are runtime, so a car
   // at night has beams on the road instead of two painted white circles.
@@ -267,8 +288,14 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     // the speed the car is actually doing.
     state.wheelSpin += travel / WHEEL_RADIUS;
     wheels.forEach((wheel, i) => {
-      if (!wheel) return;
-      wheel.rotation.set(state.wheelSpin, restY[i], 0);
+      const rest = wheelRest[i];
+      if (!wheel || !rest) return;
+      // Right-multiplied, so the roll happens in the wheel's own frame and the
+      // rest orientation is kept rather than overwritten. rest was indexed off
+      // a filtered array before, so a car missing one wheel handed every wheel
+      // after it somebody else's rest rotation.
+      _roll.setFromAxisAngle(rest.axle, state.wheelSpin);
+      wheel.quaternion.copy(rest.quaternion).multiply(_roll);
     });
     for (const pivot of steerPivots) pivot.rotation.y = state.steer;
 

@@ -23,6 +23,10 @@ page.on('pageerror', e => errors.push(String(e).slice(0, 200)));
 page.on('crash', () => errors.push('PAGE CRASHED'));
 const stopPump = await pumpFrames(page);
 await page.goto(process.argv[2], { waitUntil: 'load', timeout: 90000 });
+// __lsBoot is published while main.js evaluates, which can finish after the
+// load event. Waiting for it beats racing it.
+await page.waitForFunction(() => typeof globalThis.__lsBoot === 'function', null,
+  { timeout: 90000, polling: 50 });
 await page.evaluate(() => globalThis.__lsBoot());
 await page.waitForFunction(() => globalThis.__ls && !document.getElementById('start')?.disabled,
   null, { timeout: 90000, polling: 100 });

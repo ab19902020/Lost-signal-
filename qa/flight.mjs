@@ -31,6 +31,10 @@ cdp.on('Page.screencastFrame', ({ sessionId }) => cdp.send('Page.screencastFrame
 await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64, everyNthFrame: 1 });
 
 await page.goto(url, { waitUntil: 'load', timeout: 180000 });
+// __lsBoot is published while main.js evaluates, which can finish after the
+// load event. Waiting for it beats racing it.
+await page.waitForFunction(() => typeof globalThis.__lsBoot === 'function', null,
+  { timeout: 90000, polling: 50 });
 await page.evaluate(() => globalThis.__lsBoot());
 await page.waitForFunction(() => globalThis.__ls && !document.getElementById('start')?.disabled,
   null, { timeout: 300000, polling: 200 });

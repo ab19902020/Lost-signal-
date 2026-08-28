@@ -31,6 +31,10 @@ await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 6
 const t0 = Date.now();
 const lap = (m) => console.log(`${((Date.now() - t0) / 1000).toFixed(0)}s  ${m}`);
 await page.goto(url, { waitUntil: 'load', timeout: 180000 });
+// __lsBoot is published while main.js evaluates, which can finish after the
+// load event. Waiting for it beats racing it.
+await page.waitForFunction(() => typeof globalThis.__lsBoot === 'function', null,
+  { timeout: 90000, polling: 50 });
 await page.evaluate(() => globalThis.__lsBoot());
 await page.waitForFunction(() => globalThis.__ls && !document.getElementById('start')?.disabled,
   null, { timeout: 300000, polling: 200 });
