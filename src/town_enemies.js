@@ -8,6 +8,9 @@ const ACTIVATE = 185;
 const MEMORY_SECONDS = 12;
 const CORNERED_RANGE = 1.45;
 const PANIC_RANGE = 6.5;
+const ASSAULT_RENDER_DISTANCE = 230;
+const ASSAULT_RUN_SPEED = 3.35;
+const STRATEGIC_RUN_SPEED = 8.0;
 const PERSONALITY = Object.freeze({
   black: Object.freeze({ courage: 0.24, patience: 1.25, pace: 0.92 }),
   red: Object.freeze({ courage: 0.46, patience: 0.82, pace: 1.04 }),
@@ -122,7 +125,7 @@ function addHitVolumes(root) {
   return volumes;
 }
 
-function prepareModel(gltf, style, lowCost = false) {
+function prepareModel(gltf, style, lowCost = false, sharedMelee = null) {
   const root = new THREE.Group();
   const model = cloneGLTF(gltf);
   model.rotation.y = Math.PI; // Tripo's neutral heading is +Z; agents use -Z.
@@ -178,6 +181,17 @@ function prepareModel(gltf, style, lowCost = false) {
     actions.walk = mixer.clipAction(clips.walk);
     actions.walk.enabled = true;
     travelSpeeds.walk = travelSpeeds.stairsUp;
+    // Both uploads share the same named humanoid rig. The black-coated man has
+    // no attack take, so retarget the red-coated man's real melee clip rather
+    // than turning a clap or laugh into a fake combat animation.
+    if (sharedMelee) {
+      clips.melee = inPlace(sharedMelee, 'melee', hip?.position || new THREE.Vector3());
+      actions.melee = mixer.clipAction(clips.melee);
+      actions.melee.enabled = true;
+      actions.melee.setLoop(THREE.LoopOnce, 1);
+      actions.melee.clampWhenFinished = true;
+      travelSpeeds.melee = 0;
+    }
   }
   // A frozen first frame from the walk is a neutral planted stance. The old
   // red stand was sampled from its dance clip and visibly posed between beats.
@@ -189,8 +203,9 @@ function prepareModel(gltf, style, lowCost = false) {
 
 class TownEnemy {
   constructor({ gltf, style, scene, colliders, position, heading, name, patrol,
-    cover = [], navigationObstacles = [], lowCost = false }) {
-    Object.assign(this, prepareModel(gltf, style, lowCost));
+    cover = [], navigationObstacles = [], lowCost = false, sharedMelee = null,
+    assaultRoute = [], yardRoute = [], mission = {} }) {
+    Object.assign(this, prepareModel(gltf, style, lowCost, sharedMelee));
     this.style = style;
     this.root.name = name;
     this.root.position.set(...position);
@@ -199,6 +214,14 @@ class TownEnemy {
     this.patrol = patrol.map(([x, z]) => new THREE.Vector3(x, position[1], z));
     this.cover = cover.map(([x, z]) => new THREE.Vector3(x, position[1], z));
     this.navigationObstacles = navigationObstacles.filter(Boolean).map((box) => box.clone());
+    this.assaultRoute = assaultRoute.map(([x, z]) => new THREE.Vector3(x, position[1], z));
+    this.yardRoute = yardRoute.map(([x, z]) => new THREE.Vector3(x, position[1], z));
+    this.mission = mission;
+    this.assaulting = this.assaultRoute.length > 0;
+    this.assaultIndex = 0;
+    this.yardIndex = 0;
+    this.avoidTarget = null;
+    this.breachHits = 0;
     this.patrolIndex = 0;
     this.coverIndex = -1;
     this.coverCooldowns = new Float32Array(this.cover.length);
@@ -209,20 +232,20 @@ class TownEnemy {
     this.current = null;
     this.currentAction = null;
     this.attackCooldown = 0;
-    this.alerted = false;
+    this.alerted = this.assaulting;
     this.dead = false;
     this.deathTimer = 0;
     this.deathSettled = false;
-    this.state = 'patrol';
+    this.state = this.assaulting ? 'assault_road' : 'patrol';
     this.stateTimer = 0.4;
     this.thinkTimer = 0;
     this.memoryTimer = 0;
     this.lastSeen = this.home.clone();
     this.canSeePlayer = false;
-    this.activated = false;
+    this.activated = this.assaulting;
     this.decisionCount = 0;
     this.maxFrameTravel = 0;
-    this.maxFrameTravelState = 'patrol';
+    this.maxFrameTravelState = this.state;
     this.seed = [...name].reduce((value, character) =>
       (Math.imul(value ^ character.charCodeAt(0), 16777619) >>> 0), 2166136261);
     this.personality = PERSONALITY[style] || PERSONALITY.red;
@@ -260,6 +283,16 @@ class TownEnemy {
     previous?.fadeOut(fade);
   }
 
+  replay(name, rate = 1, fade = .08) {
+    const next = this.actions[name] || this.actions.stand;
+    const previous = this.currentAction;
+    this.current = name;
+    this.currentAction = next;
+    next.enabled = true;
+    next.reset().setEffectiveTimeScale(rate).fadeIn(fade).play();
+    if (previous && previous !== next) previous.fadeOut(fade);
+  }
+
   playTravel(name, speed, multiplier = 1, fade = .16) {
     const authored = Math.max(.18, this.travelSpeeds[name] || speed);
     const rate = THREE.MathUtils.clamp(speed / authored, .72, 2.25) * multiplier;
@@ -275,16 +308,18 @@ class TownEnemy {
     this.collider.sin = Math.sin(this.root.rotation.y);
   }
 
-  segmentBlocked(a, b, radius = .06, spacing = .8) {
-    // The hide graph only cares about the two town buildings. Testing their
-    // bounds analytically avoids walking thousands of unrelated countryside
-    // colliders every time an enemy chooses its next hiding place.
-    if (this.navigationObstacles.length) {
-      return this.navigationObstacles.some((box) => segmentHitsBounds(a, b, box, radius));
+  segmentBlocked(a, b, radius = .06, spacing = .8, includeWorld = true) {
+    // Check the two building navigation bounds first, then the real world.
+    // The old early return ignored the gate and every yard obstacle whenever
+    // building bounds existed, so a route looked clear until the character's
+    // feet physically hit an unplanned wall.
+    if (this.navigationObstacles.some((box) => segmentHitsBounds(a, b, box, radius))) {
+      return true;
     }
+    if (this.navigationObstacles.length && !includeWorld) return false;
     _toward.copy(b).sub(a); _toward.y = 0;
     const distance = _toward.length();
-    if (distance < 1) return false;
+    if (distance < .02) return false;
     _toward.multiplyScalar(1 / distance);
     this.collider.enabled = false;
     let blocked = false;
@@ -302,10 +337,15 @@ class TownEnemy {
   }
 
   lineBlocked(a, b) {
-    return this.segmentBlocked(a, b, .06, .8);
+    // Building bounds are sufficient for long-range sight. At contact range,
+    // include the real gate/yard collision so nobody punches through a leaf.
+    return this.segmentBlocked(a, b, .06, .8, a.distanceToSquared(b) < 16);
   }
 
   movementBlocked(a, b) {
+    if (this.navigationObstacles.length) {
+      return this.navigationObstacles.some((box) => segmentHitsBounds(a, b, box, .32));
+    }
     return this.segmentBlocked(a, b, .32, .42);
   }
 
@@ -408,14 +448,52 @@ class TownEnemy {
     this.root.rotation.y += delta * (1 - Math.exp(-dt * response));
   }
 
+  chooseDetour(target) {
+    _toward.copy(target).sub(this.root.position); _toward.y = 0;
+    if (_toward.lengthSq() < .01) return null;
+    _toward.normalize();
+    const preferredSide = this.style === 'black' ? 1 : -1;
+    const candidates = [
+      preferredSide * .55, -preferredSide * .55,
+      preferredSide * 1.0, -preferredSide * 1.0,
+      preferredSide * 1.42, -preferredSide * 1.42,
+    ];
+    let best = null;
+    let bestScore = Infinity;
+    this.collider.enabled = false;
+    for (const angle of candidates) {
+      const sin = Math.sin(angle); const cos = Math.cos(angle);
+      const x = _toward.x * cos - _toward.z * sin;
+      const z = _toward.x * sin + _toward.z * cos;
+      for (const reach of [1.15, 1.9, 2.8]) {
+        const candidate = new THREE.Vector3(
+          this.root.position.x + x * reach,
+          this.root.position.y,
+          this.root.position.z + z * reach,
+        );
+        if (this.colliders.contains(candidate.x, candidate.z, .34,
+          candidate.y + .12, candidate.y + 1.62)) continue;
+        const score = candidate.distanceToSquared(target) + Math.abs(angle) * 1.4 + reach * .08;
+        if (score < bestScore) { bestScore = score; best = candidate; }
+      }
+    }
+    this.collider.enabled = true;
+    return best;
+  }
+
   faceAndMove(target, speed, dt) {
     if (!target) return true;
+    const moveTarget = this.avoidTarget || target;
     // `face()` uses the same scratch vector as movement. Turn first, then
     // calculate the unit travel direction so facing cannot replace it with
     // the full-length target delta (which previously produced visible jumps).
-    this.face(target, dt);
-    _toward.copy(target).sub(this.root.position); _toward.y = 0;
+    this.face(moveTarget, dt);
+    _toward.copy(moveTarget).sub(this.root.position); _toward.y = 0;
     const distance = _toward.length();
+    if (distance < .12 && this.avoidTarget) {
+      this.avoidTarget = null;
+      return false;
+    }
     if (distance < .02) return true;
     _toward.multiplyScalar(1 / distance);
     const step = Math.min(distance, speed * dt);
@@ -448,16 +526,21 @@ class TownEnemy {
         this.root.position.y + 2.5);
       this.stuckTimer = 0;
     } else {
-      this.root.rotation.y += (this.style === 'black' ? 1 : -1) * 1.15 * dt;
       this.stuckTimer += dt;
-      if (this.stuckTimer > .35) {
-        this.route = this.planRoute(this.destination);
-        this.target = this.route.shift() || null;
+      if (this.stuckTimer > .18 && !this.avoidTarget) {
+        this.avoidTarget = this.chooseDetour(target);
+      }
+      if (this.stuckTimer > 1.1 && !this.avoidTarget) {
+        const reroute = this.planRoute(this.destination || target);
+        if (reroute.length) {
+          this.route = reroute;
+          this.target = this.route.shift() || target;
+        }
         this.stuckTimer = 0;
       }
     }
     this.syncCollider();
-    return distance <= .38;
+    return !this.avoidTarget && distance <= .38;
   }
 
   followRoute(speed, dt) {
@@ -470,6 +553,101 @@ class TownEnemy {
     this.target = null;
     this.destination = null;
     return true;
+  }
+
+  followAssaultLegs(points, indexKey, speed, dt) {
+    const index = this[indexKey];
+    if (index >= points.length) return true;
+    if (!this.target) {
+      this.destination = points[index].clone();
+      // The first town leg is planned over the cover graph so a spawn behind
+      // either uploaded building walks around its real bounds. Once on the
+      // road, authored lane waypoints are clearer and cheaper than replanning.
+      this.route = index === 0 ? this.planRoute(this.destination) : [];
+      this.target = this.route.shift() || this.destination.clone();
+      this.avoidTarget = null;
+    }
+    if (!this.followRoute(speed, dt)) return false;
+    this[indexKey]++;
+    this.target = null;
+    this.destination = null;
+    this.avoidTarget = null;
+    return this[indexKey] >= points.length;
+  }
+
+  strike(target, kind, damage, dt) {
+    if (target) this.face(target, dt, 13);
+    this.play('melee', 1.08, .08);
+    if (this.attackCooldown > 0) return false;
+    this.attackCooldown = kind === 'player' ? 1.25 : 1.0;
+    this.breachHits++;
+    this.replay('melee', 1.08, .04);
+    if (kind === 'player') {
+      window.dispatchEvent(new CustomEvent('lostsignal:enemyattack', {
+        detail: { damage, enemy: this.root },
+      }));
+      return false;
+    }
+    const callback = kind === 'gate' ? this.mission.damageGate : this.mission.damageSilo;
+    if (callback) return !!callback(damage, this.root);
+    window.dispatchEvent(new CustomEvent(`lostsignal:${kind}attack`, {
+      detail: { damage, enemy: this.root },
+    }));
+    return false;
+  }
+
+  updateAssault(dt, playerPosition, active, distance) {
+    // Defend themselves if the player physically intercepts them, then resume
+    // the same mission leg. There is no random flee/dance state in the siege
+    // brain, so an old man cannot forget the silo and sprint in circles.
+    if (active && distance < CORNERED_RANGE
+      && !this.lineBlocked(this.root.position, playerPosition)) {
+      this.strike(playerPosition, 'player', 8, dt);
+      return;
+    }
+
+    const visible = this.model.visible;
+    const roadSpeed = visible ? ASSAULT_RUN_SPEED * this.personality.pace
+      : STRATEGIC_RUN_SPEED * this.personality.pace;
+
+    if (this.state === 'assault_road') {
+      if (visible) this.playTravel('run', roadSpeed, 1, .12);
+      if (this.followAssaultLegs(this.assaultRoute, 'assaultIndex', roadSpeed, dt)) {
+        this.state = 'breach_gate';
+        this.target = null;
+        this.destination = null;
+      }
+    } else if (this.state === 'breach_gate') {
+      if (this.mission.gateIsPassable?.()) {
+        this.state = 'assault_yard';
+        this.target = null;
+        this.destination = null;
+      } else {
+        const target = this.mission.gateTarget || this.yardRoute[0];
+        this.strike(target, 'gate', 11, dt);
+      }
+    } else if (this.state === 'assault_yard') {
+      const speed = (visible ? 3.05 : 4.5) * this.personality.pace;
+      if (visible) this.playTravel('run', speed, 1, .1);
+      if (this.followAssaultLegs(this.yardRoute, 'yardIndex', speed, dt)) {
+        this.state = 'breach_silo';
+        this.target = null;
+        this.destination = null;
+      }
+    } else if (this.state === 'breach_silo') {
+      const target = this.mission.siloTarget || this.root.position;
+      if (this.strike(target, 'silo', 7, dt)) {
+        this.state = 'silo_breached';
+        this.root.userData.completedAssault = true;
+      }
+    } else if (this.state === 'silo_breached') {
+      this.play('stand', 1, .12);
+      if (this.mission.siloTarget) this.face(this.mission.siloTarget, dt, 2.5);
+    } else {
+      this.state = 'assault_road';
+      this.target = null;
+      this.destination = null;
+    }
   }
 
   decide(playerPosition, distance) {
@@ -592,12 +770,33 @@ class TownEnemy {
       }
       return;
     }
+
+    const distance = this.root.position.distanceTo(playerPosition);
+    if (this.assaulting) {
+      this.model.visible = active && distance < ASSAULT_RENDER_DISTANCE;
+      const beforeX = this.root.position.x;
+      const beforeZ = this.root.position.z;
+      this.updateAssault(dt, playerPosition, active, distance);
+      const travelled = Math.hypot(this.root.position.x - beforeX,
+        this.root.position.z - beforeZ);
+      if (travelled > this.maxFrameTravel) {
+        this.maxFrameTravel = travelled;
+        this.maxFrameTravelState = this.state;
+        this.maxFrameTravelDebug = {
+          from: [beforeX, beforeZ],
+          to: [this.root.position.x, this.root.position.z],
+          target: this.target ? [this.target.x, this.target.z] : null,
+          dt,
+        };
+      }
+      if (this.model.visible) this.mixer.update(dt);
+      return;
+    }
     if (!active) {
       this.model.visible = false;
       return;
     }
 
-    const distance = this.root.position.distanceTo(playerPosition);
     // Distant agents are dormant at their authored spawn, not invisibly
     // walking around. When they first enter range they therefore appear where
     // they were placed instead of seeming to teleport in from a simulation the
@@ -728,13 +927,14 @@ class TownEnemy {
 }
 
 export function createTownEnemies({ scene, colliders, assets, entries,
-  navigationObstacles = [], lowCost = false }) {
+  navigationObstacles = [], lowCost = false, mission = {} }) {
   const agents = [];
+  const sharedMelee = assets.enemyOldManRed?.animations?.[TOWN_ENEMY_ANIMATIONS.red.melee] || null;
   for (const entry of entries) {
     const gltf = assets[entry.asset];
     if (!gltf?.animations?.length) continue;
     agents.push(new TownEnemy({
-      gltf, scene, colliders, navigationObstacles, lowCost, ...entry,
+      gltf, scene, colliders, navigationObstacles, lowCost, sharedMelee, mission, ...entry,
     }));
   }
   return {
@@ -749,6 +949,8 @@ export function createTownEnemies({ scene, colliders, assets, entries,
         name: agent.root.name, style: agent.style,
         animations: Object.keys(agent.actions), animation: agent.current,
         state: agent.state, dead: agent.dead, settled: agent.deathSettled,
+        assaultIndex: agent.assaultIndex, yardIndex: agent.yardIndex,
+        breachHits: agent.breachHits,
       }));
     },
   };

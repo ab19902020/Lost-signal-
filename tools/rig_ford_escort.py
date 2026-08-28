@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import math
 import struct
 from pathlib import Path
 
@@ -253,40 +252,40 @@ def main() -> None:
     texcoords = accessor_array(source_document, source_binary, primitive["attributes"]["TEXCOORD_0"])
     source_indices = accessor_array(source_document, source_binary, primitive["indices"]).reshape(-1, 3)
 
-    positions, normals, scale = transform_model(source_positions, source_normals)
+    positions, normals, _ = transform_model(source_positions, source_normals)
     source_centres = source_positions[source_indices].mean(axis=1)
+    transformed_centres = positions[source_indices].mean(axis=1)
 
-    # Wheel centres measured from the supplied scan.  Extracting a slightly
-    # inset cylinder avoids pulling the wheel arches into the steering pivots.
+    # The upload is one fused reconstruction, but its four real wheels are
+    # cleanly separated in space.  Work in final metre coordinates so the
+    # selection is circular on screen (the source axes have different scales).
+    # A 325 mm radius reaches the outer tyre without swallowing the arch, and
+    # the outboard cut keeps unrelated underbody triangles out of the pivot.
     source_wheels = [
-        ("Car_Wheel_LF", +1, +0.292),
-        ("Car_Wheel_RF", -1, +0.292),
-        ("Car_Wheel_LR", +1, -0.286),
-        ("Car_Wheel_RR", -1, -0.286),
+        ("Car_Wheel_LF", -0.720, -1.253),
+        ("Car_Wheel_RF", +0.720, -1.253),
+        ("Car_Wheel_LR", -0.720, +1.228),
+        ("Car_Wheel_RR", +0.720, +1.228),
     ]
     wheel_parts = []
-    for name, source_side, source_z in source_wheels:
-        radial = np.hypot(source_centres[:, 1] - 0.075, source_centres[:, 2] - source_z)
-        mask = (source_side * source_centres[:, 0] > 0.135) & (radial < 0.098)
+    moving_mask = np.zeros(len(source_indices), dtype=bool)
+    for name, centre_x, centre_z in source_wheels:
+        radial = np.hypot(
+            transformed_centres[:, 1] - 0.299,
+            transformed_centres[:, 2] - centre_z,
+        )
+        side = np.sign(centre_x)
+        mask = (side * transformed_centres[:, 0] > 0.505) & (radial < 0.325)
+        moving_mask |= mask
         triangles = source_indices[mask]
-        source_centre = np.array([source_side * 0.200, 0.075, source_z])
-        transformed_centre = np.array([
-            -source_centre[0] * scale[0],
-            source_centre[1] * scale[1],
-            -source_centre[2] * scale[2],
-        ], dtype=np.float32)
+        transformed_centre = np.array([centre_x, 0.299, centre_z], dtype=np.float32)
         geometry = compact_geometry(
             positions, normals, texcoords, triangles,
-            # Tyre and spoke silhouettes survive a 16 mm cluster cleanly; the
-            # upload's 45k+ triangles per wheel were invisible density on a
-            # phone and would be paid four times every frame.
-            step=0.020, normal_bins=2, uv_bins=24, centre=transformed_centre,
+            # Wheels occupy the foreground while driving.  A 15 mm cluster
+            # retains their round tyre wall, tread shoulder and spoke openings
+            # without paying the upload's reconstruction density four times.
+            step=0.015, normal_bins=3, uv_bins=28, centre=transformed_centre,
         )
-        # The source is fused, so its parked wheel surface is also present in
-        # the shell.  Put the articulated copy 12 mm farther outboard: this is
-        # visually imperceptible at the arch, but prevents coplanar flicker and
-        # ensures the turning/rolling wheel is the surface the player sees.
-        geometry[0][:, 0] += math.copysign(0.012, transformed_centre[0])
         wheel_parts.append((name, transformed_centre, geometry, int(mask.sum())))
 
     steering_mask = (
@@ -294,22 +293,24 @@ def main() -> None:
         & (source_centres[:, 1] > 0.155) & (source_centres[:, 1] < 0.265)
         & (source_centres[:, 2] > 0.025) & (source_centres[:, 2] < 0.110)
     )
+    moving_mask |= steering_mask
     steering_triangles = source_indices[steering_mask]
     steering_points = positions[np.unique(steering_triangles)]
     steer_centre, steer_basis = steering_basis(steering_points)
     steering_geometry = compact_geometry(
         positions, normals, texcoords, steering_triangles,
-        step=0.018, normal_bins=2, uv_bins=24,
+        step=0.014, normal_bins=3, uv_bins=28,
         centre=steer_centre, basis=steer_basis,
     )
-    # As with the wheels, the scan's original steering wheel remains in the
-    # shell.  A tiny radial enlargement lets the articulated rim cleanly cover
-    # it at rest and while turning without changing the cabin proportions.
-    steering_geometry[0][:, :2] *= 1.018
 
+    # This is the crucial part of articulating a fused scan: moving surfaces
+    # are removed from the shell.  The old export left all four original tyres
+    # and the original steering wheel behind, then overlaid moving copies.  At
+    # any steering angle the player therefore saw two intersecting wheel sets.
+    shell_triangles = source_indices[~moving_mask]
     shell_geometry = compact_geometry(
-        positions, normals, texcoords, source_indices,
-        step=0.034, normal_bins=2, uv_bins=16,
+        positions, normals, texcoords, shell_triangles,
+        step=0.032, normal_bins=3, uv_bins=20,
     )
 
     builder = GlbBuilder()

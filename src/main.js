@@ -741,6 +741,8 @@ async function prepare() {
 }
 
 function wireGameEvents() {
+  let lastGateAttackNotice = -Infinity;
+  let lastSiloAttackNotice = -Infinity;
   addEventListener('lostsignal:computer', () => openModal('computer'));
   addEventListener('lostsignal:radio', () => { openModal('radio'); setRadioNoise(0.2); });
   addEventListener('lostsignal:generator', () => {
@@ -916,6 +918,36 @@ function wireGameEvents() {
     flash('HOSTILE ATTACK — BREAK CONTACT OR RETURN FIRE', 1000);
   });
 
+  addEventListener('lostsignal:gateattack', (event) => {
+    const now = performance.now();
+    if (now - lastGateAttackNotice < 2400) return;
+    lastGateAttackNotice = now;
+    const integrity = Math.max(0, event.detail?.integrity ?? 0);
+    const maximum = Math.max(1, event.detail?.maximum ?? 100);
+    flash(`SILO ALERT — HOSTILES ATTACKING PERIMETER GATE · ${Math.round(integrity / maximum * 100)}%`, 2200);
+    clickSound(145, .16, .055);
+  });
+
+  addEventListener('lostsignal:gatebreach', () => {
+    crashSound(.72);
+    flash('PERIMETER BREACHED — HOSTILES INSIDE THE COMPOUND', 3600);
+  });
+
+  addEventListener('lostsignal:siloattack', (event) => {
+    const now = performance.now();
+    if (now - lastSiloAttackNotice < 2200) return;
+    lastSiloAttackNotice = now;
+    const integrity = Math.max(0, event.detail?.integrity ?? 0);
+    const maximum = Math.max(1, event.detail?.maximum ?? 100);
+    flash(`SHELTER DOOR UNDER ATTACK · INTEGRITY ${Math.round(integrity / maximum * 100)}%`, 2100);
+    clickSound(112, .2, .06);
+  });
+
+  addEventListener('lostsignal:silobreach', () => {
+    crashSound(1);
+    flash('SILO SECURITY FAILED — THE ATTACKERS BROKE IN', 5000);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -991,6 +1023,7 @@ let cacheEmptied = false;
 // list to a couple of lines instead of a wall of spoilers.
 const OBJECTIVES = [
   { id: 'rifle', text: 'Enter the armoury and take a weapon off the wall' },
+  { id: 'defend', text: 'Protect the silo from the two attackers coming down the road' },
   { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
   { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
   { id: 'descend', text: 'Descend into Silo 47' },
@@ -1760,6 +1793,11 @@ function resolvePersonHit(target, point, damage, direction = ray.ray.direction) 
     bloodPool(target);
     flash(headshot ? `${name} DOWN — HEADSHOT` : `${name} DOWN`, 2200);
     alarmBystanders(1.4);
+    if (target.userData.kind === 'enemy'
+      && game.townEnemies?.agents?.every((enemy) => enemy.dead)) {
+      completeObjective('defend');
+      setTimeout(() => flash('SILO DEFENDED — BOTH ATTACKERS ARE DOWN', 3600), 450);
+    }
   }
 }
 
@@ -3242,11 +3280,10 @@ function updateAmbience() {
 }
 
 // --- Engine ----------------------------------------------------------------
-// A four-cylinder that has been standing for fifteen years. Two detuned saws
-// through a low-pass make the block, a third an octave down makes the exhaust,
-// and a thread of filtered noise makes the induction. Load opens the filter and
-// lifts the noise; revs move all three together, dropping on each upshift so
-// it climbs through a gearbox instead of sirening straight to the top.
+// Escort four-cylinder audio. Combustion, exhaust, valve train, induction and
+// turbo are separate layers driven from actual 950–6450 rpm. Keeping the firing
+// rate at rpm / 30 is what makes idle sound like a four-cylinder engine rather
+// than the high electronic buzz produced by the old arbitrary oscillator map.
 let engine = null;
 let lastGearShiftSound = -Infinity;
 
@@ -3254,30 +3291,36 @@ function startEngineAudio(kind = 'car') {
   if (!ac || engine) return;
   const out = ac.createGain();
   out.gain.value = 0;
-  out.connect(master);
+  const compressor = ac.createDynamicsCompressor();
+  compressor.threshold.value = -18;
+  compressor.knee.value = 12;
+  compressor.ratio.value = 3.2;
+  compressor.attack.value = .006;
+  compressor.release.value = .16;
+  out.connect(compressor); compressor.connect(master);
 
   const filter = ac.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.value = 420;
-  filter.Q.value = 3.2;
+  filter.frequency.value = 520;
+  filter.Q.value = .85;
   filter.connect(out);
 
   const block = [0, 1].map((i) => {
     const o = ac.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.value = 46;
-    o.detune.value = i ? 11 : -11;
+    o.type = i ? 'triangle' : 'sawtooth';
+    o.frequency.value = 32;
+    o.detune.value = i ? 7 : -7;
     const g = ac.createGain();
-    g.gain.value = 0.16;
+    g.gain.value = i ? 0.075 : 0.105;
     o.connect(g); g.connect(filter);
     o.start();
     return o;
   });
   const exhaust = ac.createOscillator();
-  exhaust.type = 'square';
-  exhaust.frequency.value = 23;
+  exhaust.type = 'sawtooth';
+  exhaust.frequency.value = 16;
   const exhaustGain = ac.createGain();
-  exhaustGain.gain.value = 0.09;
+  exhaustGain.gain.value = 0.075;
   exhaust.connect(exhaustGain); exhaustGain.connect(filter);
   exhaust.start();
 
@@ -3294,6 +3337,33 @@ function startEngineAudio(kind = 'car') {
   inductionFilter.connect(inductionGain);
   inductionGain.connect(out);
   induction.start();
+
+  // A small mechanical layer gives the belts/valvetrain something to do
+  // between exhaust pulses; filtered low noise supplies body and road rumble.
+  const mechanical = ac.createOscillator();
+  mechanical.type = 'triangle';
+  mechanical.frequency.value = 38;
+  const mechanicalFilter = ac.createBiquadFilter();
+  mechanicalFilter.type = 'bandpass';
+  mechanicalFilter.frequency.value = 720;
+  mechanicalFilter.Q.value = .7;
+  const mechanicalGain = ac.createGain();
+  mechanicalGain.gain.value = .018;
+  mechanical.connect(mechanicalFilter);
+  mechanicalFilter.connect(mechanicalGain); mechanicalGain.connect(out);
+  mechanical.start();
+
+  const rumble = ac.createBufferSource();
+  rumble.buffer = noiseBuffer(2);
+  rumble.loop = true;
+  const rumbleFilter = ac.createBiquadFilter();
+  rumbleFilter.type = 'lowpass';
+  rumbleFilter.frequency.value = 115;
+  rumbleFilter.Q.value = .65;
+  const rumbleGain = ac.createGain();
+  rumbleGain.gain.value = .012;
+  rumble.connect(rumbleFilter); rumbleFilter.connect(rumbleGain); rumbleGain.connect(out);
+  rumble.start();
 
   // An aeroplane adds the propeller: a blade-pass tone an order below the
   // engine note that beats against it, which is the whole character of a
@@ -3330,10 +3400,11 @@ function startEngineAudio(kind = 'car') {
     turbo.start();
   }
 
-  engine = { out, filter, block, exhaust, induction, inductionGain, prop, propGain,
-    turbo, turboGain,
-    kind, revs: 0 };
-  out.gain.setTargetAtTime(0.5, ac.currentTime, 0.35);
+  engine = { out, compressor, filter, block, exhaust, induction, inductionFilter,
+    inductionGain, mechanical, mechanicalFilter, mechanicalGain,
+    rumble, rumbleFilter, rumbleGain, prop, propGain, turbo, turboGain,
+    kind, revs: 0, throttle: 0, lastPop: -Infinity };
+  out.gain.setTargetAtTime(0.42, ac.currentTime, 0.35);
 }
 
 function stopEngineAudio() {
@@ -3347,8 +3418,11 @@ function stopEngineAudio() {
     try { dying.exhaust.stop(); } catch { /* already stopped */ }
     try { dying.prop?.stop(); } catch { /* already stopped */ }
     try { dying.turbo?.stop(); } catch { /* already stopped */ }
+    try { dying.mechanical?.stop(); } catch { /* already stopped */ }
+    try { dying.rumble?.stop(); } catch { /* already stopped */ }
     try { dying.induction.stop(); } catch { /* already stopped */ }
     dying.out.disconnect();
+    dying.compressor?.disconnect();
   }, 600);
 }
 
@@ -3375,20 +3449,41 @@ function escortGearShiftSound(revs, load) {
 function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = false) {
   if (!engine || !ac) return;
   if (engine.kind === 'aircraft') return aircraftAudio(speedRatio, throttle);
-  const revs = rpm == null ? 0.24 + speedRatio * 0.76 : THREE.MathUtils.clamp(rpm, 0, 1);
+  const revs = rpm == null ? 0.28 + speedRatio * 0.72 : THREE.MathUtils.clamp(rpm, 0, 1);
   const load = Math.min(1, Math.abs(throttle) * 0.7 + speedRatio * 0.5);
   const t = ac.currentTime;
   if (shifted) escortGearShiftSound(revs, load);
-  const shiftDip = shifted ? 0.72 : 1;
-  const base = (46 + revs * 168) * shiftDip;
-  for (const o of engine.block) o.frequency.setTargetAtTime(base, t, 0.08);
-  engine.exhaust.frequency.setTargetAtTime(base * 0.5, t, 0.08);
-  engine.filter.frequency.setTargetAtTime(320 + revs * 1350 + load * 950, t, 0.09);
-  engine.inductionGain.gain.setTargetAtTime(0.012 + load * 0.065, t, 0.1);
-  if (engine.turbo) engine.turbo.frequency.setTargetAtTime(900 + revs * 2300, t, 0.08);
+  const normalised = THREE.MathUtils.clamp((revs - .28) / .72, 0, 1);
+  const engineRpm = 950 + normalised * 5500;
+  const shiftDip = shifted ? 0.78 : 1;
+  const firing = engineRpm / 30 * shiftDip;
+  engine.block[0].frequency.setTargetAtTime(firing, t, 0.055);
+  engine.block[1].frequency.setTargetAtTime(firing * 1.006, t, 0.06);
+  engine.exhaust.frequency.setTargetAtTime(firing * .5, t, 0.065);
+  engine.mechanical?.frequency.setTargetAtTime(engineRpm / 60 * 2.15, t, .07);
+  engine.mechanicalFilter?.frequency.setTargetAtTime(560 + normalised * 1250, t, .09);
+  engine.mechanicalGain?.gain.setTargetAtTime(.012 + normalised * .026, t, .1);
+  engine.filter.frequency.setTargetAtTime(430 + normalised * 1750 + load * 620, t, 0.075);
+  engine.inductionFilter?.frequency.setTargetAtTime(620 + normalised * 1850 + load * 500, t, .09);
+  engine.inductionGain.gain.setTargetAtTime(0.008 + load * 0.052, t, 0.085);
+  engine.rumbleGain?.gain.setTargetAtTime(.012 + load * .026 + speedRatio * .014, t, .12);
+  if (engine.turbo) engine.turbo.frequency.setTargetAtTime(980 + normalised * 2150, t, 0.08);
   if (engine.turboGain) engine.turboGain.gain.setTargetAtTime(
-    Math.max(0, revs - 0.34) * load * (shifted ? 0.01 : 0.055), t, shifted ? 0.02 : 0.09);
-  engine.out.gain.setTargetAtTime((0.32 + load * 0.32) * (shifted ? 0.82 : 1), t, 0.06);
+    Math.max(0, normalised - 0.18) * load * (shifted ? 0.006 : 0.026), t,
+    shifted ? 0.02 : 0.08);
+  engine.out.gain.setTargetAtTime((0.34 + load * 0.23) * (shifted ? 0.84 : 1), t, 0.055);
+
+  // One restrained exhaust cough on a high-rpm lift. It is event-driven, not
+  // a random crackle loop, so coasting does not sound like continuous gunfire.
+  if (engine.throttle > .58 && throttle < .12 && normalised > .48
+    && t - engine.lastPop > .42) {
+    engine.lastPop = t;
+    noiseBurst({ at: t + .035, hz: 135, q: .8, decay: .105, level: .045,
+      type: 'lowpass' });
+    noiseBurst({ at: t + .04, hz: 720, q: 1.3, decay: .07, level: .018 });
+  }
+  engine.throttle = throttle;
+  engine.revs = engineRpm;
 }
 
 /**

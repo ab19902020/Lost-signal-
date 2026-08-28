@@ -391,6 +391,9 @@ export function createGameWorld(assets, options = {}) {
   let gateDwell = 0;
   let gateRoot = null;
   let gateSensed = false;
+  let gateIntegrity = 160;
+  let siloIntegrity = 180;
+  let siloBreached = false;
   const gateLeaves = [];
   const _gateWas = new THREE.Vector3();
   const BREACH = new Set(['N:-2', 'W:3', 'S:-4']);
@@ -464,10 +467,46 @@ export function createGameWorld(assets, options = {}) {
 
   function setGateMode(mode) {
     if (mode !== 'auto' && mode !== 'hold' && mode !== 'lock') return gateMode;
+    if (gateIntegrity <= 0) return gateMode;
     gateMode = mode;
     gateDwell = 0;
     if (gateRoot?.userData.interaction) gateRoot.userData.interaction.name = gateLabel();
     return gateMode;
+  }
+
+  function damageGate(amount, enemy) {
+    if (gateSlide > .82 || gateIntegrity <= 0) return gateIntegrity <= 0;
+    gateIntegrity = Math.max(0, gateIntegrity - Math.max(0, amount));
+    window.dispatchEvent(new CustomEvent('lostsignal:gateattack', {
+      detail: { integrity: gateIntegrity, maximum: 160, enemy },
+    }));
+    if (gateIntegrity <= 0) {
+      // A breached cantilever gate cannot magically lock again. Run the
+      // damaged leaves open so the assault path and the visible prop agree.
+      gateMode = 'hold';
+      gateDwell = GATE_DWELL;
+      if (gateRoot?.userData.interaction) gateRoot.userData.interaction.name = gateLabel();
+      window.dispatchEvent(new CustomEvent('lostsignal:gatebreach', {
+        detail: { enemy },
+      }));
+      return true;
+    }
+    return false;
+  }
+
+  function damageSilo(amount, enemy) {
+    if (siloBreached) return true;
+    siloIntegrity = Math.max(0, siloIntegrity - Math.max(0, amount));
+    window.dispatchEvent(new CustomEvent('lostsignal:siloattack', {
+      detail: { integrity: siloIntegrity, maximum: 180, enemy },
+    }));
+    if (siloIntegrity <= 0) {
+      siloBreached = true;
+      window.dispatchEvent(new CustomEvent('lostsignal:silobreach', {
+        detail: { enemy },
+      }));
+    }
+    return siloBreached;
   }
 
   // The induction loop. A gate on a road opens because something is coming up
@@ -741,6 +780,55 @@ export function createGameWorld(assets, options = {}) {
   // and the abandoned clinic. The old procedural block town and its third
   // duplicate building are deliberately absent.
   const townBuildings = [];
+  function addBuildingPerimeter(root, worldBounds) {
+    // A world AABB around a rotated building fills the four empty corner
+    // wedges with collision. Those wedges were the invisible walls trapping
+    // the old men in town. Measure the upload in the building's own frame and
+    // register four thin, rotated perimeter strips instead.
+    const inverseRoot = root.matrixWorld.clone().invert();
+    const relative = new THREE.Matrix4();
+    const localBounds = new THREE.Box3();
+    const corner = new THREE.Vector3();
+    root.traverse((part) => {
+      if (!part.isMesh && !part.isSkinnedMesh) return;
+      part.geometry?.computeBoundingBox();
+      const bounds = part.geometry?.boundingBox;
+      if (!bounds || bounds.isEmpty()) return;
+      relative.multiplyMatrices(inverseRoot, part.matrixWorld);
+      for (const x of [bounds.min.x, bounds.max.x]) {
+        for (const y of [bounds.min.y, bounds.max.y]) {
+          for (const z of [bounds.min.z, bounds.max.z]) {
+            localBounds.expandByPoint(corner.set(x, y, z).applyMatrix4(relative));
+          }
+        }
+      }
+    });
+    if (localBounds.isEmpty()) return;
+    const centre = localBounds.getCenter(new THREE.Vector3());
+    const size = localBounds.getSize(new THREE.Vector3());
+    const worldScale = root.getWorldScale(new THREE.Vector3());
+    const halfX = size.x * worldScale.x * .5;
+    const halfZ = size.z * worldScale.z * .5;
+    const thickness = THREE.MathUtils.clamp(Math.min(halfX, halfZ) * .12, .38, .68);
+    const localThicknessX = thickness / Math.max(.001, worldScale.x);
+    const localThicknessZ = thickness / Math.max(.001, worldScale.z);
+    const minY = worldBounds.min.y + .02;
+    const maxY = Math.min(worldBounds.max.y, minY + 4.6);
+    const addStrip = (dx, dz, stripHalfX, stripHalfZ) => {
+      const at = root.localToWorld(new THREE.Vector3(centre.x + dx, centre.y, centre.z + dz));
+      colliders.outside.addOrientedBox({
+        cx: at.x, cz: at.z, halfX: stripHalfX, halfZ: stripHalfZ,
+        rotationY: root.rotation.y, minY, maxY,
+      });
+    };
+    addStrip(-(size.x - localThicknessX) * .5, 0, thickness * .5, halfZ);
+    addStrip(+(size.x - localThicknessX) * .5, 0, thickness * .5, halfZ);
+    addStrip(0, -(size.z - localThicknessZ) * .5, halfX, thickness * .5);
+    addStrip(0, +(size.z - localThicknessZ) * .5, halfX, thickness * .5);
+    root.userData.collisionKind = 'oriented-perimeter';
+    root.userData.collisionStrips = 4;
+  }
+
   function placeTownBuilding(asset, at, rotation, height, name) {
     if (!asset) return null;
     const root = place(asset, outside, at, [0, rotation, 0], 1, { collide: false });
@@ -762,7 +850,7 @@ export function createGameWorld(assets, options = {}) {
       part.castShadow = false;
       part.receiveShadow = true;
     });
-    colliders.outside.addObject(root, { shrink: .32 });
+    addBuildingPerimeter(root, box);
     addBallisticProxy(root, name);
     townBuildings.push(root);
     return root;
@@ -816,6 +904,19 @@ export function createGameWorld(assets, options = {}) {
     || [roadPoint(470, 5)[0], roadPoint(470, 5)[2]]);
   const redAt = enemySpawn(concealedApproachSpawn(clinic, clinicCover, clinicCover[2])
     || [roadPoint(492, -5)[0], roadPoint(492, -5)[2]]);
+  const xz = ([x, , z]) => [x, z];
+  const assaultRoad = (lane) => [430, 395, 355, 315, 275, 235, 195, 155, 118, 82, 50, 24, 8]
+    .map((distance) => xz(roadPoint(distance, lane)))
+    .concat([[lane * .55, 19.35]]);
+  // The centre of the apron is deliberately blocked by the visible barrier
+  // line. Each attacker owns a side lane through the yard, then crosses back
+  // to a separate striking position at the shelter entrance.
+  const blackYardRoute = [
+    [-.7, 14.0], [-5.7, 10.8], [-6.4, 3.0], [-6.4, -9.8], [-4.8, -12.0], [-1.15, -13.0],
+  ];
+  const redYardRoute = [
+    [.7, 14.0], [5.8, 10.6], [7.2, 3.0], [7.2, -10.0], [4.8, -12.0], [1.15, -13.0],
+  ];
   const townEnemies = createTownEnemies({
     scene: outside,
     colliders: colliders.outside,
@@ -824,17 +925,26 @@ export function createGameWorld(assets, options = {}) {
       ruinedHouse?.userData?.worldBounds,
       clinic?.userData?.worldBounds,
     ],
+    mission: {
+      gateTarget: new THREE.Vector3(0, 0, GATE_Z),
+      siloTarget: new THREE.Vector3(0, 0, -16.6),
+      gateIsPassable: () => gateSlide > .82,
+      damageGate,
+      damageSilo,
+    },
     lowCost: options.quality === 'mobile',
     entries: [
       {
         asset: 'enemyOldManBlack', style: 'black', name: 'Town_Enemy_Black',
         position: blackAt, heading: TOWN_BEARING + Math.PI,
         patrol: ruinCover.slice(0, 4), cover: allCover,
+        assaultRoute: assaultRoad(-1.15), yardRoute: blackYardRoute,
       },
       {
         asset: 'enemyOldManRed', style: 'red', name: 'Town_Enemy_Red',
         position: redAt, heading: TOWN_BEARING,
         patrol: clinicCover.slice(0, 4), cover: allCover,
+        assaultRoute: assaultRoad(1.15), yardRoute: redYardRoute,
       },
     ],
   });
@@ -1874,6 +1984,9 @@ export function createGameWorld(assets, options = {}) {
     gateIsOpen:()=>gateOpen,
     gateTravel:()=>gateSlide,
     gateMode:()=>gateMode,
+    gateIntegrity:()=>gateIntegrity,
+    siloIntegrity:()=>siloIntegrity,
+    siloBreached:()=>siloBreached,
     setGateMode,
     doorOpen:()=>doorOpen,
     hatchOpen:()=>hatchOpen,

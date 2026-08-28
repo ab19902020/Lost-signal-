@@ -70,7 +70,7 @@ assert.equal(enemies.agents.length, 2);
 for (const agent of enemies.agents) {
   const expected = agent.style === 'black'
     ? ['laugh', 'flee', 'dance', 'foldArms', 'stairsUp', 'clap', 'fall', 'turn',
-      'run', 'walk', 'stand']
+      'run', 'walk', 'melee', 'stand']
     : ['climb', 'run', 'walk', 'turn', 'gesture', 'fall', 'dance', 'melee', 'jump', 'stand'];
   assert.deepEqual(new Set(Object.keys(agent.actions)), new Set(expected),
     `${agent.root.name} did not map its complete nine-clip bank`);
@@ -184,6 +184,68 @@ assert.ok(detour > 2.25,
   `the hiding enemy did not route around the building (detour ${detour.toFixed(2)} m)`);
 assert.equal(stagedBrainAction, null,
   `the hiding brain selected staged animation ${stagedBrainAction}`);
+
+// The game entries use a different brain from the legacy cover sandbox above:
+// leave town, take a route around the uploaded building, breach the perimeter,
+// cross the yard and attack the silo. Exercise that complete state machine in
+// a compact test arena so a regression cannot turn it back into random patrol.
+const siegeScene = new THREE.Scene();
+const siegeColliders = new ColliderSet();
+const siegeBuilding = new THREE.Box3(
+  new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 3, 3),
+);
+siegeColliders.addBox(siegeBuilding.clone());
+let testGateIntegrity = 22;
+let testSiloIntegrity = 14;
+let testGateOpen = false;
+const siege = createTownEnemies({
+  scene: siegeScene,
+  colliders: siegeColliders,
+  assets: enemyAssets,
+  navigationObstacles: [siegeBuilding],
+  mission: {
+    gateTarget: new THREE.Vector3(0, 0, -6.8),
+    siloTarget: new THREE.Vector3(0, 0, -11),
+    gateIsPassable: () => testGateOpen,
+    damageGate: (damage) => {
+      testGateIntegrity = Math.max(0, testGateIntegrity - damage);
+      testGateOpen ||= testGateIntegrity <= 0;
+      return testGateOpen;
+    },
+    damageSilo: (damage) => {
+      testSiloIntegrity = Math.max(0, testSiloIntegrity - damage);
+      return testSiloIntegrity <= 0;
+    },
+  },
+  entries: [{
+    asset: 'enemyOldManBlack', style: 'black', name: 'Black_Siege_Test',
+    position: [3, 0, 3], heading: 0,
+    patrol: [[3, 0]],
+    cover: [[-2.2, -2], [2.2, -2], [2.2, 4], [-2.2, 4]],
+    assaultRoute: [[0, -3], [0, -6]],
+    yardRoute: [[0, -9]],
+  }],
+});
+const siegeStates = new Set();
+let siegeStagedAction = null;
+for (let frame = 0; frame < 60 * 18; frame++) {
+  siege.update(1 / 60, new THREE.Vector3(30, 0, 30), true);
+  const agent = siege.agents[0];
+  siegeStates.add(agent.state);
+  if (['dance', 'laugh', 'clap', 'foldArms', 'gesture'].includes(agent.current)) {
+    siegeStagedAction = agent.current;
+  }
+}
+const siegeAgent = siege.agents[0];
+assert.equal(siegeAgent.state, 'silo_breached',
+  `silo assault stalled in ${siegeAgent.state}`);
+assert.ok(['breach_gate', 'assault_yard', 'breach_silo'].every((state) => siegeStates.has(state)),
+  `silo assault skipped mission states: ${[...siegeStates].join(', ')}`);
+assert.ok(siegeAgent.breachHits >= 4, 'attacker never struck the gate and silo door');
+assert.equal(siegeStagedAction, null,
+  `silo attacker selected staged animation ${siegeStagedAction}`);
+assert.ok(siegeAgent.maxFrameTravel < .08,
+  `visible silo attacker teleported ${siegeAgent.maxFrameTravel.toFixed(3)} m in one frame`);
 for (const agent of enemies.agents) {
   assert.ok(agent.maxFrameTravel <= 0.08,
     `${agent.root.name} teleported ${agent.maxFrameTravel.toFixed(3)} m in one frame while ${agent.maxFrameTravelState}: ${JSON.stringify(agent.maxFrameTravelDebug)}`);
@@ -221,6 +283,11 @@ assert.ok(!worldSource.includes('assets.distantTown'),
   'the old procedural block town is still spawned');
 assert.ok(worldSource.includes('addBallisticProxy(root, name)'),
   'the uploaded building scans still take full triangle raycasts');
+assert.ok(worldSource.includes("root.userData.collisionKind = 'oriented-perimeter'"),
+  'the rotated town scans still create oversized invisible AABB barriers');
+assert.ok(worldSource.includes('assaultRoute: assaultRoad(')
+  && worldSource.includes('damageGate') && worldSource.includes('damageSilo'),
+  'the two old men are not assigned the road-to-silo assault mission');
 const escortSpawn = worldSource.match(/position:\s*\[([\d.-]+),\s*([\d.-]+),\s*([\d.-]+)\],\s*heading:\s*Math\.PI,\s*\n\s*name:\s*'Ford_Escort_RS_Turbo'/);
 assert.ok(escortSpawn, 'the supplied Ford Escort is not spawned in the town world');
 const escortPosition = new THREE.Vector3(...escortSpawn.slice(1).map(Number));
@@ -245,7 +312,7 @@ car.scene.traverse((part) => {
   if (!part.isMesh) return;
   carTriangles += (part.geometry.index?.count || part.geometry.attributes.position.count) / 3;
 });
-assert.ok(carTriangles > 190_000 && carTriangles < 250_000,
+assert.ok(carTriangles > 230_000 && carTriangles < 260_000,
   `uploaded Ford rig missed its mobile detail budget (${Math.round(carTriangles)} triangles)`);
 assert.equal(VEHICLE_SPEC.drivenAxle, 'front');
 assert.equal(VEHICLE_SPEC.make, 'Ford');
@@ -290,11 +357,18 @@ testCar.occupied = true;
 for (let frame = 0; frame < 60; frame++) {
   testCar.update(1 / 60, { throttle: 1, steer: 0.65 });
 }
-assert.ok(Math.abs(testCar.root.getObjectByName('Car_Wheel_LF_Steer').rotation.y) > 0.1,
+const leftLock = testCar.root.getObjectByName('Car_Wheel_LF_Steer').rotation.y;
+const rightLock = testCar.root.getObjectByName('Car_Wheel_RF_Steer').rotation.y;
+assert.ok(Math.abs(leftLock) > 0.1 && Math.abs(rightLock) > 0.1,
   'front wheels did not steer with the control input');
-assert.ok(Math.abs(testCar.root.getObjectByName('Car_Wheel_RF_Steer').rotation.y
-  - testCar.root.getObjectByName('Car_Wheel_LF_Steer').rotation.y) < 1e-6,
-  'the two front wheels do not steer together');
+assert.equal(Math.sign(leftLock), Math.sign(rightLock),
+  'the front wheels steer in opposite directions');
+assert.ok(Math.abs(rightLock) > Math.abs(leftLock),
+  'Ackermann steering did not give the inside right wheel more lock');
+for (const tag of wheelNames) {
+  assert.ok(Math.abs(testCar.root.getObjectByName(`Car_Wheel_${tag}_Spin`).rotation.x) > 1,
+    `${tag} wheel mesh did not roll through its independent hub pivot`);
+}
 for (const tag of ['LR', 'RR']) {
   assert.ok(Math.abs(testCar.root.getObjectByName(`Car_Wheel_${tag}`).rotation.y) < 1e-6,
     `${tag} rear wheel steers even though the car is front-steer only`);
@@ -352,4 +426,4 @@ for (const url of Object.values(GUN_SAMPLE_URLS)) {
   assert.ok(info.size > 8_000, `${url} is missing or truncated`);
 }
 
-console.log('Integrated asset QA passed: routed evasive enemies, flat deaths, two-building road end, user-supplied rigged FWD Escort, RAF aircraft and weapon audio.');
+console.log('Integrated asset QA passed: route-planned silo assault, flat deaths, two-building road end, clean user-supplied FWD Escort rig, RAF aircraft and weapon audio.');

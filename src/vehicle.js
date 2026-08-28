@@ -13,7 +13,8 @@ import { findNamed } from './assets.js';
 // yaw uses, so a heading is a heading whether you are walking or driving.
 
 const WHEELBASE = 2.48;        // measured between the uploaded model's hubs
-const WHEEL_RADIUS = 0.35;
+const TRACK = 1.44;            // hub-to-hub track measured from the upload
+const WHEEL_RADIUS = 0.315;     // actual tyre radius after the clean extraction
 const HALF_LENGTH = 2.10;
 const HALF_WIDTH = 0.86;
 // The body is tested as three circles down its spine rather than one big one:
@@ -72,23 +73,32 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   const steeringWheelRest = steeringWheel?.rotation.z || 0;
   const wheels = ['LF', 'RF', 'LR', 'RR']
     .map((tag) => findNamed(root, `Car_Wheel_${tag}`));
-  const [frontLeft, frontRight] = wheels;
 
-  // Steering happens on a pivot above each front wheel, not on the wheel
-  // itself. The wheel's own rotation is its roll, and roll about an axle that
-  // is being yawed at the same time cones the tyre out of the arch.
-  const steerPivots = [frontLeft, frontRight].filter(Boolean).map((wheel) => {
-    const pivot = new THREE.Group();
-    pivot.name = `${wheel.name}_Steer`;
-    pivot.position.copy(wheel.position);
-    wheel.parent.add(pivot);
-    pivot.add(wheel);
+  // Each wheel gets two independent transform layers. The outer front layer
+  // yaws around the kingpin; the inner layer rolls around the axle. Keeping
+  // those transforms off the supplied mesh means its authored orientation is
+  // never overwritten and steering cannot make a tyre wobble or cone.
+  const wheelRigs = wheels.map((wheel, index) => {
+    if (!wheel) return null;
+    const parent = wheel.parent;
+    const hub = wheel.position.clone();
+    const steer = index < 2 ? new THREE.Group() : null;
+    const spin = new THREE.Group();
+    spin.name = `${wheel.name}_Spin`;
+    if (steer) {
+      steer.name = `${wheel.name}_Steer`;
+      steer.position.copy(hub);
+      parent.add(steer);
+      steer.add(spin);
+    } else {
+      spin.position.copy(hub);
+      parent.add(spin);
+    }
+    spin.add(wheel);
     wheel.position.set(0, 0, 0);
-    return pivot;
+    return { wheel, steer, spin };
   });
-  // The wheels are exported lying on their rest quarter-turn, which puts the
-  // axle across the car. Roll is added in front of that, never instead of it.
-  const restY = wheels.filter(Boolean).map((wheel) => wheel.rotation.y);
+  const [frontLeftRig, frontRightRig] = wheelRigs;
 
   // Lamps. The glass is modelled; the light and the glow are runtime, so a car
   // at night has beams on the road instead of two painted white circles.
@@ -131,6 +141,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     heading,
     speed: 0,
     steer: 0,
+    leftSteer: 0,
+    rightSteer: 0,
     wheelSpin: 0,
     frontWheelSpin: 0,
     rearWheelSpin: 0,
@@ -267,6 +279,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
     _forward.set(-Math.sin(facing), 0, -Math.cos(facing));
     const travel = state.speed * dt;
+    const travelFromX = state.x;
+    const travelFromZ = state.z;
     const wantX = state.x + _forward.x * travel;
     const wantZ = state.z + _forward.z * travel;
 
@@ -314,7 +328,9 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
     // Wheels: the front pair point where the steering says, all four roll at
     // the speed the car is actually doing.
-    const rollingSpin = travel / WHEEL_RADIUS;
+    const actualTravel = Math.hypot(state.x - travelFromX, state.z - travelFromZ)
+      * Math.sign(travel || state.speed || 1);
+    const rollingSpin = actualTravel / WHEEL_RADIUS;
     // Front-wheel drive: under boost the driven tyres turn a little faster
     // than the road while the rears remain free-rolling. It is subtle at speed
     // and visible pulling away on gravel.
@@ -322,11 +338,27 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     state.frontWheelSpin += rollingSpin * (1 + driveSlip);
     state.rearWheelSpin += rollingSpin;
     state.wheelSpin = state.rearWheelSpin; // retained for diagnostics/save QA
-    wheels.forEach((wheel, i) => {
-      if (!wheel) return;
-      wheel.rotation.set(i < 2 ? state.frontWheelSpin : state.rearWheelSpin, restY[i], 0);
+    wheelRigs.forEach((rig, i) => {
+      if (rig) rig.spin.rotation.x = i < 2 ? state.frontWheelSpin : state.rearWheelSpin;
     });
-    for (const pivot of steerPivots) pivot.rotation.y = state.steer;
+
+    // Ackermann geometry: the inside wheel takes more lock than the outside
+    // wheel, so both roll around the same corner instead of scrubbing sideways
+    // as a pair of parallel casters. Straight input produces exact zero.
+    const steerMagnitude = Math.abs(state.steer);
+    if (steerMagnitude < 1e-5) {
+      state.leftSteer = 0;
+      state.rightSteer = 0;
+    } else {
+      const sign = Math.sign(state.steer);
+      const turnRadius = WHEELBASE / Math.tan(steerMagnitude);
+      const inside = Math.atan(WHEELBASE / Math.max(0.1, turnRadius - TRACK * .5));
+      const outside = Math.atan(WHEELBASE / (turnRadius + TRACK * .5));
+      state.leftSteer = sign * (sign > 0 ? inside : outside);
+      state.rightSteer = sign * (sign < 0 ? inside : outside);
+    }
+    if (frontLeftRig?.steer) frontLeftRig.steer.rotation.y = state.leftSteer;
+    if (frontRightRig?.steer) frontRightRig.steer.rotation.y = state.rightSteer;
     if (steeringWheel) {
       steeringWheel.rotation.z = steeringWheelRest
         - (state.steer / MAX_STEER) * 2.25;
