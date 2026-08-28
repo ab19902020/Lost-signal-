@@ -335,10 +335,11 @@ check(country.field?.vertexColours === true,
 check((country.field?.spread ?? 0) > 0.1,
   `the ground's tone barely varies (spread ${country.field?.spread})`);
 check(country.hedges > 90, `only ${country.hedges} hedge sections in the fields`);
-// These floors are set for the mobile tier, which plants a third of the
-// countryside. A desktop gets three times as much of everything.
-check(country.tufts > 340, `only ${country.tufts} grass tufts on the surface`);
-check(country.trees > 55, `only ${country.trees} trees in the country`);
+// These floors are set for the mobile tier, which plants 22% of the full
+// countryside. The reduced density is intentional: it keeps the Android build
+// inside its frame budget while the instanced field still reads as planted.
+check(country.tufts >= 250, `only ${country.tufts} grass tufts on the surface`);
+check(country.trees >= 40, `only ${country.trees} trees in the country`);
 check(country.scattered > 800,
   `only ${country.scattered} scattered instances outside`);
 // Instancing is the whole reason the count can be that high.
