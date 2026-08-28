@@ -55,6 +55,32 @@ const _centre = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _size = new THREE.Vector3();
 
+// Raycasting a high-detail skinned mesh changes with its current animation and
+// proved unreliable for Eli at conversational range. These invisible body
+// volumes make hits deterministic without adding any visible geometry or an
+// expensive per-pellet skin traversal.
+const QUARTERMASTER_HIT_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
+const QUARTERMASTER_HIT_PARTS = Object.freeze([
+  ['Quartermaster_Hit_Head', new THREE.SphereGeometry(.24, 8, 6), [0, 1.59, 0]],
+  ['Quartermaster_Hit_Torso', new THREE.BoxGeometry(.60, .82, .40), [0, 1.12, 0]],
+  ['Quartermaster_Hit_Hips', new THREE.BoxGeometry(.52, .52, .36), [0, .62, 0]],
+]);
+
+function addQuartermasterHitVolumes(root) {
+  const volumes = QUARTERMASTER_HIT_PARTS.map(([name, geometry, position]) => {
+    const volume = new THREE.Mesh(geometry, QUARTERMASTER_HIT_MATERIAL);
+    volume.name = name;
+    volume.position.set(...position);
+    volume.userData.hitProxy = true;
+    volume.castShadow = false;
+    volume.receiveShadow = false;
+    root.add(volume);
+    return volume;
+  });
+  root.userData.hitVolumes = volumes;
+  return volumes;
+}
+
 function mountModel({ assets, scene, place }, key, position, rotation, length) {
   const gltf = assets[key];
   if (!gltf) return null;
@@ -239,6 +265,7 @@ export function buildArmory({ assets, scene, colliders, place, addInteraction })
     });
     quartermaster.userData.kind = 'quartermaster';
     quartermaster.userData.alive = true;
+    addQuartermasterHitVolumes(quartermaster);
     addInteraction(quartermaster, 'QUARTERMASTER ELI', 'bunker', () => {
       if (quartermaster.userData.alive === false) return;
       if (waveAction) {
