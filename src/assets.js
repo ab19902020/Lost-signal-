@@ -37,10 +37,26 @@ const bunkerUrls = {
 // convention, unlike the earliest Lost Signal Blender exports, so they must
 // not pass through the legacy quarter-turn correction.
 const suppliedUrls = {
-  // The user's high-detail military protagonist. The source arrived as a
-  // two-million-triangle, 77 MB GLB; the checked-in runtime build preserves
-  // its humanoid skin and PBR material at a mobile-safe 239k triangles.
+  // The user's rugged protagonist. The source arrived as a two-million-
+  // triangle, 75 MB GLB with nine authored clips; the checked-in runtime build
+  // preserves the full rig, animation set and PBR material at 235k triangles.
   playerCharacter: `${BASE}assets/supplied/main_character.glb`,
+  // The first old man has a compatible 41-bone Tripo skeleton and its full
+  // nine-clip bank. It is also available to the protagonist for optional
+  // gestures, but never replaces the main model's own traversal clips.
+  enemyOldManBlack: `${BASE}assets/supplied/enemy_old_man_black.glb`,
+  // The second supplied old man arrived without a skin in the container. The
+  // runtime build transfers the compatible rugged-character skeleton and all
+  // nine locomotion clips onto it, so it is an animated character rather than
+  // a rigid mesh sliding around the town.
+  enemyOldManRed: `${BASE}assets/supplied/enemy_old_man_red.glb`,
+  rafAircraft: `${BASE}assets/supplied/raf_aircraft.glb`,
+  // The road-end location uses exactly the two requested uploads. The compact
+  // clinic export is the visually matching low-poly copy of the 436k-triangle
+  // scan, which saves roughly five megabytes and a large mobile draw without
+  // changing the building the player sees.
+  townBuildingRuin: `${BASE}assets/supplied/town_building_brick.glb`,
+  townBuildingClinic: `${BASE}assets/supplied/town_building_redbrick.glb`,
   adventurer: `${BASE}assets/supplied/adventurer.glb`,
   // The armoury is built rather than bought. The pack models were 240 to
   // 5,000 triangles and this is the geometry the player looks at more than any
@@ -187,15 +203,15 @@ const exteriorUrls = {
   barrier: `${BASE}assets/blender/concrete_barrier_v3.glb`,
   rubble: `${BASE}assets/blender/rubble_cluster_v3.glb`,
   rangeTarget: `${BASE}assets/blender/range_target_v1.glb`,
-  distantTown: `${BASE}assets/blender/distant_town_v1.glb`,
   road: `${BASE}assets/blender/road_section_v1.glb`,
   roadDamaged: `${BASE}assets/blender/road_section_damaged_v1.glb`,
   wreckCar: `${BASE}assets/blender/wreck_car_v1.glb`,
   debrisField: `${BASE}assets/blender/debris_field_v1.glb`,
   estateCar: `${BASE}assets/blender/estate_car_v1.glb`,
-  // The same car with its wheels left as separate objects, hub origins and
-  // all, so one of them can be driven instead of parked.
-  carDrivable: `${BASE}assets/blender/car_drivable_v1.glb`,
+  // The owner's uploaded Ford Escort scan, converted from one fused 1.95M-
+  // triangle mesh into a mobile PBR body with four articulated wheel hubs and
+  // an articulated steering wheel.
+  carDrivable: `${BASE}assets/supplied/ford_escort_rs_turbo.glb`,
   airstrip: `${BASE}assets/blender/airstrip_v1.glb`,
   lightAircraft: `${BASE}assets/blender/light_aircraft_v1.glb`,
   // The countryside. Everything here is scattered in the dozens or the

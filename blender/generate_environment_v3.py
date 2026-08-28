@@ -1273,6 +1273,18 @@ def build_estate_car():
         for z in (-.55, .55):
             cube(f'Car_RackFoot_{side}_{z:.2f}', (side * .68, 1.58, z), (.05, .05, .05),
                  trim, edge=.01)
+    # Right-hand-drive steering wheel, kept as its own object so the runtime
+    # can turn it with the front axle. The wheel sits ahead of the driver's eye
+    # and leans with the column rather than being painted into the dashboard.
+    steering_at = (.42, 1.14, -.78)
+    torus('Steering_Rim', steering_at, .18, .021, trim,
+          rotation=(-.32, 0, 0), major_segments=36)
+    cyl('Steering_Hub', steering_at, .045, .055, trim,
+        rotation=(math.pi / 2, 0, 0), verts=14, edge=.008)
+    for angle in (math.pi / 2, math.pi * 7 / 6, math.pi * 11 / 6):
+        end = (steering_at[0] + math.cos(angle) * .15,
+               steering_at[1] + math.sin(angle) * .15, steering_at[2])
+        between(f'Steering_Spoke_{angle:.2f}', steering_at, end, .009, trim, 8)
     # Wheels. Each one is joined on its own and has its origin set to the hub,
     # so the game can steer the front pair and spin all four. The body is
     # joined separately: a car joined into a single mesh is scenery.
@@ -1294,7 +1306,7 @@ def build_estate_car():
     # Everything that is not a wheel becomes the shell.
     bpy.ops.object.select_all(action='DESELECT')
     body_parts = [o for o in bpy.context.scene.objects
-                  if o.type == 'MESH' and not o.name.startswith('Wheel_')]
+                  if o.type == 'MESH' and not o.name.startswith(('Wheel_', 'Steering_'))]
     for o in body_parts:
         o.select_set(True)
     bpy.context.view_layer.objects.active = body_parts[0]
@@ -1315,8 +1327,19 @@ def build_estate_car():
         wheel.name = f'Car_Wheel_{tag}'
         bpy.context.scene.cursor.location = (x, .34, z)
         bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+    # The rim, hub and spokes share one steering pivot at the hub.
+    bpy.ops.object.select_all(action='DESELECT')
+    steering_parts = [o for o in bpy.context.scene.objects if o.name.startswith('Steering_')]
+    for o in steering_parts:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = steering_parts[0]
+    bpy.ops.object.join()
+    steering = bpy.context.object
+    steering.name = 'Car_SteeringWheel'
+    bpy.context.scene.cursor.location = steering_at
+    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
     bpy.context.scene.cursor.location = (0, 0, 0)
-    export('car_drivable_v1.glb')
+    export('car_drivable_v2.glb')
 
     # The static prop keeps its old single-mesh form: nothing steers a wreck.
     join_all('EstateCar')

@@ -10,6 +10,7 @@ import { createSky } from './sky.js';
 import { createVehicle } from './vehicle.js';
 import { createAircraft } from './aircraft.js';
 import { createPlayerCharacter } from './player_character.js';
+import { createTownEnemies } from './town_enemies.js';
 import { WEAPONS, DEFAULT_WEAPON } from './weapons.js';
 
 // V3 WORLD RULE:
@@ -31,7 +32,7 @@ export function createGameWorld(assets, options = {}) {
   // the far end of the compound — fell into a void with a hard edge where the
   // floodlights stopped. It now runs a real clock: sun, moon, stars and
   // weather, with the fog tracking the horizon so distance is haze, not void.
-  outside.fog = new THREE.FogExp2(0x141d26, 0.0028);
+  outside.fog = new THREE.FogExp2(0x141d26, 0.0008);
 
   // Silo 47-A, reached through the hatch in the shelter floor.
   const silo = new THREE.Scene();
@@ -54,7 +55,7 @@ export function createGameWorld(assets, options = {}) {
   camera.rotation.order = 'YXZ';
   camera.position.set(0, 1.67, 0);
   player.add(camera);
-  const playerCharacter = createPlayerCharacter(assets.playerCharacter);
+  const playerCharacter = createPlayerCharacter(assets.playerCharacter, assets.enemyOldManBlack);
   player.add(playerCharacter.root);
   player.position.set(0, 0, 5.0);
   bunker.add(player);
@@ -147,6 +148,32 @@ export function createGameWorld(assets, options = {}) {
       });
     }
     return root;
+  }
+
+  // The uploaded building scans contain hundreds of thousands of triangles.
+  // They stay intact for rendering, while gun rays use one invisible bounds
+  // mesh apiece. This turns a shotgun impact from millions of triangle tests
+  // into twelve, without putting any generated geometry on screen.
+  const ballisticProxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
+  function addBallisticProxy(root, name) {
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const centre = box.getCenter(new THREE.Vector3());
+    if (box.isEmpty() || size.lengthSq() < .01) return null;
+    root.traverse((part) => {
+      if (part.isMesh || part.isSkinnedMesh) part.userData.skipBallistics = true;
+    });
+    const proxy = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z),
+      ballisticProxyMaterial);
+    proxy.name = `${name}_BallisticProxy`;
+    proxy.position.copy(centre);
+    proxy.userData.ballisticProxy = true;
+    proxy.userData.ballisticProxyFor = name;
+    proxy.castShadow = false;
+    proxy.receiveShadow = false;
+    outside.add(proxy);
+    return proxy;
   }
 
   // ---------------------------------------------------------------------------
@@ -339,7 +366,12 @@ export function createGameWorld(assets, options = {}) {
   // every edge in the compound shimmered as the shadow map chased it. Half an
   // hour still gets you dawn, noon, dusk and night in one sitting without the
   // surface being visibly in motion when nothing is moving.
-  const sky = createSky({ scene: outside, dayLength: 1800, startAt: 0.30 });
+  const sky = createSky({
+    scene: outside,
+    dayLength: 1800,
+    startAt: 0.30,
+    shadowSize: options.quality === 'mobile' ? 1024 : 2048,
+  });
 
   // The perimeter. Four-metre bays of security fence: footings, line posts,
   // top rail, tension wire, chain link and three strands of barbed wire on
@@ -589,8 +621,8 @@ export function createGameWorld(assets, options = {}) {
   // concerned.
   dress(assets.propTownSign, [[6.4, 21.2, 0.22]], { shrink: 0.2 });
 
-  // Cars. Two wrecks that were abandoned in the yard, and one at the gate that
-  // still has glass in it — the one that will eventually be worth the drive.
+  // Cars. Two wrecks were abandoned in the yard; the owner's uploaded Escort
+  // beside the shelter is the live test car and is immediately reachable.
   dress(assets.estateCar, [[-12.2, 6.4, 1.42], [13.2, -6.8, 2.86]], { shrink: 0.05 });
   // The gate car is the one that still runs. It is a live vehicle, not a prop:
   // its own body collides with the world, and it comes off the collision set
@@ -598,9 +630,11 @@ export function createGameWorld(assets, options = {}) {
   const vehicles = [];
   const gateCar = createVehicle({
     scene: outside, colliders: colliders.outside, assets, place, addInteraction,
-    // Parked in the yard on the gate's centre line, nose to the gate.
-    position: [0, 0, 12.6], heading: Math.PI,
-    name: 'Gate_Estate_Car', label: 'ESTATE CAR',
+    // Directly in the player's first outdoor sightline. The central route is
+    // still clear, but the supplied Escort is now only a few steps in front
+    // and to the right of the silo exit instead of disappearing into the yard.
+    position: [4.8, 0, -8.8], heading: Math.PI,
+    name: 'Ford_Escort_RS_Turbo', label: 'FORD ESCORT RS TURBO',
   });
   if (gateCar) vehicles.push(gateCar);
 
@@ -633,9 +667,9 @@ export function createGameWorld(assets, options = {}) {
   const strip = createAircraft({
     scene: outside, colliders: colliders.outside, assets, place, addInteraction,
     // On the numbers at the western threshold, lined up down the strip.
-    position: [AIRSTRIP_AT[0] - 190, 1.36, AIRSTRIP_AT[2]],
+    position: [AIRSTRIP_AT[0] - 190, 0, AIRSTRIP_AT[2]],
     heading: -Math.PI / 2,
-    name: 'Airstrip_Cessna', label: 'LIGHT AIRCRAFT',
+    name: 'Airstrip_RAF_Aircraft', label: 'RAF AIRCRAFT',
   });
   if (strip) aircraft.push(strip);
 
@@ -703,73 +737,112 @@ export function createGameWorld(assets, options = {}) {
     }
   }
 
-  // Two people still out there.
-  //
-  // The town has been a silhouette on the horizon and nothing else. These are
-  // the first two things in it that are alive: they stand at the near edge
-  // where the road runs in, they do not wander, and they can be shot — which
-  // is the whole point of putting them somewhere you have to travel to reach.
-  const townsfolk = [];
-  const TOWNSFOLK = [
-    { asset: assets.residentStillA, along: 484, across: 7.5, turn: 2.5,
-      line: 'You came up the road. Nobody comes up the road. Is the shelter still standing?' },
-    { asset: assets.residentStillD || assets.residentStillB, along: 493, across: -8.5, turn: -1.2,
-      line: 'There were forty of us. Do not go past the church — whatever is in there is not us.' },
-  ];
-  TOWNSFOLK.forEach((person, index) => {
-    if (!person.asset) return;
-    const at = roadPoint(person.along, person.across);
-    const root = place(person.asset, outside, at, [0, TOWN_BEARING + person.turn, 0], 1,
-      { collide: false });
-    root.name = `Townsfolk_${index}`;
-    root.userData.kind = 'resident';
-    root.userData.alive = true;
-    root.userData.hp = 100;
-    root.userData.resident = { line: person.line };
-    root.userData.collider = colliders.outside.addOrientedBox({
-      cx: at[0], cz: at[2], halfX: .34, halfZ: .34, minY: 0, maxY: 1.84,
-    });
-    addInteraction(root, 'SURVIVOR', 'outside', () => {
-      if (root.userData.alive === false) return;
-      window.dispatchEvent(new CustomEvent('lostsignal:resident', {
-        detail: { line: person.line },
-      }));
-    });
-    townsfolk.push(root);
-  });
-
-  /** Put one of them on the ground, and take their collider with them. */
-  function downTownsfolk(root) {
-    if (!root || root.userData.alive === false) return false;
-    root.userData.alive = false;
-    if (root.userData.collider) root.userData.collider.enabled = false;
-    root.rotation.z = (Math.random() < .5 ? -1 : 1) * Math.PI / 2;
-    root.position.y -= .28;
-    return true;
-  }
-
-  // The town, on the horizon to the south-west past the gate. Not a place you
-  // can walk into yet — it is six hundred metres of dead field away, drawn as
-  // the silhouette it would be at that range, so there is somewhere to go.
-  const townMaterials = [];
-  if (assets.distantTown) {
-    const town = place(assets.distantTown, outside, [-210, 0, 470], [0, -0.42, 0], 1,
-      { collide: false });
-    town.name = 'Distant_Town';
-    // It sits far beyond the fog's useful range — at half a kilometre the
-    // exponential fog is total, and the town would simply be the fog colour.
-    // Take it out of the fog and apply aerial perspective by hand instead, so
-    // it washes toward whatever the horizon is doing at that hour.
-    town.traverse((part) => {
-      if (!part.isMesh) return;
-      part.material = part.material.clone();
-      part.material.fog = false;
+  // The road ends at exactly the two requested uploads: the blown-out house
+  // and the abandoned clinic. The old procedural block town and its third
+  // duplicate building are deliberately absent.
+  const townBuildings = [];
+  function placeTownBuilding(asset, at, rotation, height, name) {
+    if (!asset) return null;
+    const root = place(asset, outside, at, [0, rotation, 0], 1, { collide: false });
+    root.name = name;
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    root.scale.multiplyScalar(height / Math.max(0.1, size.y));
+    root.updateMatrixWorld(true);
+    box.setFromObject(root);
+    root.position.y -= box.min.y;
+    root.updateMatrixWorld(true);
+    box.setFromObject(root);
+    root.userData.worldBounds = box.clone();
+    root.traverse((part) => {
+      if (!part.isMesh && !part.isSkinnedMesh) return;
+      // A 400k-triangle scan in the sun's shadow pass was almost as expensive
+      // as drawing the whole countryside a second time.
       part.castShadow = false;
-      part.receiveShadow = false;
-      part.material.userData.baseColor = part.material.color.clone();
-      townMaterials.push(part.material);
+      part.receiveShadow = true;
     });
+    colliders.outside.addObject(root, { shrink: .32 });
+    addBallisticProxy(root, name);
+    townBuildings.push(root);
+    return root;
   }
+  const ruinedHouse = placeTownBuilding(assets.townBuildingRuin, roadPoint(466, 15),
+    TOWN_BEARING + Math.PI * .52, 14.5, 'Road_End_Ruined_House');
+  const clinic = placeTownBuilding(assets.townBuildingClinic, roadPoint(493, -15),
+    TOWN_BEARING - Math.PI * .47, 13.2, 'Road_End_Clinic');
+  if (ruinedHouse) ruinedHouse.userData.renderDistance = 430;
+  if (clinic) clinic.userData.renderDistance = 900;
+
+  // Cover points sit just beyond each building's actual final bounds. The AI
+  // uses the collider line between these points and the player to decide when
+  // it is hidden, so it moves around the architecture instead of through it.
+  function coverAround(root, margin = 2.1) {
+    const box = root?.userData?.worldBounds;
+    if (!box) return [];
+    const x0 = box.min.x - margin; const x1 = box.max.x + margin;
+    const z0 = box.min.z - margin; const z1 = box.max.z + margin;
+    const xm = (x0 + x1) * .5; const zm = (z0 + z1) * .5;
+    return [[x0, z0], [x1, z0], [x1, z1], [x0, z1],
+      [xm, z0], [x1, zm], [xm, z1], [x0, zm]];
+  }
+  const ruinCover = coverAround(ruinedHouse);
+  const clinicCover = coverAround(clinic);
+  const allCover = [...ruinCover, ...clinicCover];
+  const enemySpawn = ([x, z]) => [x, 0, z];
+  function concealedApproachSpawn(root, points, fallback) {
+    const box = root?.userData?.worldBounds;
+    if (!box || !points.length) return fallback;
+    const approachAt = roadPoint(420);
+    const approach = new THREE.Vector3(approachAt[0], 1.15, approachAt[2]);
+    const origin = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    const hit = new THREE.Vector3();
+    const ray = new THREE.Ray();
+    let best = null;
+    let bestDistance = -Infinity;
+    for (const point of points) {
+      origin.set(point[0], 1.15, point[1]);
+      direction.copy(approach).sub(origin);
+      const distance = direction.length();
+      if (distance < 0.1) continue;
+      ray.set(origin, direction.multiplyScalar(1 / distance));
+      if (!ray.intersectBox(box, hit) || hit.distanceTo(origin) >= distance - 0.1) continue;
+      if (distance > bestDistance) { bestDistance = distance; best = point; }
+    }
+    return best || fallback;
+  }
+  const blackAt = enemySpawn(concealedApproachSpawn(ruinedHouse, ruinCover, ruinCover[0])
+    || [roadPoint(470, 5)[0], roadPoint(470, 5)[2]]);
+  const redAt = enemySpawn(concealedApproachSpawn(clinic, clinicCover, clinicCover[2])
+    || [roadPoint(492, -5)[0], roadPoint(492, -5)[2]]);
+  const townEnemies = createTownEnemies({
+    scene: outside,
+    colliders: colliders.outside,
+    assets,
+    navigationObstacles: [
+      ruinedHouse?.userData?.worldBounds,
+      clinic?.userData?.worldBounds,
+    ],
+    lowCost: options.quality === 'mobile',
+    entries: [
+      {
+        asset: 'enemyOldManBlack', style: 'black', name: 'Town_Enemy_Black',
+        position: blackAt, heading: TOWN_BEARING + Math.PI,
+        patrol: ruinCover.slice(0, 4), cover: allCover,
+      },
+      {
+        asset: 'enemyOldManRed', style: 'red', name: 'Town_Enemy_Red',
+        position: redAt, heading: TOWN_BEARING,
+        patrol: clinicCover.slice(0, 4), cover: allCover,
+      },
+    ],
+  });
+  // Preserve the public world API used by combat and existing saves while the
+  // old static residents become actual animated hostiles.
+  const townsfolk = townEnemies.roots;
+  const downTownsfolk = (root) => townEnemies.down(root);
+
   dress(assets.propStreetLight, [[-4.2, 17.2, 1.6], [4.2, 17.2, -1.6]], { shrink: 0.2 });
 
   // The route from the gate to the shelter door, marked out rather than
@@ -928,10 +1001,16 @@ export function createGameWorld(assets, options = {}) {
     // Two levels of detail, split by distance rather than by camera: the
     // hedges you can walk up to are the full build, the two hundred behind
     // them are a quarter of the blocks and identical in silhouette.
-    scatter(assets.hedgerow, hedgeNear, { name: 'Hedge_Near', castShadow: true });
-    scatter(assets.hedgerowFar || assets.hedgerow, hedgeFar,
+    const hedgeFactor = THREE.MathUtils.lerp(.42, 1, foliage);
+    const withinBudget = (items, factor) => items.filter((_, index) =>
+      ((index * 421 + 173) % 997) / 997 < factor);
+    const nearHedges = withinBudget(hedgeNear, hedgeFactor);
+    const farHedges = withinBudget(hedgeFar, hedgeFactor);
+    const budgetGates = withinBudget(gates, Math.max(.62, hedgeFactor));
+    scatter(assets.hedgerow, nearHedges, { name: 'Hedge_Near', castShadow: true });
+    scatter(assets.hedgerowFar || assets.hedgerow, farHedges,
       { name: 'Hedge_Far', castShadow: false });
-    scatter(assets.hedgeGap, gates, { name: 'Field_Gates', castShadow: true });
+    scatter(assets.hedgeGap, budgetGates, { name: 'Field_Gates', castShadow: true });
 
     // --- What stands in the fields ------------------------------------------
     // Rejection sampling against the noise: brambles take the rank ground,
@@ -989,7 +1068,7 @@ export function createGameWorld(assets, options = {}) {
       (x, z) => clear(x, z, 13) && random() < rankness(x, z) * 1.7,
       { spacing: 5.5 })
       .map(([x, z]) => [x, z, random() * Math.PI * 2, between(0.75, 1.6)]);
-    const standing = [...hedgeTrees, ...copse];
+    const standing = [...withinBudget(hedgeTrees, hedgeFactor), ...copse];
     if (deadTrees.length) {
       // Five different dead forms, dealt out so no two neighbours match.
       deadTrees.forEach((tree, index) => {
@@ -1029,7 +1108,7 @@ export function createGameWorld(assets, options = {}) {
       }
       scatter(assets.telegraphPole, poles, { name: 'Telegraph_Poles', castShadow: false });
     }
-    return { hedges: hedgeNear.length + hedgeFar.length, gates: gates.length,
+    return { hedges: nearHedges.length + farHedges.length, gates: budgetGates.length,
       scrub: scrub.length, tufts: tufts.length, trees: standing.length };
   }
   const country = countryside();
@@ -1084,7 +1163,7 @@ export function createGameWorld(assets, options = {}) {
   const wildlife = creatures.wildlife;
 
   // Rain is an atmospheric effect, not physical world geometry.
-  const rainCount=320;
+  const rainCount=options.quality === 'mobile' ? 160 : 320;
   const rainGeo=new THREE.PlaneGeometry(.012,.44);
   const rainMat=new THREE.MeshBasicMaterial({color:0xaec1cb,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide});
   const rain=new THREE.InstancedMesh(rainGeo,rainMat,rainCount);
@@ -1428,7 +1507,10 @@ export function createGameWorld(assets, options = {}) {
     });
     weaponAction.add(model);
     heldModel = model;
-    playerCharacter.setWeapon(model);
+    playerCharacter.setWeapon(model, {
+      key: heldKey,
+      family: family || 'rifle',
+    });
     heldSights = measureSights(model);
     return model;
   }
@@ -1730,6 +1812,15 @@ export function createGameWorld(assets, options = {}) {
     sky.update(dt, world === 'outside' ? playerPosition : null);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
+    townEnemies.update(dt, playerPosition, world === 'outside');
+    if (world === 'outside') {
+      for (const building of townBuildings) {
+        const reach = building.userData.renderDistance || 900;
+        const dx = building.position.x - playerPosition.x;
+        const dz = building.position.z - playerPosition.z;
+        building.visible = dx * dx + dz * dz <= reach * reach;
+      }
+    }
     armory?.update(dt);
     updateAction(dt);
     if (blastLeaf) blastLeaf.position.x = THREE.MathUtils.damp(blastLeaf.position.x,doorOpen?3.55:0,3.4,dt);
@@ -1751,12 +1842,6 @@ export function createGameWorld(assets, options = {}) {
       for (const light of floodLights) light.intensity = 4.5 * night;
       if (range?.lamp) range.lamp.intensity = 5.5 * night;
       if (solarGlow) solarGlow.intensity = 4.5 * night;
-      // Aerial perspective on the town: half a kilometre of air takes most of
-      // the colour out of it and leaves whatever the horizon is doing.
-      const horizon = sky.uniforms.horizon.value;
-      for (const material of townMaterials) {
-        material.color.copy(material.userData.baseColor).lerp(horizon, 0.58);
-      }
     }
     if (!rain.visible) return;
     for(let i=0;i<rainData.length;i++){
@@ -1784,7 +1869,8 @@ export function createGameWorld(assets, options = {}) {
     playGun,setWeapon,setDoorOpen,setHatchOpen,update,
     heldWeapon:()=>heldKey,
     heldSights:()=>heldSights,
-    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,aircraft,townsfolk,downTownsfolk,country,
+    bunkerLights,emergency,siloWorld,armory,garrison,range,sky,floodLights,vehicles,aircraft,
+    townBuildings,townEnemies,townsfolk,downTownsfolk,country,
     gateIsOpen:()=>gateOpen,
     gateTravel:()=>gateSlide,
     gateMode:()=>gateMode,

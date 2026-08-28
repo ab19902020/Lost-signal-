@@ -12,39 +12,64 @@ import { findNamed } from './assets.js';
 // The model is authored nose-down-Z, which is the same convention the player's
 // yaw uses, so a heading is a heading whether you are walking or driving.
 
-const WHEELBASE = 2.92;        // front axle to rear axle, from the model
-const WHEEL_RADIUS = 0.34;
-const HALF_LENGTH = 2.21;
-const HALF_WIDTH = 0.84;
+const WHEELBASE = 2.48;        // measured between the uploaded model's hubs
+const WHEEL_RADIUS = 0.35;
+const HALF_LENGTH = 2.10;
+const HALF_WIDTH = 0.86;
 // The body is tested as three circles down its spine rather than one big one:
 // a single circle either lets the nose through the fence or refuses to fit
 // through the gate.
-const PROBE_Z = [-1.55, 0, 1.55];
-const PROBE_RADIUS = 0.80;
+const PROBE_Z = [-1.40, 0, 1.40];
+const PROBE_RADIUS = 0.82;
 
 const EYE = new THREE.Vector3(0.40, 1.30, -0.28);    // right-hand drive
 const DOOR = new THREE.Vector3(1.62, 0, -0.20);      // out of the driver's side
 
-const TOP_SPEED = 17.5;        // m/s, about forty miles an hour
-const REVERSE_SPEED = 6.0;
-const ENGINE = 5.6;            // m/s² at full throttle
-const BRAKE = 12.0;
-const DRAG = 0.021;            // proportional to v², what sets the top speed
-const ROLL = 2.6;              // engine braking and rolling resistance off the throttle
+// Mk III RS Turbo character: a light, quick front-driver with five close gears
+// and a real 125-ish mph top end, rather than the forty-mph estate tune this
+// controller originally carried. Values remain forgiving enough for a pad.
+const TOP_SPEED = 57.0;        // m/s, 127.5 mph
+const REVERSE_SPEED = 9.0;
+const ENGINE = 9.1;            // first-gear acceleration at full boost
+const BRAKE = 15.0;
+const DRAG = 0.00125;          // balances top-gear power at maximum speed
+const ROLL = 0.82;
+const GEAR_LIMITS = [11.2, 20.1, 31.0, 43.5, TOP_SPEED];
+const GEAR_TORQUE = [1.18, 1.02, 0.82, 0.63, 0.45];
 const MAX_STEER = 0.62;        // radians of lock
-const GRIP_SPEED = 6.5;        // above this, the lock is progressively wound off
+const GRIP_SPEED = 8.5;        // above this, the lock is progressively wound off
+
+export const VEHICLE_SPEC = Object.freeze({
+  make: 'Ford',
+  model: 'Escort RS Turbo',
+  paint: 'supplied weathered black finish',
+  drivenAxle: 'front',
+  topSpeed: TOP_SPEED,
+  reverseSpeed: REVERSE_SPEED,
+  gears: Object.freeze([...GEAR_LIMITS]),
+  maxSteer: MAX_STEER,
+});
 
 const UP = new THREE.Vector3(0, 1, 0);
 
 export function createVehicle({ scene, colliders, assets, place, addInteraction,
-  position = [0, 0, 0], heading = 0, name = 'Car', label = 'ESTATE CAR' }) {
+  position = [0, 0, 0], heading = 0, name = 'Car', label = 'FORD ESCORT RS TURBO' }) {
   const source = assets.carDrivable || assets.estateCar;
   if (!source) return null;
 
   const root = place(source, scene, position, [0, heading, 0], 1, { collide: false });
   root.name = name;
+  root.userData.make = VEHICLE_SPEC.make;
+  root.userData.model = VEHICLE_SPEC.model;
+  root.userData.drivenAxle = VEHICLE_SPEC.drivenAxle;
+
+  // Keep the uploaded scan's actual PBR paint, trim, cabin and wheel texture.
+  // Every moving part uses the same supplied material so the extracted pivots
+  // remain visually continuous with the fused body.
 
   const shell = findNamed(root, 'Car_Shell');
+  const steeringWheel = findNamed(root, 'Car_SteeringWheel');
+  const steeringWheelRest = steeringWheel?.rotation.z || 0;
   const wheels = ['LF', 'RF', 'LR', 'RR']
     .map((tag) => findNamed(root, `Car_Wheel_${tag}`));
   const [frontLeft, frontRight] = wheels;
@@ -107,6 +132,11 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     speed: 0,
     steer: 0,
     wheelSpin: 0,
+    frontWheelSpin: 0,
+    rearWheelSpin: 0,
+    gear: 1,
+    rpm: 0.26,
+    shifted: false,
     lean: 0,
     pitch: 0,
     slide: 0,
@@ -173,7 +203,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     // straighten on their own when the driver lets go, and the lock winds off
     // with speed so the car does not fold itself in half at forty.
     const lock = MAX_STEER * (fast > GRIP_SPEED
-      ? THREE.MathUtils.lerp(1, 0.42, Math.min(1, (fast - GRIP_SPEED) / (TOP_SPEED - GRIP_SPEED)))
+      ? THREE.MathUtils.lerp(1, 0.28, Math.min(1, (fast - GRIP_SPEED) / (TOP_SPEED - GRIP_SPEED)))
       : 1);
     // Positive steer means right. The heading here is the player's yaw, and
     // three.js yaw runs the angle *down* as you turn right, so the lock the
@@ -184,11 +214,30 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
     // Longitudinal forces. Throttle against travel is the brake pedal, which
     // is how every arcade car since Out Run has worked.
+    const previousGear = state.gear;
+    if (state.speed >= 0) {
+      const found = GEAR_LIMITS.findIndex((limit) => fast <= limit);
+      state.gear = found < 0 ? GEAR_LIMITS.length : found + 1;
+    } else {
+      state.gear = 0;
+    }
+    const gearIndex = Math.max(0, state.gear - 1);
+    const gearFloor = gearIndex ? GEAR_LIMITS[gearIndex - 1] : 0;
+    const gearCeiling = GEAR_LIMITS[gearIndex] || REVERSE_SPEED;
+    const throughGear = THREE.MathUtils.clamp((fast - gearFloor)
+      / Math.max(1, gearCeiling - gearFloor), 0, 1);
+    state.rpm = state.gear === 0 ? 0.30 + fast / REVERSE_SPEED * 0.62
+      : 0.28 + throughGear * 0.72;
+    state.shifted = previousGear !== state.gear && previousGear > 0 && state.gear > 0;
+
     let accel;
     if (controls.brake) {
       accel = -Math.sign(state.speed) * BRAKE * (state.slide > .5 ? .62 : 1);
     } else if (throttle > 0) {
-      accel = state.speed < -0.4 ? BRAKE : ENGINE * throttle;
+      // Only the front axle is powered. The low gears get the turbo shove;
+      // higher gears trade it for the real car's long top end.
+      accel = state.speed < -0.4 ? BRAKE
+        : ENGINE * GEAR_TORQUE[gearIndex] * throttle * (1 - throughGear * 0.14);
     } else if (throttle < 0) {
       accel = state.speed > 0.4 ? -BRAKE : ENGINE * throttle * 0.55;
     } else {
@@ -265,12 +314,23 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
     // Wheels: the front pair point where the steering says, all four roll at
     // the speed the car is actually doing.
-    state.wheelSpin += travel / WHEEL_RADIUS;
+    const rollingSpin = travel / WHEEL_RADIUS;
+    // Front-wheel drive: under boost the driven tyres turn a little faster
+    // than the road while the rears remain free-rolling. It is subtle at speed
+    // and visible pulling away on gravel.
+    const driveSlip = Math.max(0, throttle) * Math.max(0, 1 - fast / 16) * 0.16;
+    state.frontWheelSpin += rollingSpin * (1 + driveSlip);
+    state.rearWheelSpin += rollingSpin;
+    state.wheelSpin = state.rearWheelSpin; // retained for diagnostics/save QA
     wheels.forEach((wheel, i) => {
       if (!wheel) return;
-      wheel.rotation.set(state.wheelSpin, restY[i], 0);
+      wheel.rotation.set(i < 2 ? state.frontWheelSpin : state.rearWheelSpin, restY[i], 0);
     });
     for (const pivot of steerPivots) pivot.rotation.y = state.steer;
+    if (steeringWheel) {
+      steeringWheel.rotation.z = steeringWheelRest
+        - (state.steer / MAX_STEER) * 2.25;
+    }
 
     const braking = !!controls.brake || (throttle < 0 && state.speed > 0.4);
     setLampGlow(tailLamps, state.lights ? (braking ? 2.6 : .55) : (braking ? 2.0 : 0), 0xff2a17);
@@ -314,6 +374,11 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     set occupied(value) { state.occupied = !!value; hull.enabled = !value; },
     position: (target = new THREE.Vector3()) => target.set(state.x, state.y, state.z),
     topSpeed: TOP_SPEED,
+    make: VEHICLE_SPEC.make,
+    model: VEHICLE_SPEC.model,
+    drivenAxle: 'front',
+    get gear() { return state.gear; },
+    get rpm() { return state.rpm; },
     label,
   };
 

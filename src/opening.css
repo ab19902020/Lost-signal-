@@ -216,12 +216,15 @@
 
 .opening-close,
 .opening-audio-gate button {
+  min-height: 44px;
   padding: 9px 12px;
   border: 1px solid rgba(190, 226, 200, .24);
   background: rgba(20, 42, 27, .65);
   color: #e9f5ec;
   font: 700 8px inherit;
   letter-spacing: .16em;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .opening-setting {
@@ -431,7 +434,6 @@
   letter-spacing: .16em;
 }
 
-.opening-audio-gate,
 .opening-handoff,
 .opening-failure {
   position: absolute;
@@ -443,6 +445,35 @@
   padding: 30px;
   background: rgba(0, 3, 2, .93);
   text-align: center;
+}
+
+.opening-audio-gate {
+  position: absolute;
+  z-index: 60;
+  left: 50%;
+  bottom: clamp(58px, 10vh, 100px);
+  display: grid;
+  width: min(620px, calc(100vw - 34px));
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid rgba(169, 214, 181, .3);
+  background: rgba(2, 10, 6, .94);
+  box-shadow: 0 16px 55px rgba(0, 0, 0, .72);
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.opening-audio-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.opening-audio-gate button {
+  width: 100%;
+  pointer-events: auto;
 }
 
 .opening-audio-gate p,
@@ -497,6 +528,8 @@
   .opening-archive h2 { font-size: 12vw; }
   .opening-subtitle { bottom: 65px; width: 88vw; font-size: 9px; }
   .opening-audio-badge { left: 17px; bottom: 28px; max-width: 48vw; line-height: 1.5; }
+  .opening-audio-gate { bottom: 22px; }
+  .opening-audio-actions { grid-template-columns: 1fr; }
   .opening-setting { grid-template-columns: 1fr; gap: 10px; }
   .opening-toggle { justify-self: start; }
 }

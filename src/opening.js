@@ -628,7 +628,14 @@ function markup(hasSave) {
       <div class="opening-audio-badge">ORIGINAL AUDIO // TAKE SHELTER NOW // 62.20 SEC</div>
     </section>
 
-    <div class="opening-audio-gate" hidden><p>AUDIO PLAYBACK WAS PAUSED BY THIS DEVICE</p><button type="button">PLAY CUTSCENE WITH AUDIO</button></div>
+    <div class="opening-audio-gate" role="status" aria-live="polite" hidden>
+      <p>AUDIO COULD NOT START — THE CUTSCENE IS CONTINUING SILENTLY</p>
+      <div class="opening-audio-actions">
+        <button id="openingRetryAudio" type="button">ENABLE AUDIO</button>
+        <button id="openingContinueSilent" type="button">CONTINUE WITHOUT AUDIO</button>
+        <button id="openingAudioSkip" type="button">SKIP INTRO ›</button>
+      </div>
+    </div>
     <div class="opening-handoff" hidden><b>OPENING PROTOCOL COMPLETE</b><div class="opening-loader"><i></i></div><p id="openingHandoffText">PREPARING SHELTER 47…</p></div>
     <div class="opening-failure" hidden><b>SHELTER STARTUP FAILED</b><p id="openingFailureText"></p></div>
   `;
@@ -681,6 +688,7 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
   let menuEpoch = performance.now();
   let cutsceneEpoch = 0;
   let audioFailed = false;
+  let audioGateTimer = 0;
   let lastUi = -1;
 
   function applySettings() {
@@ -763,7 +771,7 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
     mode = 'handoff';
     audio.pause();
     cutscene.hidden = true;
-    audioGate.hidden = true;
+    hideAudioGate();
     handoff.hidden = false;
     fade.style.opacity = '0';
     try {
@@ -772,6 +780,73 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
     } catch (error) {
       showFailure(error);
     }
+  }
+
+  function hideAudioGate() {
+    window.clearTimeout(audioGateTimer);
+    audioGateTimer = 0;
+    audioGate.hidden = true;
+  }
+
+  function showAudioGate() {
+    hideAudioGate();
+    audioGate.hidden = false;
+    // The message is only an audio affordance, never a modal barrier. If the
+    // host browser does not forward touch at all, it removes itself and the
+    // silent timeline still reaches the game normally.
+    audioGateTimer = window.setTimeout(() => {
+      if (mode === 'cutscene' && audioFailed) audioGate.hidden = true;
+    }, 6500);
+  }
+
+  function continueCutsceneWithoutAudio() {
+    if (mode !== 'cutscene') return;
+    // Preserve any fraction of the soundtrack that did play before Android or
+    // an embedded browser paused it, then drive the same timeline from the
+    // frame clock. This is the guarantee that the opening can never freeze at
+    // T+00:00:00 behind an audio permission prompt.
+    const elapsed = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    audio.pause();
+    audioFailed = true;
+    cutsceneEpoch = performance.now() - elapsed * 1000;
+    showAudioGate();
+  }
+
+  function retryCutsceneAudio() {
+    if (mode !== 'cutscene') return;
+    const silentTime = clamp((performance.now() - cutsceneEpoch) / 1000, 0, OPENING_LENGTH);
+    audio.currentTime = silentTime;
+    let play;
+    try {
+      // play() must be the first permission-sensitive call made by this touch.
+      play = audio.play();
+    } catch {
+      continueCutsceneWithoutAudio();
+      return;
+    }
+    Promise.resolve(play).then(() => {
+      audioFailed = false;
+      hideAudioGate();
+    }).catch(() => continueCutsceneWithoutAudio());
+  }
+
+  function bindTouchSafePress(button, handler) {
+    let handledPointerAt = -Infinity;
+    button.addEventListener('pointerup', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handledPointerAt = performance.now();
+      handler();
+    });
+    // Keyboard activation and browsers without Pointer Events still receive a
+    // click; the time guard prevents the synthetic click after pointerup from
+    // running the action twice.
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (performance.now() - handledPointerAt < 700) return;
+      handler();
+    });
   }
 
   function startCutscene(restore) {
@@ -787,15 +862,23 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
     failure.hidden = true;
     handoff.hidden = true;
     cutscene.hidden = false;
-    audioGate.hidden = true;
+    hideAudioGate();
     fade.style.opacity = '1';
     audio.currentTime = 0;
     audio.volume = clamp(settings.master / 100 * settings.broadcast / 100, 0, 1);
     cutsceneEpoch = performance.now();
     onSequenceStart?.({ settings: { ...settings } });
+    let play;
+    try {
+      // Android grants one permission-sensitive action per physical press.
+      // Start the important part first; asking for fullscreen before this call
+      // consumed that gesture and left the audio screen impossible to dismiss.
+      play = audio.play();
+    } catch {
+      continueCutsceneWithoutAudio();
+    }
     void enterLandscapeFullscreen();
-    const play = audio.play();
-    if (play) play.catch(() => { audioGate.hidden = false; });
+    if (play) play.catch(() => continueCutsceneWithoutAudio());
   }
 
   function showFailure(error) {
@@ -804,13 +887,14 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
     menu.hidden = true;
     cutscene.hidden = true;
     handoff.hidden = true;
-    audioGate.hidden = true;
+    hideAudioGate();
     failure.hidden = false;
     elements.failure.textContent = String(error?.message || error || 'The game could not start.');
   }
 
   function hide() {
     audio.pause();
+    hideAudioGate();
     root.hidden = true;
     document.body.classList.remove('opening-active');
     cancelAnimationFrame(animationFrame);
@@ -828,15 +912,12 @@ export function createOpeningExperience({ hasSave = false, onEnter, onSequenceSt
   });
   root.querySelector('#openingSkip').addEventListener('click', () => void completeCutscene());
   root.querySelector('#openingFullscreen').addEventListener('click', () => void enterLandscapeFullscreen());
-  root.querySelector('.opening-audio-gate button').addEventListener('click', () => {
-    const play = audio.play();
-    if (play) play.then(() => { audioGate.hidden = true; }).catch(() => {});
-  });
+  bindTouchSafePress(root.querySelector('#openingRetryAudio'), retryCutsceneAudio);
+  bindTouchSafePress(root.querySelector('#openingContinueSilent'), hideAudioGate);
+  bindTouchSafePress(root.querySelector('#openingAudioSkip'), () => void completeCutscene());
   audio.addEventListener('ended', () => void completeCutscene());
   audio.addEventListener('error', () => {
-    audioFailed = true;
-    cutsceneEpoch = performance.now();
-    audioGate.hidden = true;
+    continueCutsceneWithoutAudio();
   });
 
   animationFrame = requestAnimationFrame(frame);

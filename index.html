@@ -79,7 +79,9 @@ body.overlay-open #tasks{opacity:0}
 #crosshair:after{width:1px;height:11px;left:8.5px;top:3.5px}
 /* Aiming means looking through the weapon's own sights, so the crosshair
    comes off the glass entirely rather than floating over the front post. */
-body.aiming #crosshair{display:none}
+body.aiming.first-person #crosshair{display:none}
+body.third-person.aiming #crosshair:before,
+body.third-person.aiming #crosshair:after{background:#b9ffd0;box-shadow:0 0 7px rgba(130,255,170,.9)}
 /* Telescopic sight. Only the four precision rifles carry glass, and looking
    down one has to be a different act from lining up irons: the surround goes
    black, the frame narrows to the eyepiece, and a real reticle sits in it. */
@@ -268,6 +270,7 @@ body.driving #viewBtn{display:none}
 <tr><td>N</td><td>Infrared, while a camera feed is open</td></tr>
 <tr><td>Tab (hold)</td><td>Weapon wheel — steer with the mouse, release to take it</td></tr>
 <tr><td>X</td><td>Holster the weapon, and take it out again</td></tr>
+<tr><td>G</td><td>Dance — movement, aim, jump, or fire cancels it</td></tr>
 <tr><td>V</td><td>Switch between GTA-style third person and first person</td></tr>
 <tr><td>H</td><td>This manual</td></tr>
 <tr><td>Esc</td><td>Close a screen</td></tr>
@@ -276,6 +279,7 @@ body.driving #viewBtn{display:none}
 <tr><td>E</td><td>Get into the estate car at the gate, and out again</td></tr>
 <tr><td>W / S</td><td>Throttle and reverse — S against travel is the brake</td></tr>
 <tr><td>A / D</td><td>Steer. The lock winds off as the speed comes up</td></tr>
+<tr><td>Transmission</td><td>Five-speed front-wheel drive, with automatic shifts</td></tr>
 <tr><td>Space</td><td>Handbrake — locks the rears and swings the tail</td></tr>
 <tr><td>L</td><td>Headlamps</td></tr>
 <tr><td>B</td><td>Horn</td></tr>
@@ -295,7 +299,7 @@ body.driving #viewBtn{display:none}
 <tr><td>L1 / R1</td><td>Previous · next camera &nbsp;·&nbsp; rudder, in the air</td></tr>
 <tr><td>R1</td><td>Next weapon</td></tr>
 <tr><td>L3 / R3</td><td>Sprint · holster</td></tr>
-<tr><td>D-pad</td><td>Weapon slots 1&ndash;4 · zoom a camera feed</td></tr>
+<tr><td>D-pad</td><td>Down: dance · up/left/right: weapon slots · zoom a camera feed</td></tr>
 <tr><td>Touchpad</td><td>Switch first-person / third-person view</td></tr>
 <tr><td>Options</td><td>This manual — and Circle closes it</td></tr>
 </table>
@@ -304,7 +308,7 @@ finger or a key that a pad cannot do. Plugging one in takes the thumb pads off
 the glass; the button below puts them back if you would rather have both.</p>
 <p><button id="touchToggle" class="opt">ON-SCREEN CONTROLS: AUTO</button></p>
 <h3>FLYING</h3>
-<p>An airstrip runs across the fields east of the compound, with a light single parked on the near threshold. Get in, open the throttle, hold the centreline, and ease back at about sixty knots. It stalls below fifty — the nose drops, and the only cure is to put it down and let the speed build again.</p><table>
+<p>An airstrip runs across the fields east of the compound, with the supplied RAF aircraft parked on the near threshold. Get in, open the throttle, hold the centreline, and ease back at about sixty knots. It stalls below fifty — the nose drops, and the only cure is to put it down and let the speed build again.</p><table>
 <tr><td>E</td><td>Get into the aircraft, and out again once it has stopped</td></tr>
 <tr><td>W / S</td><td>Throttle open and closed</td></tr>
 <tr><td>Mouse</td><td>Pitch and roll — the stick, not the head</td></tr>

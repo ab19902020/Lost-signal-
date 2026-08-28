@@ -94,8 +94,10 @@ function gradeMaterials(scene) {
   });
 }
 
-export function createGameWorld(assets) {
-  const game = createBaseWorld(assets);
+export function createGameWorld(assets, options = {}) {
+  // Forward the renderer's tier into the actual world builder. Dropping this
+  // argument silently planted desktop-density countryside on every phone.
+  const game = createBaseWorld(assets, options);
   const { bunker, outside } = game;
 
   bunker.background = new THREE.Color(0x0d1010);
@@ -161,7 +163,7 @@ export function createGameWorld(assets) {
   // silhouette separation while a modest ambient term lifts only the faces
   // the moon cannot reach.
   outside.background = new THREE.Color(0x1a2831);
-  outside.fog = new THREE.FogExp2(0x22343d, 0.0125);
+  outside.fog = new THREE.FogExp2(0x22343d, 0.0008);
   outside.traverse((object) => {
     if (object.isHemisphereLight) {
       object.color.setHex(0x819caf);

@@ -12,9 +12,15 @@ Only assets with explicit redistribution terms are copied into this repository.
 the project owner. The FBX/OBJ sources are not committed; `tools/convert-supplied-packs.sh`
 reproduces the GLBs from a local copy of them.
 
-- **Main military character** — `main_character.glb`; supplied by the project
-  owner. The runtime copy preserves the original humanoid rig and PBR material,
+- **Main rugged character** — `main_character.glb`; supplied by the project
+  owner. This replaces the earlier military protagonist. The runtime copy
+  preserves its humanoid rig, all nine authored animations and PBR material,
   with geometry and textures optimised for real-time mobile rendering.
+- **Town characters, Ford Escort, aircraft and road-end buildings** —
+  `enemy_old_man_*.glb`, `ford_escort_rs_turbo.glb`, `raf_aircraft.glb` and
+  `town_building_*.glb`; supplied by the project owner. The Ford runtime copy
+  separates wheel and steering pivots from the fused scan and reduces its
+  geometry/textures for mobile rendering while retaining the supplied PBR art.
 
 - **Quaternius packs** — `adventurer.glb`, the twenty-five armoury weapons,
   `solar_array.glb` (Solar Panel Structure) and `dead_tree_0*.glb` (Dead Trees);

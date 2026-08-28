@@ -48,16 +48,40 @@ const STEER_RATE = 0.62;         // nosewheel authority, taxiing
 
 const EYE = new THREE.Vector3(-0.34, 0.58, -0.55);
 const DOOR = new THREE.Vector3(-2.60, 0, -0.30);
+const RAF_EYE = new THREE.Vector3(0.0, 1.52, -0.38);
+const RAF_DOOR = new THREE.Vector3(-1.55, 0, -0.10);
+const _visualBox = new THREE.Box3();
+const _visualSize = new THREE.Vector3();
 
 const _up = new THREE.Vector3(0, 1, 0);
 
 export function createAircraft({ scene, colliders, assets, place, addInteraction,
   position = [0, 0, 0], heading = 0, name = 'Aircraft', label = 'LIGHT AIRCRAFT' }) {
-  const source = assets.lightAircraft;
+  const suppliedAircraft = !!assets.rafAircraft;
+  const source = assets.rafAircraft || assets.lightAircraft;
   if (!source) return null;
 
   const root = place(source, scene, position, [0, heading, 0], 1, { collide: false });
   root.name = name;
+
+  if (suppliedAircraft) {
+    // The supplied RAF model is normalised to one metre and points along +Z;
+    // the flight controller is full-scale and flies down local -Z. Keep the
+    // physics root clean, turn only the visual, scale it to a compact fighter's
+    // 9.2 m length, and put its undercarriage back on the root's ground plane.
+    const visual = new THREE.Group();
+    visual.name = 'RAF_Aircraft_Visual';
+    for (const child of [...root.children]) visual.add(child);
+    root.add(visual);
+    visual.rotation.y = Math.PI;
+    root.updateMatrixWorld(true);
+    _visualBox.setFromObject(visual);
+    _visualBox.getSize(_visualSize);
+    visual.scale.setScalar(9.2 / Math.max(0.1, _visualSize.z));
+    root.updateMatrixWorld(true);
+    _visualBox.setFromObject(visual);
+    visual.position.y -= _visualBox.min.y - root.position.y;
+  }
 
   const prop = findNamed(root, 'Plane_Prop');
   const propDisc = findNamed(root, 'Disc_Blur');
@@ -71,8 +95,9 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
   const seat = findNamed(root, 'Seat_Pilot');
   const door = findNamed(root, 'Door_Pilot');
 
+  const gearHeight = suppliedAircraft ? 0 : GEAR_HEIGHT;
   const state = {
-    position: new THREE.Vector3(position[0], position[1], position[2]),
+    position: new THREE.Vector3(position[0], position[1] + gearHeight, position[2]),
     velocity: new THREE.Vector3(),
     quaternion: new THREE.Quaternion().setFromAxisAngle(_up, heading),
     throttle: 0,
@@ -86,6 +111,7 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
     impact: 0,
     controls: { pitch: 0, roll: 0, yaw: 0 },
   };
+  root.position.copy(state.position);
 
   // Parked, it is something you walk around; flown, its own hull must not be
   // the first thing it hits.
@@ -151,7 +177,7 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
     const speed = state.velocity.length();
     state.airspeed = speed;
     const ground = groundAt(state.position.x, state.position.z);
-    state.altitude = state.position.y - GEAR_HEIGHT - ground;
+    state.altitude = state.position.y - gearHeight - ground;
 
     // Angle of attack: how far the airflow is below the nose. With no airflow
     // there is no angle and no lift, which is what keeps a parked aeroplane on
@@ -223,7 +249,7 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
     state.position.addScaledVector(state.velocity, dt);
 
     // The ground.
-    const floor = groundAt(state.position.x, state.position.z) + GEAR_HEIGHT;
+    const floor = groundAt(state.position.x, state.position.z) + gearHeight;
     if (state.position.y <= floor) {
       const sink = -state.velocity.y;
       if (!state.grounded && sink > 7) state.impact = Math.max(state.impact, sink);
@@ -330,12 +356,13 @@ export function createAircraft({ scene, colliders, assets, place, addInteraction
   // constant: the constant is only a fallback for a model that has not
   // got one, and a cabin that moves in Blender should not need a code
   // change here to keep the pilot's head in it.
-  const eyeAt = seat ? seat.position.clone() : EYE;
+  const eyeAt = seat ? seat.position.clone() : (suppliedAircraft ? RAF_EYE : EYE);
   const pilotEye = (target = new THREE.Vector3()) => toWorld(eyeAt, target);
 
   /** Where the pilot stands when they climb out. */
   function doorstep() {
-    const point = toWorld(door ? door.position : DOOR, new THREE.Vector3());
+    const point = toWorld(door ? door.position : (suppliedAircraft ? RAF_DOOR : DOOR),
+      new THREE.Vector3());
     for (let turn = 0; turn < 8 && colliders.contains(point.x, point.z, 0.36,
       point.y + 0.2, point.y + 1.7); turn++) {
       const angle = turn * (Math.PI / 4);

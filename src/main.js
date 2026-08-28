@@ -16,6 +16,12 @@ import { WEAPONS, DEFAULT_WEAPON, createLoadout, shotInterval, isUsable, aimPose
 import { createDecalField } from './decals.js';
 import { createOpeningExperience } from './opening.js';
 import { createGamepad } from './gamepad.js';
+import { composeShoulderCamera } from './third_person_camera.js';
+import {
+  GUN_SAMPLE_URLS,
+  fireSampleForWeapon,
+  reloadSamplesForWeapon,
+} from './gun_samples.js';
 
 const coarse = matchMedia('(pointer:coarse)').matches;
 const boot = document.getElementById('boot');
@@ -97,7 +103,10 @@ try {
   if (savedView === 'first' || savedView === 'third') cameraMode = savedView;
 } catch { /* private browsing can disable storage */ }
 let characterYaw = yaw;
-let cameraBoom = 3.15;
+let characterGroundY = 0;
+let cameraBoom = 3.5;
+let cameraShoulder = 0.72;
+let danceActive = false;
 let armed = false;
 // The service rifle's numbers. Everything else on the armoury wall carries its
 // own, out of the catalogue, but this pair is what an unmodified run starts on
@@ -224,7 +233,9 @@ function setCameraMode(mode, { announce = true } = {}) {
     return cameraMode;
   }
   cameraMode = next;
-  cameraBoom = next === 'third' ? 3.15 : 0;
+  cameraBoom = next === 'third' ? THIRD_PERSON_DISTANCE : 0;
+  cameraShoulder = next === 'third' ? THIRD_PERSON_SHOULDER : 0;
+  characterAimRefresh = 0;
   try { localStorage.setItem('ls.cameraView', cameraMode); } catch { /* optional preference */ }
   syncCameraPresentation();
   refreshWeaponView();
@@ -255,9 +266,15 @@ const TIERS = {
   // `foliage` is how much of the countryside gets planted. The layout is the
   // same at every tier — the same hedge lines, the same fields — there is
   // simply less standing in them.
-  mobile: { name: 'mobile', pixelRatio: 1.5, shadows: THREE.PCFShadowMap, samples: 0, smaa: true, grain: 0.0, ao: false, foliage: 0.34 },
-  balanced: { name: 'balanced', pixelRatio: 1.75, shadows: THREE.PCFSoftShadowMap, samples: 2, smaa: true, grain: 0.004, ao: false, foliage: 0.68 },
-  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4, smaa: true, grain: 0.007, ao: true, foliage: 1 },
+  // Mobile draws directly to the browser's antialiased backbuffer. That is
+  // both sharper and several full-screen passes cheaper than upscaling a
+  // half-float composer target on a phone.
+  mobile: { name: 'mobile', pixelRatio: 1.35, shadows: THREE.PCFShadowMap, samples: 0,
+    smaa: false, grain: 0, ao: false, foliage: 0.22, post: false },
+  balanced: { name: 'balanced', pixelRatio: 1.65, shadows: THREE.PCFSoftShadowMap, samples: 2,
+    smaa: true, grain: 0.003, ao: false, foliage: 0.58, post: true },
+  high: { name: 'high', pixelRatio: 2, shadows: THREE.PCFSoftShadowMap, samples: 4,
+    smaa: true, grain: 0.006, ao: true, foliage: 1, post: true },
 };
 const quality = (() => {
   // ?quality=high forces a tier. A headless browser reports four cores and a
@@ -270,10 +287,53 @@ const quality = (() => {
   if (cores <= 8) return TIERS.balanced;
   return TIERS.high;
 })();
+let activePixelRatio = Math.min(devicePixelRatio, quality.pixelRatio);
+let frameBudgetTime = 0;
+let frameBudgetFrames = 0;
+let fastFrameWindows = 0;
+
+function applyPixelRatio(ratio) {
+  activePixelRatio = THREE.MathUtils.clamp(ratio, 1, Math.min(devicePixelRatio, quality.pixelRatio));
+  renderer.setPixelRatio(activePixelRatio);
+  renderer.setSize(innerWidth, innerHeight, false);
+  if (quality.post) {
+    composer?.setPixelRatio(activePixelRatio);
+    composer?.setSize(innerWidth, innerHeight);
+  }
+  feedComposer?.setPixelRatio(activePixelRatio);
+  feedComposer?.setSize(innerWidth, innerHeight);
+}
+
+function updateFrameBudget(dt) {
+  if (quality.name !== 'mobile' || !started || cctv) return;
+  if (document.hidden || dt >= .049) {
+    frameBudgetTime = 0; frameBudgetFrames = 0; fastFrameWindows = 0;
+    return;
+  }
+  frameBudgetTime += dt;
+  frameBudgetFrames++;
+  if (frameBudgetTime < 3) return;
+  const fps = frameBudgetFrames / frameBudgetTime;
+  const maximum = Math.min(devicePixelRatio, quality.pixelRatio);
+  if (fps < 52 && activePixelRatio > 1.01) {
+    applyPixelRatio(activePixelRatio - .12);
+    fastFrameWindows = 0;
+  } else if (fps > 59 && activePixelRatio < maximum - .01) {
+    fastFrameWindows++;
+    if (fastFrameWindows >= 2) {
+      applyPixelRatio(activePixelRatio + .06);
+      fastFrameWindows = 0;
+    }
+  } else {
+    fastFrameWindows = 0;
+  }
+  frameBudgetTime = 0;
+  frameBudgetFrames = 0;
+}
 
 function createRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', alpha: false });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, quality.pixelRatio));
+  renderer.setPixelRatio(activePixelRatio);
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = quality.shadows;
@@ -290,8 +350,9 @@ function createRenderer() {
 function createComposer() {
   const size = new THREE.Vector2();
   renderer.getDrawingBufferSize(size);
-  const target = new THREE.WebGLRenderTarget(size.x, size.y, {
-    type: THREE.HalfFloatType,
+  const target = new THREE.WebGLRenderTarget(quality.post ? size.x : 1,
+    quality.post ? size.y : 1, {
+    type: quality.post ? THREE.HalfFloatType : THREE.UnsignedByteType,
     samples: quality.samples,
     colorSpace: THREE.LinearSRGBColorSpace,
   });
@@ -310,19 +371,28 @@ function createComposer() {
     composer.addPass(aoPass);
   }
 
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.11, 0.34, 1.02);
-  composer.addPass(bloomPass);
-
   gradePass = new ShaderPass(GradeShader);
   gradePass.uniforms.grain.value = quality.grain;
-  composer.addPass(gradePass);
-
-  composer.addPass(new OutputPass());
-  if (quality.smaa && !quality.samples) composer.addPass(new SMAAPass(size.x, size.y));
+  if (quality.post) {
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.11, 0.34, 1.02);
+    composer.addPass(bloomPass);
+    composer.addPass(gradePass);
+    composer.addPass(new OutputPass());
+    if (quality.smaa && !quality.samples) composer.addPass(new SMAAPass(size.x, size.y));
+  } else {
+    // The loop writes these two fields on every tier. A tiny value object keeps
+    // that path branch-free without allocating bloom's pyramid of render targets.
+    bloomPass = { strength: 0, threshold: 1 };
+  }
 
   // The CCTV feed gets its own chain so the monitor look never touches the
   // first-person view.
-  feedComposer = new EffectComposer(renderer, target.clone());
+  const feedTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
+    type: THREE.UnsignedByteType,
+    samples: 0,
+    colorSpace: THREE.LinearSRGBColorSpace,
+  });
+  feedComposer = new EffectComposer(renderer, feedTarget);
   feedComposer.addPass(new RenderPass(game.outside, game.cctvCameras[0]));
   feedPass = new ShaderPass(CameraFeedShader);
   feedComposer.addPass(feedPass);
@@ -338,11 +408,14 @@ async function prepare() {
       opening.setLoadStatus(`BRINGING SITE SYSTEMS ONLINE — ${step}/${total}`);
     });
 
-    game = createGameWorld(assets, { foliage: quality.foliage });
+    game = createGameWorld(assets, { foliage: quality.foliage, quality: quality.name });
     game.camera.rotation.order = 'YXZ';
     syncCameraPresentation();
 
     createComposer();
+    // Build the static ballistics lists while the loading screen is still up.
+    // No trigger pull should pay for a full scene traversal.
+    for (const scene of Object.values(game.scenes || {})) worldGeometry(scene);
     body.teleport(game.player.position.x, 0, game.player.position.z);
 
     wireGameEvents();
@@ -359,10 +432,15 @@ async function prepare() {
         start: () => { opening.hide(); beginGame({ restore: false }); },
         look: (y, p = pitch) => { yaw = y; pitch = p; },
         view: (mode) => mode ? setCameraMode(mode, { announce: false }) : cameraMode,
+        dance: (active = true) => setDancing(active, { announce: false }),
         character: () => ({
           name: game.playerCharacter?.model?.name ?? null,
           visible: game.playerCharacter?.root?.visible ?? false,
           weaponVisible: game.playerCharacter?.weaponMount?.visible ?? false,
+          animation: game.playerCharacter?.animationState?.() ?? null,
+          animations: game.playerCharacter?.animationNames?.() ?? [],
+          weaponFamily: game.playerCharacter?.weaponFamily?.() ?? null,
+          gripError: game.playerCharacter?.gripError?.() ?? null,
           bounds: game.playerCharacter?.bounds?.().getSize(new THREE.Vector3()).toArray()
             .map((value) => +value.toFixed(3)) ?? null,
         }),
@@ -830,6 +908,14 @@ function wireGameEvents() {
     enterAircraft(e.detail?.aircraft);
   });
 
+  addEventListener('lostsignal:enemyattack', (event) => {
+    if (!started || currentWorld !== 'outside' || driving || flying || health <= 0) return;
+    const enemy = event.detail?.enemy;
+    if (!enemy?.parent || enemy.userData.alive === false) return;
+    damage(Math.max(1, event.detail?.damage || 7));
+    flash('HOSTILE ATTACK — BREAK CONTACT OR RETURN FIRE', 1000);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -1137,6 +1223,12 @@ function releaseSprint() {
 }
 
 function setAiming(value) {
+  if (value) {
+    setDancing(false, { announce: false });
+    // Aiming is also the natural way to bring a holstered weapon back up,
+    // including one put away automatically when the player started dancing.
+    if (armed && holstered) setHolstered(false, { announce: false });
+  }
   // Asking to aim while running stops the running, rather than the running
   // refusing the aim. RUN is a latch on touch and on the pad, so the old rule
   // made it possible to be stuck sprinting with the sights permanently
@@ -1146,6 +1238,7 @@ function setAiming(value) {
   const next = !!value && armed && !reloading && !modal && !cctv && !seated && !driving;
   if (aiming === next) return aiming;
   aiming = next;
+  characterAimRefresh = 0;
   document.body.classList.toggle('aiming', aiming);
   document.getElementById('aimBtn')?.classList.toggle('on', aiming);
   setScoped(aiming);
@@ -1159,6 +1252,7 @@ function queueJump() {
     return false;
   }
   jumpQueued = true;
+  setDancing(false, { announce: false });
   setAiming(false);
   return true;
 }
@@ -1168,12 +1262,18 @@ function queueJump() {
 // (0.011 for a rifle, 0.098 for a sawn-off) while still opening a shotgun to a
 // real cone rather than a slightly fat point.
 const SPREAD_TO_NDC = 3;
-const PERSON_KINDS = ['resident', 'quartermaster'];
+const PERSON_KINDS = ['resident', 'quartermaster', 'enemy'];
 const CREATURE_KINDS = ['deer', 'rabbit', 'zombie', ...PERSON_KINDS];
 const _shotOrigin = new THREE.Vector3();
 const _shotDirection = new THREE.Vector3();
+const _shotJitter = new THREE.Vector2();
 const _hitNormal = new THREE.Vector3();
 const _normalMatrix = new THREE.Matrix3();
+const _crosshairTarget = new THREE.Vector3();
+const _ballisticTarget = new THREE.Vector3();
+const _centreAim = Object.freeze({ x: 0, y: 0 });
+const cameraAimRay = new THREE.Raycaster();
+let characterAimRefresh = 0;
 
 /** Put the player's ammunition back into the pool for the weapon they hold. */
 function syncAmmo() {
@@ -1230,6 +1330,23 @@ function setHolstered(value, { announce = true } = {}) {
   return holstered;
 }
 
+/** D-pad dance: explicit, cancellable, and never mistaken for an idle. */
+function setDancing(value, { announce = true } = {}) {
+  const next = !!value && started && !modal && !cctv && !seated && !driving && !flying;
+  if (next === danceActive) return danceActive;
+  danceActive = next;
+  if (danceActive) {
+    setAiming(false);
+    if (armed && !holstered) setHolstered(true, { announce: false });
+  }
+  if (announce) flash(danceActive ? 'DANCE — D-PAD DOWN TO STOP' : 'DANCE STOPPED', 1300);
+  return danceActive;
+}
+
+function toggleDance() {
+  return setDancing(!danceActive);
+}
+
 /** Draw a weapon already on the player. */
 function drawWeapon(key, { announce = true } = {}) {
   if (!isUsable(key) || !carried.includes(key)) return false;
@@ -1240,6 +1357,7 @@ function drawWeapon(key, { announce = true } = {}) {
   ammo = pool.magazine;
   reserve = pool.reserve;
   armed = true;
+  danceActive = false;
   holstered = false;
   reloading = false;
   reloadTimer = 0;
@@ -1294,21 +1412,27 @@ function cycleWeapon(step) {
 /** Anything that can be shot in the world the player is standing in. */
 function livingTargets() {
   const targets = [];
+  const add = (root) => {
+    if (!root?.parent || root.userData.alive === false) return;
+    const volumes = root.userData.hitVolumes;
+    if (volumes?.length) targets.push(...volumes.filter((volume) => volume.visible));
+    else targets.push(root);
+  };
   for (const root of game.wildlife) {
-    if (root.parent && root.userData.alive !== false) targets.push(root);
+    add(root);
   }
   if (currentWorld === 'silo') {
     for (const root of game.residents?.residents || []) {
-      if (root.parent && root.userData.alive !== false) targets.push(root);
+      add(root);
     }
   }
   if (currentWorld === 'outside') {
     for (const root of game.townsfolk || []) {
-      if (root.parent && root.userData.alive !== false) targets.push(root);
+      add(root);
     }
   }
   const eli = game.armory?.quartermaster;
-  if (currentWorld === 'bunker' && eli?.parent && eli.userData.alive !== false) targets.push(eli);
+  if (currentWorld === 'bunker') add(eli);
   return targets;
 }
 
@@ -1318,34 +1442,149 @@ function targetRootOf(object) {
   return node || null;
 }
 
-/** The world, minus the player and the marks already on it. */
+// Static mesh discovery happens once per scene. The old path recursively
+// traversed every top-level world object for every pellet and then intersected
+// the two uploaded building scans triangle-by-triangle. Bounds reject almost
+// everything here; the scans themselves expose cheap ballistic proxies.
+const worldMeshCache = new WeakMap();
+const _ballisticCandidates = [];
+const _ballisticHits = [];
+const _ballisticSphere = new THREE.Sphere();
+const _ballisticDelta = new THREE.Vector3();
+
+function descendsFrom(node, ancestor) {
+  for (let cursor = node; cursor; cursor = cursor.parent) {
+    if (cursor === ancestor) return true;
+  }
+  return false;
+}
+
 function worldGeometry(world) {
-  return world.children.filter((child) => child !== game.player && !child.userData.isDecal);
+  if (worldMeshCache.has(world)) return worldMeshCache.get(world);
+  const meshes = [];
+  world.traverse((part) => {
+    if ((!part.isMesh && !part.isSkinnedMesh) || part.userData.isDecal
+      || part.userData.skipBallistics || part.userData.hitProxy
+      || targetRootOf(part) || descendsFrom(part, game.player)) return;
+    if (part.isInstancedMesh && !part.userData.ballisticSolid) return;
+    const materials = Array.isArray(part.material) ? part.material : [part.material];
+    if (!part.userData.ballisticProxy && materials.every((material) => material?.visible === false)) return;
+    if (part.isInstancedMesh) part.computeBoundingSphere();
+    else if (!part.geometry?.boundingSphere) part.geometry?.computeBoundingSphere();
+    meshes.push(part);
+  });
+  worldMeshCache.set(world, meshes);
+  return meshes;
+}
+
+function canRayHitBounds(object, caster) {
+  let sphere = null;
+  if (object.isInstancedMesh) {
+    if (!object.boundingSphere) object.computeBoundingSphere();
+    sphere = object.boundingSphere;
+  } else {
+    if (!object.geometry?.boundingSphere) object.geometry?.computeBoundingSphere();
+    sphere = object.geometry?.boundingSphere;
+  }
+  if (!sphere) return true;
+  _ballisticSphere.copy(sphere).applyMatrix4(object.matrixWorld);
+  _ballisticDelta.copy(_ballisticSphere.center).sub(caster.ray.origin);
+  const along = _ballisticDelta.dot(caster.ray.direction);
+  if (along < -_ballisticSphere.radius || along > caster.far + _ballisticSphere.radius) return false;
+  return caster.ray.distanceSqToPoint(_ballisticSphere.center)
+    <= _ballisticSphere.radius * _ballisticSphere.radius;
+}
+
+function firstWorldImpact(world, caster = ray) {
+  _ballisticCandidates.length = 0;
+  for (const object of worldGeometry(world)) {
+    if (!object.visible || !canRayHitBounds(object, caster)) continue;
+    _ballisticCandidates.push(object);
+  }
+  _ballisticHits.length = 0;
+  caster.intersectObjects(_ballisticCandidates, false, _ballisticHits);
+  return _ballisticHits.find((hit) => hit.object.userData.ballisticProxy
+    || (hit.object.isMesh && hit.object.visible && !targetRootOf(hit.object)));
+}
+
+/**
+ * Resolve what the centre-screen crosshair actually covers. The character and
+ * weapon use this same point, so camera composition, visible muzzle and hit
+ * detection cannot disagree about the target.
+ */
+function crosshairTarget(world, ndc = _centreAim, range = weapon?.range ?? 90, out = _crosshairTarget) {
+  game.camera.updateWorldMatrix(true, false);
+  cameraAimRay.setFromCamera(ndc, game.camera);
+  cameraAimRay.far = range;
+  const living = cameraAimRay.intersectObjects(livingTargets(), true)[0];
+  const solid = firstWorldImpact(world, cameraAimRay);
+  const hit = living && (!solid || living.distance <= solid.distance) ? living : solid;
+  return hit ? out.copy(hit.point) : cameraAimRay.ray.at(range, out);
+}
+
+function animatedCrosshairTarget(dt) {
+  characterAimRefresh -= dt;
+  if (characterAimRefresh <= 0) {
+    crosshairTarget(activeScene());
+    // Exact ballistics are still resolved on every shot. The visible arm rig
+    // only needs a 30 Hz target while aiming (15 Hz at the hip), which avoids
+    // traversing the full bunker mesh sixty times a second on a phone.
+    characterAimRefresh = aiming ? 1 / 30 : 1 / 15;
+  }
+  return _crosshairTarget;
+}
+
+/**
+ * Third person uses a converging ballistic ray: first acquire the crosshair's
+ * point from the shoulder camera, then trace from the visible muzzle to that
+ * point. A wall beside the character can therefore block the gun even when
+ * the camera can see around it, as it does in a modern over-shoulder shooter.
+ */
+function setShotRay(world, ndc, range) {
+  if (effectiveCameraMode() !== 'third') {
+    ray.setFromCamera(ndc, game.camera);
+    ray.far = range;
+    return;
+  }
+  crosshairTarget(world, ndc, range, _ballisticTarget);
+  const muzzle = game.playerCharacter?.muzzleWorldPosition?.(_shotOrigin);
+  if (!muzzle) {
+    ray.setFromCamera(ndc, game.camera);
+    ray.far = range;
+    return;
+  }
+  _shotDirection.copy(_ballisticTarget).sub(muzzle);
+  const distance = _shotDirection.length();
+  if (distance < 1e-4) {
+    ray.setFromCamera(ndc, game.camera);
+    ray.far = range;
+    return;
+  }
+  ray.set(muzzle, _shotDirection.multiplyScalar(1 / distance));
+  ray.far = distance + 0.12;
 }
 
 /**
  * One round (or one pellet). Returns true if it found something alive.
  * `spread` is the half-angle of the cone, already converted to NDC.
  */
-function fireRound(world, spread, damage) {
-  const jitter = spread > 0
-    ? { x: (Math.random() * 2 - 1) * spread, y: (Math.random() * 2 - 1) * spread }
-    : { x: 0, y: 0 };
-  ray.setFromCamera(jitter, game.camera);
-  ray.far = weapon.range ?? 90;
+function fireRound(world, spread, damage, targets) {
+  _shotJitter.set(spread > 0 ? (Math.random() * 2 - 1) * spread : 0,
+    spread > 0 ? (Math.random() * 2 - 1) * spread : 0);
+  setShotRay(world, _shotJitter, weapon.range ?? 90);
 
-  const living = ray.intersectObjects(livingTargets(), true);
-  const target = living.length ? targetRootOf(living[0].object) : null;
-  const impact = ray.intersectObjects(worldGeometry(world), true)
-    .find((hit) => hit.object.isMesh && hit.object.visible && !targetRootOf(hit.object));
+  const living = ray.intersectObjects(targets, true);
+  const livingHit = living.find((hit) => targetRootOf(hit.object)?.userData.alive !== false);
+  const target = livingHit ? targetRootOf(livingHit.object) : null;
+  const impact = firstWorldImpact(world);
 
   // Whichever came first. Checking the living list on its own let every weapon
   // shoot straight through the bulkhead it was pointed at.
-  if (target && (!impact || living[0].distance <= impact.distance)) {
+  if (target && (!impact || livingHit.distance <= impact.distance)) {
     // gore() re-uses this raycaster to throw spatter, so the round's own
     // direction has to be taken off it first.
     _shotDirection.copy(ray.ray.direction);
-    resolveHit(target, living[0].point, damage, _shotDirection);
+    resolveHit(target, livingHit.point, damage, _shotDirection);
     return true;
   }
   if (impact) {
@@ -1363,7 +1602,7 @@ function fireRound(world, spread, damage) {
       _normalMatrix.getNormalMatrix(impact.object.matrixWorld);
       _hitNormal.copy(impact.face.normal).applyMatrix3(_normalMatrix).normalize();
     } else {
-      _hitNormal.copy(game.camera.getWorldPosition(_shotOrigin)).sub(impact.point).normalize();
+      _hitNormal.copy(ray.ray.origin).sub(impact.point).normalize();
     }
     // The mark matches what made it: buckshot leaves a scatter of small pits,
     // a .50 leaves a crater, a blade leaves a scrape.
@@ -1377,7 +1616,9 @@ function fireRound(world, spread, damage) {
 }
 
 function fire() {
-  if (!armed || reloading || modal || cctv || !started || driving) return false;
+  setDancing(false, { announce: false });
+  if (armed && holstered) setHolstered(false, { announce: false });
+  if (!armed || reloading || modal || cctv || !started || driving || flying) return false;
   if (shotCooldown > 0) return false;
   if (weapon.kind === 'melee') return swing();
   if (ammo <= 0) {
@@ -1403,9 +1644,10 @@ function fire() {
   game.range?.countShot();
   const spread = (aiming ? (weapon.adsSpread ?? 0) : (weapon.spread ?? 0)) * SPREAD_TO_NDC;
   const pellets = Math.max(1, weapon.pellets ?? 1);
+  const targets = livingTargets();
   let struck = false;
   for (let i = 0; i < pellets; i++) {
-    struck = fireRound(world, spread, weapon.damage) || struck;
+    struck = fireRound(world, spread, weapon.damage, targets) || struck;
   }
   if (!struck && currentWorld !== 'outside' && !weapon.quiet) {
     flash('THE SHOT ECHOES THROUGH THE SHELTER', 900);
@@ -1421,12 +1663,12 @@ function fire() {
 function swing() {
   shotCooldown = shotInterval(weapon);
   recoil = weapon.recoil ?? .12;
+  game.playerCharacter?.triggerAction?.('melee');
   game.playGun('shoot');
   weaponFireSound(weapon);
   const world = activeScene();
   world.updateMatrixWorld();
-  ray.setFromCamera({ x: 0, y: 0 }, game.camera);
-  ray.far = weapon.reach ?? 2;
+  setShotRay(world, _centreAim, weapon.reach ?? 2);
   const living = ray.intersectObjects(livingTargets(), true);
   const target = living.length ? targetRootOf(living[0].object) : null;
   if (target) {
@@ -1436,14 +1678,13 @@ function swing() {
     return true;
   }
   // A swing that lands on a wall still scrapes it.
-  const impact = ray.intersectObjects(worldGeometry(world), true)
-    .find((hit) => hit.object.isMesh && hit.object.visible && !targetRootOf(hit.object));
+  const impact = firstWorldImpact(world);
   if (impact) {
     if (impact.face) {
       _normalMatrix.getNormalMatrix(impact.object.matrixWorld);
       _hitNormal.copy(impact.face.normal).applyMatrix3(_normalMatrix).normalize();
     } else {
-      _hitNormal.copy(game.camera.getWorldPosition(_shotOrigin)).sub(impact.point).normalize();
+      _hitNormal.copy(ray.ray.origin).sub(impact.point).normalize();
     }
     const mark = decals.add(world, impact.point, _hitNormal,
       { kind: 'gouge', size: weapon.calibre ?? 0.08 });
@@ -1498,7 +1739,8 @@ function resolvePersonHit(target, point, damage, direction = ray.ray.direction) 
   const headshot = point.y - target.position.y > 1.5;
   const multiplier = headshot ? (weapon?.headshot ?? 2.2) : 1;
   target.userData.hp = (target.userData.hp ?? 100) - damage * multiplier;
-  const name = target.userData.kind === 'quartermaster' ? 'QUARTERMASTER ELI' : 'RESIDENT';
+  const name = target.userData.kind === 'quartermaster' ? 'QUARTERMASTER ELI'
+    : target.userData.kind === 'enemy' ? 'HOSTILE' : 'RESIDENT';
   const fatal = target.userData.hp <= 0;
   gore(point, direction, goreWeight() * (headshot ? 1.8 : 1), { fatal });
 
@@ -1895,6 +2137,7 @@ function wireControls() {
     if (e.code === 'KeyR' && !e.repeat) reload();
     if (e.code === 'KeyF' && !e.repeat) { triggerHeld = true; fire(); }
     if (e.code === 'KeyQ' && !e.repeat) setAiming(!aiming);
+    if (e.code === 'KeyG' && !e.repeat) toggleDance();
     if (e.code === 'KeyV' && !e.repeat && !modal && !cctv && !driving && !flying) toggleCameraMode();
     if (/^Digit[1-4]$/.test(e.code) && !e.repeat) selectSlot(+e.code.slice(5) - 1);
     if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat) openWheel(); }
@@ -2063,7 +2306,7 @@ function wireControls() {
 //   Square       use                   Triangle     reload / headlamps
 //   L1 · R1      previous · next weapon
 //   L3           sprint                R3           crouch toggle
-//   D-pad        weapon slots 1-4      Options      controls
+//   D-pad ↓      dance                 D-pad ↑/←/→  weapon slots
 //   Touchpad     first / third view    PS           release the mouse
 function updatePad(dt) {
   const state = gamepad.poll(dt);
@@ -2181,6 +2424,7 @@ function updatePad(dt) {
 
   padMove.x = state.move.x;
   padMove.y = state.move.y;
+  if (state.move.magnitude > .16) setDancing(false, { announce: false });
 
   // Sprint is the stick click: press it while pushing the stick and it holds
   // until the stick comes back to centre, which is how a pad sprint has
@@ -2206,8 +2450,8 @@ function updatePad(dt) {
   if (state.pressed.r1) cycleWeapon(1);
   if (state.pressed.up) selectSlot(0);
   if (state.pressed.right) selectSlot(1);
-  if (state.pressed.down) selectSlot(2);
-  if (state.pressed.left) selectSlot(3);
+  if (state.pressed.left) selectSlot(2);
+  if (state.pressed.down) toggleDance();
   if (state.pressed.r3) setHolstered(!holstered);
   if (state.pressed.touchpad) toggleCameraMode();
 
@@ -2496,21 +2740,37 @@ const desiredVelocity = new THREE.Vector3();
 const forwardAxis = new THREE.Vector3();
 const rightAxis = new THREE.Vector3();
 const thirdPersonTarget = new THREE.Vector3();
+const thirdPersonAnchor = new THREE.Vector3();
+const thirdPersonDesired = new THREE.Vector3();
 const thirdPersonOffset = new THREE.Vector3();
+const thirdPersonForward = new THREE.Vector3();
+const thirdPersonRight = new THREE.Vector3();
+const thirdPersonQuaternion = new THREE.Quaternion();
 
-const THIRD_PERSON_DISTANCE = 3.15;
-const THIRD_PERSON_AIM_DISTANCE = 2.45;
-const THIRD_PERSON_SHOULDER = 0.42;
-const THIRD_PERSON_AIM_SHOULDER = 0.68;
+const THIRD_PERSON_DISTANCE = 3.5;
+const THIRD_PERSON_AIM_DISTANCE = 2.75;
+const THIRD_PERSON_SHOULDER = 0.72;
+const THIRD_PERSON_AIM_SHOULDER = 1.02;
+const CAMERA_COLLISION_RADIUS = 0.14;
 
 function dampAngle(current, target, rate, dt) {
   const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + delta * (1 - Math.exp(-rate * dt));
 }
 
-function updatePlayerCharacter(dt, { crouching = false, seated: isSeated = false } = {}) {
+function updatePlayerCharacter(dt, {
+  crouching = false,
+  seated: isSeated = false,
+  aimTarget = null,
+} = {}) {
   if (!game.playerCharacter) return;
   const speed = isSeated ? 0 : body.horizontalSpeed;
+  const groundDelta = body.groundY - characterGroundY;
+  const climbed = body.grounded && speed > 0.05 && groundDelta > 0.24;
+  const stairDirection = body.grounded && speed > 0.10 && Math.abs(groundDelta) > 0.025
+    && Math.abs(groundDelta) <= 0.24 ? Math.sign(groundDelta) : 0;
+  characterGroundY = body.groundY;
+  if (speed > 0.11 || climbed || stairDirection) setDancing(false, { announce: false });
   // A holstered weapon should behave like empty hands: turn the actor into
   // the direction of travel instead of making them moonwalk while the camera
   // orbits independently.
@@ -2528,55 +2788,76 @@ function updatePlayerCharacter(dt, { crouching = false, seated: isSeated = false
     running: sprinting,
     crouching,
     grounded: body.grounded,
+    verticalSpeed: body.velocity.y,
+    climbing: climbed,
+    stairDirection,
     distance: body.distanceWalked,
     armed: armed && !holstered,
     aiming,
     seated: isSeated,
+    dancing: danceActive,
+    aimTarget,
+    recoil: recoil + recoilPunch * 0.18,
   });
+}
+
+function cameraSegmentClear(start, end, colliders, steps) {
+  thirdPersonOffset.copy(end).sub(start);
+  for (let step = 1; step <= steps; step++) {
+    const fraction = step / steps;
+    const localX = start.x + thirdPersonOffset.x * fraction;
+    const localY = start.y + thirdPersonOffset.y * fraction;
+    const localZ = start.z + thirdPersonOffset.z * fraction;
+    if (colliders.contains(
+      body.position.x + localX,
+      body.position.z + localZ,
+      CAMERA_COLLISION_RADIUS,
+      body.position.y + localY - CAMERA_COLLISION_RADIUS,
+      body.position.y + localY + CAMERA_COLLISION_RADIUS,
+    )) return Math.max(0, (step - 1) / steps);
+  }
+  return 1;
 }
 
 function updateThirdPersonCamera(dt, targetHeight = body.eyeHeight) {
   const distance = aiming ? THIRD_PERSON_AIM_DISTANCE : THIRD_PERSON_DISTANCE;
-  const shoulder = aiming ? THIRD_PERSON_AIM_SHOULDER : THIRD_PERSON_SHOULDER;
-  const orbitPitch = THREE.MathUtils.clamp(pitch * 0.68, -0.72, 0.72);
-  const horizontal = Math.cos(orbitPitch) * distance;
-  thirdPersonTarget.set(0, targetHeight - 0.08, 0);
-  thirdPersonOffset.set(
-    Math.sin(yaw) * horizontal + Math.cos(yaw) * shoulder,
-    -Math.sin(orbitPitch) * distance,
-    Math.cos(yaw) * horizontal - Math.sin(yaw) * shoulder,
-  );
+  const requestedShoulder = aiming ? THIRD_PERSON_AIM_SHOULDER : THIRD_PERSON_SHOULDER;
+  const cameraPitch = THREE.MathUtils.clamp(pitch, -0.78, 0.62);
+  thirdPersonTarget.set(0, targetHeight - 0.12, 0);
+  composeShoulderCamera({
+    yaw,
+    pitch: cameraPitch,
+    target: thirdPersonTarget,
+    distance,
+    shoulder: requestedShoulder,
+  }, {
+    quaternion: thirdPersonQuaternion,
+    forward: thirdPersonForward,
+    right: thirdPersonRight,
+    anchor: thirdPersonAnchor,
+    camera: thirdPersonDesired,
+  });
 
-  // Pull the boom in before it reaches a wall, ceiling, railing or door. The
-  // collider query is deliberately spherical here: the camera should slide
-  // through a gap only when the lens actually fits through it.
+  // First clear the lateral shoulder move, then clear the rear boom from that
+  // shoulder. Keeping these as two independent segments is what stops a wall
+  // behind the camera collapsing the shoulder offset and putting the player
+  // back under the centre-screen crosshair.
   const colliders = game.colliders[currentWorld];
-  let clearFraction = 1;
-  const steps = 14;
-  for (let step = 1; step <= steps; step++) {
-    const fraction = step / steps;
-    const localX = thirdPersonTarget.x + thirdPersonOffset.x * fraction;
-    const localY = thirdPersonTarget.y + thirdPersonOffset.y * fraction;
-    const localZ = thirdPersonTarget.z + thirdPersonOffset.z * fraction;
-    if (colliders.contains(
-      body.position.x + localX,
-      body.position.z + localZ,
-      0.12,
-      body.position.y + localY - 0.12,
-      body.position.y + localY + 0.12,
-    )) {
-      clearFraction = Math.max(0.14, (step - 1) / steps);
-      break;
-    }
-  }
+  const shoulderClear = cameraSegmentClear(thirdPersonTarget, thirdPersonAnchor, colliders, 8);
+  const allowedShoulder = requestedShoulder * shoulderClear;
+  cameraShoulder = THREE.MathUtils.damp(cameraShoulder, allowedShoulder,
+    allowedShoulder < cameraShoulder ? 24 : 12, dt);
+  thirdPersonAnchor.copy(thirdPersonTarget).addScaledVector(thirdPersonRight, cameraShoulder);
 
-  const allowedBoom = distance * clearFraction;
+  thirdPersonDesired.copy(thirdPersonAnchor).addScaledVector(thirdPersonForward, -distance);
+  const boomClear = cameraSegmentClear(thirdPersonAnchor, thirdPersonDesired, colliders, 16);
+  const allowedBoom = Math.max(0.34, distance * boomClear);
   cameraBoom = THREE.MathUtils.damp(cameraBoom, allowedBoom,
     allowedBoom < cameraBoom ? 24 : 9, dt);
-  const fraction = cameraBoom / distance;
-  game.camera.position.copy(thirdPersonTarget).addScaledVector(thirdPersonOffset, fraction);
-  game.camera.rotation.set(pitch, yaw, recoilRoll * 0.18, 'YXZ');
-  game.setPlayerVisualObstructed?.(cameraBoom < 0.72);
+  game.camera.position.copy(thirdPersonAnchor).addScaledVector(thirdPersonForward, -cameraBoom);
+  game.camera.rotation.set(cameraPitch, yaw, recoilRoll * 0.18, 'YXZ');
+  game.camera.updateWorldMatrix(true, false);
+  game.setPlayerVisualObstructed?.(cameraBoom < 0.62);
 }
 
 function updateFirstPersonCamera(x, y, roll) {
@@ -2609,9 +2890,14 @@ function updatePlayer(dt) {
     game.player.position.set(body.position.x, body.position.y, body.position.z);
     breath += dt * 0.55;
     sprinting = false;
-    updatePlayerCharacter(dt, { seated: true });
-    if (effectiveCameraMode() === 'third') updateThirdPersonCamera(dt, 1.18);
-    else updateFirstPersonCamera(0, 1.18 + Math.sin(breath) * 0.003, 0);
+    let aimTarget = null;
+    if (effectiveCameraMode() === 'third') {
+      updateThirdPersonCamera(dt, 1.18);
+      if (armed && !holstered) aimTarget = animatedCrosshairTarget(dt);
+    } else {
+      updateFirstPersonCamera(0, 1.18 + Math.sin(breath) * 0.003, 0);
+    }
+    updatePlayerCharacter(dt, { seated: true, aimTarget });
     return;
   }
 
@@ -2663,9 +2949,14 @@ function updatePlayer(dt) {
     + (sprinting ? Math.sin(bobPhase * 0.5) * 0.012 : 0)
     + recoilRoll;
 
-  updatePlayerCharacter(dt, { crouching });
-  if (effectiveCameraMode() === 'third') updateThirdPersonCamera(dt, body.eyeHeight);
-  else updateFirstPersonCamera(eyeX, eyeY, eyeRoll);
+  let aimTarget = null;
+  if (effectiveCameraMode() === 'third') {
+    updateThirdPersonCamera(dt, body.eyeHeight);
+    if (armed && !holstered) aimTarget = animatedCrosshairTarget(dt);
+  } else {
+    updateFirstPersonCamera(eyeX, eyeY, eyeRoll);
+  }
+  updatePlayerCharacter(dt, { crouching, aimTarget });
 
   footsteps(dt, speedRatio, crouching);
 }
@@ -2744,13 +3035,14 @@ function updateDriving(dt) {
     if (impact > 8) damage(Math.round(impact - 6));
   }
 
-  engineAudio(Math.abs(speed) / vehicle.topSpeed, driveControls.throttle);
+  engineAudio(Math.abs(speed) / vehicle.topSpeed, driveControls.throttle,
+    vehicle.gear, vehicle.rpm, vehicle.state.shifted);
 
   const mph = Math.round(Math.abs(speed) * MPH);
   if (driveSpeedEl) driveSpeedEl.textContent = String(mph);
   if (driveGearEl) {
     driveGearEl.textContent = driveControls.brake ? 'BRK'
-      : speed < -0.2 ? 'R' : (speed > 0.2 ? 'D' : 'N');
+      : speed < -0.2 ? 'R' : (speed > 0.2 ? String(vehicle.gear) : 'N');
   }
 
   sprinting = false;
@@ -2796,14 +3088,98 @@ function updatePrompt() {
 
 // Audio
 let ac=null,master=null,radioGain=null,outdoorGain=null;
+const gunSampleBuffers = new Map();
+const gunSampleVoices = new Map();
+let gunSampleLoadPromise = null;
+let gunSampleRemainderPromise = null;
+let gunSampleRemainderScheduled = false;
+const essentialGunSamples = new Set(['fire308', 'fire20Gauge', 'fire9mm']);
+
+async function decodeGunSamples(entries, context) {
+  const failed = [];
+  // Decode sequentially. Launching all eighteen MP3 decoders together stole
+  // several frames from play on mid-range Android devices.
+  for (const [key, url] of entries) {
+    if (gunSampleBuffers.has(key)) continue;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${response.status} ${url}`);
+      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      gunSampleBuffers.set(key, buffer);
+    } catch (error) {
+      failed.push(error);
+    }
+  }
+  if (failed.length) console.warn(`${failed.length} uploaded gun samples could not be decoded.`);
+}
+
+function scheduleRemainingGunSamples() {
+  if (!ac || gunSampleRemainderScheduled) return;
+  gunSampleRemainderScheduled = true;
+  const context = ac;
+  const start = () => {
+    const remaining = Object.entries(GUN_SAMPLE_URLS)
+      .filter(([key]) => !essentialGunSamples.has(key));
+    gunSampleRemainderPromise = decodeGunSamples(remaining, context);
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 4500 });
+  else setTimeout(start, 2200);
+}
+
+function loadGunSamples() {
+  if (!ac) return Promise.resolve();
+  if (gunSampleLoadPromise) return gunSampleLoadPromise;
+  const context = ac;
+  const essential = Object.entries(GUN_SAMPLE_URLS)
+    .filter(([key]) => essentialGunSamples.has(key));
+  gunSampleLoadPromise = decodeGunSamples(essential, context)
+    .finally(scheduleRemainingGunSamples);
+  return gunSampleLoadPromise;
+}
+
+/** Play one decoded upload through the same direct/reverb bus as gun synthesis. */
+function playGunSample(key, { delay = 0, gain = 0.65, rate = 1, maxVoices = 8 } = {}) {
+  const buffer = gunSampleBuffers.get(key);
+  if (!buffer || !ac) return false;
+  ensureShotBus();
+  const source = ac.createBufferSource();
+  source.buffer = buffer;
+  source.playbackRate.value = rate;
+  const level = ac.createGain();
+  level.gain.value = gain;
+  source.connect(level);
+  level.connect(shotOut());
+
+  const voices = gunSampleVoices.get(key) || [];
+  while (voices.length >= maxVoices) {
+    try { voices.shift().stop(); } catch { /* already ended */ }
+  }
+  voices.push(source);
+  gunSampleVoices.set(key, voices);
+  source.onended = () => {
+    const active = gunSampleVoices.get(key);
+    const index = active?.indexOf(source) ?? -1;
+    if (index >= 0) active.splice(index, 1);
+    source.disconnect();
+    level.disconnect();
+  };
+  source.start(ac.currentTime + Math.max(0, delay));
+  return true;
+}
+
 function noiseBuffer(seconds=2){const b=ac.createBuffer(1,ac.sampleRate*seconds,ac.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b}
 function startAudio(){
-  if(ac){ac.resume?.();return}
+  if(ac){ac.resume?.();void loadGunSamples();return}
   ac=new(window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.gain.value=.3*(opening.settings.master/100);master.connect(ac.destination);
   [47,94,141].forEach((freq,i)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=i?'sine':'triangle';o.frequency.value=freq;g.gain.value=[.09,.03,.01][i];o.connect(g);g.connect(master);o.start()});
   const rn=ac.createBufferSource();rn.buffer=noiseBuffer();rn.loop=true;const rf=ac.createBiquadFilter();rf.type='bandpass';rf.frequency.value=1800;radioGain=ac.createGain();radioGain.gain.value=0;rn.connect(rf);rf.connect(radioGain);radioGain.connect(master);rn.start();
   const on=ac.createBufferSource();on.buffer=noiseBuffer(3);on.loop=true;const of=ac.createBiquadFilter();of.type='lowpass';of.frequency.value=900;outdoorGain=ac.createGain();outdoorGain.gain.value=0;on.connect(of);of.connect(outdoorGain);outdoorGain.connect(master);on.start();
   startAmbience();
+  // Build the reusable gun buses and room response during the explicit start
+  // gesture, not on the first trigger pull in live play.
+  ensureShotBus();
+  shotNoiseBuffer();
+  void loadGunSamples();
 }
 // Machinery you can hear from across the room and lose behind a corner. These
 // are plain gain ramps driven by distance rather than PositionalAudio, so they
@@ -2872,6 +3248,7 @@ function updateAmbience() {
 // lifts the noise; revs move all three together, dropping on each upshift so
 // it climbs through a gearbox instead of sirening straight to the top.
 let engine = null;
+let lastGearShiftSound = -Infinity;
 
 function startEngineAudio(kind = 'car') {
   if (!ac || engine) return;
@@ -2923,6 +3300,8 @@ function startEngineAudio(kind = 'car') {
   // piston single heard from behind. A car has no such thing.
   let prop = null;
   let propGain = null;
+  let turbo = null;
+  let turboGain = null;
   if (kind === 'aircraft') {
     prop = ac.createOscillator();
     prop.type = 'triangle';
@@ -2934,9 +3313,25 @@ function startEngineAudio(kind = 'car') {
     propBand.frequency.value = 1400;
     prop.connect(propGain); propGain.connect(propBand); propBand.connect(out);
     prop.start();
+  } else {
+    // The RS Turbo's induction whistle lives above the four-cylinder block.
+    // It follows load and boost rather than road speed, and falls away between
+    // gears instead of becoming a permanent sine tone.
+    turbo = ac.createOscillator();
+    turbo.type = 'sine';
+    turbo.frequency.value = 1050;
+    turboGain = ac.createGain();
+    turboGain.gain.value = 0;
+    const turboBand = ac.createBiquadFilter();
+    turboBand.type = 'bandpass';
+    turboBand.frequency.value = 1800;
+    turboBand.Q.value = 3.8;
+    turbo.connect(turboGain); turboGain.connect(turboBand); turboBand.connect(out);
+    turbo.start();
   }
 
   engine = { out, filter, block, exhaust, induction, inductionGain, prop, propGain,
+    turbo, turboGain,
     kind, revs: 0 };
   out.gain.setTargetAtTime(0.5, ac.currentTime, 0.35);
 }
@@ -2951,29 +3346,49 @@ function stopEngineAudio() {
     for (const o of dying.block) { try { o.stop(); } catch { /* already stopped */ } }
     try { dying.exhaust.stop(); } catch { /* already stopped */ }
     try { dying.prop?.stop(); } catch { /* already stopped */ }
+    try { dying.turbo?.stop(); } catch { /* already stopped */ }
     try { dying.induction.stop(); } catch { /* already stopped */ }
     dying.out.disconnect();
   }, 600);
 }
 
-// Five gears, evenly spaced across the speed range. Revs run 0..1 within
-// whichever one the car is in, so the note falls every time it changes up.
-const GEARS = 5;
+function escortGearShiftSound(revs, load) {
+  if (!ac || ac.currentTime - lastGearShiftSound < .12) return;
+  const t = ac.currentTime;
+  lastGearShiftSound = t;
+  // Gear engagement under the bonnet, followed by the RS Turbo's short
+  // compressor sigh as the throttle closes between ratios.
+  noiseBurst({ at: t, hz: 520, q: 2.4, decay: .055, level: .065 + load * .025 });
+  noiseBurst({ at: t + .018, hz: 2600 + revs * 1700, q: 2.8,
+    decay: .16, level: .035 + load * .035, type: 'bandpass' });
+  const whistle = ac.createOscillator();
+  const whistleGain = ac.createGain();
+  whistle.type = 'sine';
+  whistle.frequency.setValueAtTime(2500 + revs * 1800, t);
+  whistle.frequency.exponentialRampToValueAtTime(1150, t + .14);
+  whistleGain.gain.setValueAtTime(.018 + load * .016, t);
+  whistleGain.gain.exponentialRampToValueAtTime(.0005, t + .15);
+  whistle.connect(whistleGain); whistleGain.connect(master);
+  whistle.start(t); whistle.stop(t + .16);
+}
 
-function engineAudio(speedRatio, throttle) {
+function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = false) {
   if (!engine || !ac) return;
   if (engine.kind === 'aircraft') return aircraftAudio(speedRatio, throttle);
-  const gear = Math.min(GEARS - 1, Math.floor(speedRatio * GEARS));
-  const within = speedRatio * GEARS - gear;
-  const revs = 0.22 + within * 0.78;
+  const revs = rpm == null ? 0.24 + speedRatio * 0.76 : THREE.MathUtils.clamp(rpm, 0, 1);
   const load = Math.min(1, Math.abs(throttle) * 0.7 + speedRatio * 0.5);
   const t = ac.currentTime;
-  const base = 44 + revs * 96;
+  if (shifted) escortGearShiftSound(revs, load);
+  const shiftDip = shifted ? 0.72 : 1;
+  const base = (46 + revs * 168) * shiftDip;
   for (const o of engine.block) o.frequency.setTargetAtTime(base, t, 0.08);
   engine.exhaust.frequency.setTargetAtTime(base * 0.5, t, 0.08);
-  engine.filter.frequency.setTargetAtTime(300 + revs * 900 + load * 700, t, 0.09);
-  engine.inductionGain.gain.setTargetAtTime(0.012 + load * 0.05, t, 0.1);
-  engine.out.gain.setTargetAtTime(0.34 + load * 0.30, t, 0.1);
+  engine.filter.frequency.setTargetAtTime(320 + revs * 1350 + load * 950, t, 0.09);
+  engine.inductionGain.gain.setTargetAtTime(0.012 + load * 0.065, t, 0.1);
+  if (engine.turbo) engine.turbo.frequency.setTargetAtTime(900 + revs * 2300, t, 0.08);
+  if (engine.turboGain) engine.turboGain.gain.setTargetAtTime(
+    Math.max(0, revs - 0.34) * load * (shifted ? 0.01 : 0.055), t, shifted ? 0.02 : 0.09);
+  engine.out.gain.setTargetAtTime((0.32 + load * 0.32) * (shifted ? 0.82 : 1), t, 0.06);
 }
 
 /**
@@ -3379,6 +3794,11 @@ function weaponFireSound(spec) {
   actionCycleSound(spec);
   casingSound(spec);
   shotEchoes(spec);
+  const authentic = fireSampleForWeapon(spec);
+  if (authentic && playGunSample(authentic, {
+    gain: THREE.MathUtils.clamp(0.52 + voice.level * 0.32, 0.58, 0.88),
+    rate: 0.975 + Math.random() * 0.05,
+  })) return;
   const t = ac.currentTime;
   const out = shotOut();
   // No two rounds out of the same barrel are identical, and 950 rounds a
@@ -3528,6 +3948,18 @@ function weaponReloadSound(spec) {
   const sequence = spec?.audio?.reload;
   if (!sequence) return;
   ensureShotBus();
+  const recorded = reloadSamplesForWeapon(spec);
+  if (recorded.length && recorded.every(({ key }) => gunSampleBuffers.has(key))) {
+    for (const sample of recorded) {
+      playGunSample(sample.key, {
+        delay: sample.at,
+        gain: sample.gain,
+        rate: sample.rate,
+        maxVoices: 8,
+      });
+    }
+    return;
+  }
   const t0 = ac.currentTime;
   // Reloading rings off the same walls the shot does. A magazine seated in the
   // silo and one seated in the shelter should not sound identical.
@@ -3575,6 +4007,15 @@ const impactMaterials = {
   dust: new THREE.MeshBasicMaterial({ color: 0x9a9c92, transparent: true, opacity: 0.75 }),
 };
 const debris = [];
+const MAX_DEBRIS = coarse ? 84 : 180;
+
+function addDebris(entry) {
+  while (debris.length >= MAX_DEBRIS) {
+    const oldest = debris.shift();
+    oldest?.scene?.remove(oldest.mesh);
+  }
+  debris.push(entry);
+}
 
 function burst(point, kind, count = 7, spread = 0.26) {
   const scene = activeScene();
@@ -3582,7 +4023,7 @@ function burst(point, kind, count = 7, spread = 0.26) {
     const particle = new THREE.Mesh(impactGeometry, impactMaterials[kind]);
     particle.position.copy(point);
     scene.add(particle);
-    debris.push({
+    addDebris({
       mesh: particle,
       scene,
       life: 0.45 + Math.random() * 0.25,
@@ -3623,7 +4064,7 @@ function gore(point, direction, weight = 1, { fatal = false } = {}) {
   mist.position.copy(point);
   mist.scale.setScalar(0.6 * weight);
   scene.add(mist);
-  debris.push({
+  addDebris({
     mesh: mist, scene, life: 0.34, spawned: 0.34,
     velocity: new THREE.Vector3(_goreDir.x * 0.6, 0.25, _goreDir.z * 0.6),
     grow: 5.4 * weight, fade: true, gravity: 1.2,
@@ -3637,7 +4078,7 @@ function gore(point, direction, weight = 1, { fatal = false } = {}) {
     drop.scale.setScalar(0.5 + Math.random() * 1.4);
     scene.add(drop);
     const cone = 0.55 + Math.random() * 0.75;
-    debris.push({
+    addDebris({
       mesh: drop, scene,
       life: 0.7 + Math.random() * 0.9,
       velocity: new THREE.Vector3(
@@ -3657,7 +4098,6 @@ function gore(point, direction, weight = 1, { fatal = false } = {}) {
 /** Throw blood along a direction and mark whatever stops it. */
 function spatter(scene, point, direction, reach, size, count) {
   if (count <= 0) return;
-  const geometry = worldGeometry(scene);
   for (let i = 0; i < count; i++) {
     _goreEnd.copy(direction)
       .add(_gorePoint.set((Math.random() - 0.5) * 0.55, (Math.random() - 0.5) * 0.4,
@@ -3665,9 +4105,7 @@ function spatter(scene, point, direction, reach, size, count) {
       .normalize();
     ray.set(point, _goreEnd);
     ray.far = reach;
-    const hit = ray.intersectObjects(geometry, true)
-      .find((candidate) => candidate.object.isMesh && candidate.object.visible
-        && !candidate.object.userData.isDecal && !targetRootOf(candidate.object));
+    const hit = firstWorldImpact(scene);
     if (!hit) continue;
     if (hit.face) {
       _normalMatrix.getNormalMatrix(hit.object.matrixWorld);
@@ -3725,8 +4163,6 @@ function updateEffects(dt) {
   }
 }
 
-function bloodBurst(point){const g=new THREE.SphereGeometry(.05,8,6),m=new THREE.MeshBasicMaterial({color:0x771714});for(let i=0;i<7;i++){const p=new THREE.Mesh(g,m);p.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.25,(Math.random()-.5)*.25,(Math.random()-.5)*.25));game.outside.add(p);setTimeout(()=>game.outside.remove(p),450)}}
-
 function beginGame({ restore = true } = {}) {
   if (!game || started) return;
   opening.hide();
@@ -3734,7 +4170,13 @@ function beginGame({ restore = true } = {}) {
   const resumed = restore && restoreRun();
   updateStats();updateAmmo();updateHealth();renderObjectives();
   document.body.classList.add('playing');boot.style.display='none';updateOrientation();
-  setTimeout(()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);feedComposer.setSize(innerWidth,innerHeight);game.camera.aspect=innerWidth/innerHeight;game.camera.updateProjectionMatrix()},160);
+  setTimeout(() => {
+    renderer.setSize(innerWidth, innerHeight);
+    if (quality.post) composer.setSize(innerWidth, innerHeight);
+    feedComposer.setSize(innerWidth, innerHeight);
+    game.camera.aspect = innerWidth / innerHeight;
+    game.camera.updateProjectionMatrix();
+  }, 160);
   flash(resumed ? `RUN RESUMED — DAY ${survival.day}` : 'SHELTER 47 // REPOSITORY BUILD', resumed ? 2600 : 2200);
 }
 
@@ -4129,6 +4571,7 @@ function loop() {
   if (!game) return;
 
   simulate(dt);
+  updateFrameBudget(dt);
 
   if (cctv) {
     renderCameraFeed();
@@ -4173,7 +4616,9 @@ function loop() {
   // Aberration is a property of the lens, and it is fixed. Driven off a meter
   // that crept back up every frame it shifted every pixel by a fraction each
   // time, and the whole image crawled in concentric bands.
-  gradePass.uniforms.aberration.value = 0.0012;
+  // Exterior clarity is more important than a synthetic lens fringe. Even a
+  // one-pixel RGB split made distant branches and roof lines read as blur.
+  gradePass.uniforms.aberration.value = outdoors ? 0 : 0.00045;
   // The eye. Outdoors the surface says what it is stopped down to and the iris
   // walks there rather than jumping, so stepping out of the hatch at noon
   // opens on a bright frame that settles instead of a white one that stays.
@@ -4187,7 +4632,8 @@ function loop() {
   // so it comes down to a trace and only takes what is genuinely over white.
   bloomPass.strength = currentWorld === 'outside' ? 0.040 : 0.2;
   bloomPass.threshold = currentWorld === 'outside' ? 1.30 : 1.02;
-  composer.render();
+  if (quality.post) composer.render();
+  else renderer.render(scene, game.camera);
   // The optic goes over the finished frame, so the post stack grades the world
   // and not the inside of the tube.
   scopeOpen = THREE.MathUtils.damp(scopeOpen, scoped ? 1 : 0, 22, dt);
@@ -4198,7 +4644,7 @@ addEventListener('resize', () => {
   if (!renderer || !game) return;
   renderer.setSize(innerWidth, innerHeight);
   scopeTarget?.setSize(SCOPE_SIZE, SCOPE_SIZE);
-  composer?.setSize(innerWidth, innerHeight);
+  if (quality.post) composer?.setSize(innerWidth, innerHeight);
   feedComposer?.setSize(innerWidth, innerHeight);
   game.camera.aspect = innerWidth / innerHeight;
   game.camera.updateProjectionMatrix();

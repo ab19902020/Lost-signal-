@@ -145,7 +145,7 @@ const FRAGMENT = /* glsl */`
  * own clock already runs a day in four minutes, and the sky is driven off the
  * same elapsed time so the HUD's DAY counter and the sun agree.
  */
-export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
+export function createSky({ scene, dayLength = 1800, startAt = 0.30, shadowSize = 2048 }) {
   const uniforms = {
     zenith: { value: new THREE.Color(0x05070e) },
     horizon: { value: new THREE.Color(0x0b1017) },
@@ -179,7 +179,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   // it reads as a crawl along every edge in the compound rather than as a soft
   // edge. Twice the resolution and a normal bias stop the shimmer; the map is
   // still one 2K texture for the whole surface.
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
   sun.shadow.normalBias = 0.045;
   sun.shadow.bias = -0.0004;
 
@@ -198,7 +198,7 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
   // box that slides continuously makes every shadow edge in the world crawl
   // as the player walks; snapped, the map moves a whole texel at a time and
   // the edges sit still.
-  const SHADOW_TEXEL = (SHADOW_EXTENT * 2) / 2048;
+  const SHADOW_TEXEL = (SHADOW_EXTENT * 2) / shadowSize;
   scene.add(sun, sun.target);
 
   const moon = new THREE.DirectionalLight(0xa6bdc9, 0);
@@ -353,7 +353,10 @@ export function createSky({ scene, dayLength = 1800, startAt = 0.30 }) {
       // nothing on it past the wire; there is now half a kilometre of hedged
       // country and a town out there, and all of it was arriving as a white
       // wash. Weather still closes it down — a rainstorm is still a rainstorm.
-      scene.fog.density = 0.0014 + rain * 0.0090 + cloud * 0.0018;
+      // On a clear day the clinic at the road end stays sharply readable;
+      // haze only takes over in the far country or when weather actually rolls
+      // in. This removes the milky blur that covered the whole exterior.
+      scene.fog.density = 0.00065 + rain * 0.0065 + cloud * 0.0009;
     }
     return state;
   }

@@ -68,9 +68,13 @@ body collision instead of behaving like scenery the player can walk through.
 ### Controller
 - Touchpad / View button: switch first-person and third-person views
 
-The game starts in third person with the supplied military protagonist visible.
-Scoped rifles move temporarily to the first-person optic and return to the
-player's chosen view when aim is released.
+The game starts in third person with the supplied rugged protagonist visible.
+His authored clips drive walking, running, climbing, jumping, falling and
+melee; standing is a deliberately frozen neutral pose and dancing only plays
+from its assigned D-pad control. A post-animation
+two-arm grip pass keeps rifles, shotguns, SMGs, pistols and revolvers seated in
+the character's hands while he moves. Scoped rifles move temporarily to the
+first-person optic and return to the player's chosen view when aim is released.
 
 ## The world
 

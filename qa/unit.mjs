@@ -448,6 +448,8 @@ assert.ok(/addInteraction\(root, `TAKE \$\{label\}`/.test(armorySource),
 assert.ok(armorySource.includes('downQuartermaster'),
   'the quartermaster cannot be brought down');
 const worldSource = await readFile(new URL('../src/world_blender.js', import.meta.url), 'utf8');
+const playerCharacterSource = await readFile(
+  new URL('../src/player_character.js', import.meta.url), 'utf8');
 assert.ok(worldSource.includes('function setWeapon('),
   'the first-person viewmodel cannot swap weapons');
 assert.ok(mainSource.includes('createDecalField'), 'shots leave no marks on the world');
@@ -494,8 +496,21 @@ assert.ok(characterTriangles >= 200000,
   `main character dropped below the high-detail target (${characterTriangles} triangles)`);
 assert.ok(characterDocument.extensionsUsed?.includes('EXT_meshopt_compression'),
   'main character geometry is not Meshopt-compressed');
+assert.equal(characterDocument.animations?.length, 9,
+  `rugged main character lost animations (${characterDocument.animations?.length || 0}/9)`);
+for (const [index, animation] of characterDocument.animations.entries()) {
+  assert.ok(animation.channels?.length >= 100,
+    `rugged main character animation ${index} lost its humanoid tracks`);
+}
 assert.ok(worldSource.includes('createPlayerCharacter'),
-  'the supplied military character is not the playable actor');
+  'the supplied rugged character is not the playable actor');
+assert.ok(playerCharacterSource.includes('new THREE.AnimationMixer(model)')
+  && playerCharacterSource.includes('PLAYER_ANIMATIONS'),
+  'the rugged character does not play its authored animation set');
+assert.ok(playerCharacterSource.includes("solveArm('R', pose.right, pose.rightPole)")
+  && playerCharacterSource.includes("solveArm('L', pose.left, pose.leftPole)")
+  && worldSource.includes("family: family || 'rifle'"),
+  'third-person guns are not placed into both animated hands by weapon family');
 assert.ok(mainSource.includes('function updateThirdPersonCamera(')
   && mainSource.includes('function toggleCameraMode('),
   'first/third-person camera switching is missing');
@@ -507,4 +522,4 @@ console.log(`Unit QA passed: ${USABLE_WEAPON_KEYS.length} usable weapons with di
   + `${colliders.arcs.length} door arcs + ${colliders.orientedBoxes.length} oriented walls, `
   + `walkway clear on all ${SILO.levels + 1} levels, `
   + `${doorwaysTraversed} front doors traversed and ${roomsChecked} rooms reachable, `
-  + `${counts.size} unique game events, ${characterTriangles} triangle main character.`);
+  + `${counts.size} unique game events, ${characterTriangles} triangle main character with 9 animations.`);
