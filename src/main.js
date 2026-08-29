@@ -980,6 +980,31 @@ function wireGameEvents() {
     flash('DRIVER DOWN — THE CAR IS ROLLING TO A STOP', 3200);
     clickSound(150, .18, .05);
   });
+  // Run over, in either direction. The car does not care which of you is
+  // driving it, and neither does the person in front of it.
+  addEventListener('lostsignal:playerrunover', (event) => {
+    const speed = event.detail?.speed ?? 0;
+    const damage = Math.min(96, Math.max(8, (speed - 2.2) * 9));
+    health = Math.max(0, health - damage);
+    hurtFlash = 1;
+    recovery = 0;
+    crashSound(Math.min(1, 0.4 + speed / 18));
+    // Thrown, not nudged: the velocity goes straight into the body so he
+    // leaves his feet and lands where the car put him.
+    const throwBy = 2.2 + speed * 0.30;
+    body.velocity.x += event.detail.dirX * throwBy;
+    body.velocity.z += event.detail.dirZ * throwBy;
+    body.velocity.y = Math.max(body.velocity.y, 2.1 + speed * 0.06);
+    flash(event.detail?.lethal
+      ? 'THE CAR HIT YOU AT SPEED' : 'THE CAR CLIPPED YOU', 2600);
+    updateHealth();
+    updateStats();
+    if (health <= 0) collapse();
+  });
+  addEventListener('lostsignal:runover', (event) => {
+    crashSound(Math.min(1, 0.35 + (event.detail?.speed ?? 0) / 20));
+    flash(event.detail?.lethal ? 'YOU RAN HIM DOWN' : 'YOU KNOCKED HIM OVER', 2200);
+  });
   addEventListener('lostsignal:carescaped', () => {
     flash('THE ESCORT IS GONE. THEY TOOK IT UP THE ROAD.', 5200);
   });

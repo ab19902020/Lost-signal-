@@ -26,7 +26,7 @@ assert.ok(!main.includes('intersectObjects(worldGeometry(world), true'),
 assert.ok(enemies.includes('root.userData.hitVolumes')
   && enemies.includes('Math.min(distance, viewDistance) > ACTIVATE')
   && enemies.includes('viewDistance < 215 || this.alerted')
-  && enemies.includes('viewDistance < ASSAULT_RENDER_DISTANCE'),
+  && enemies.includes('RIDER_RENDER_DISTANCE : ASSAULT_RENDER_DISTANCE'),
   'high-detail enemies lack hit volumes or distance culling');
 assert.equal((world.match(/placeTownBuilding\(assets\./g) || []).length, 2,
   'more than the two requested buildings are spawned');
