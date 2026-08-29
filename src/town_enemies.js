@@ -363,6 +363,8 @@ class TownEnemy {
     this.stuckWatchTimer = 0;
     this.unstickAttempts = 0;
     this.replans = 0;
+    // Seconds left flat on the deck after a car hit him.
+    this.downed = 0;
     this.assaulting = this.assaultRoute.length > 0;
     this.assaultIndex = 0;
     this.yardIndex = 0;
@@ -813,6 +815,17 @@ class TownEnemy {
   }
 
   updateAssault(dt, playerPosition, active, distance) {
+    // Flat on his back after a car went over him. Nothing else runs until he
+    // is up again, and while he is down he is not wedged, he is winded.
+    if (this.downed > 0) {
+      this.downed -= dt;
+      this.holding = 'downed';
+      if (this.downed <= 0) {
+        this.play('stand', 1, 0.18);
+        this.thinkTimer = 0;
+      }
+      return;
+    }
     // Defend themselves if the player physically intercepts them, then resume
     // the same mission leg. There is no random flee/dance state in the siege
     // brain, so an old man cannot forget the silo and sprint in circles.
@@ -1386,6 +1399,32 @@ class TownEnemy {
       };
     }
     this.mixer.update(dt);
+  }
+
+  // Hit by a car. Fast enough and he is dead where he lands; slower and he is
+  // knocked off his feet and gets up angry. Either way he goes over the bonnet
+  // rather than standing there taking it.
+  struck(speed, dirX, dirZ, lethal) {
+    if (this.dead || this.state === 'riding' || this.state === 'boarding') return false;
+    const throwBy = Math.min(2.6, 0.5 + speed * 0.22);
+    this.root.position.x += dirX * throwBy;
+    this.root.position.z += dirZ * throwBy;
+    this.collider.cx = this.root.position.x;
+    this.collider.cz = this.root.position.z;
+    this.route = [];
+    this.target = null;
+    this.destination = null;
+    window.dispatchEvent(new CustomEvent('lostsignal:runover', {
+      detail: { name: this.root.name, speed: +speed.toFixed(1), lethal: !!lethal },
+    }));
+    if (lethal) return this.kill();
+    // Winded, not dead: he loses his footing, his plan and several seconds.
+    this.downed = Math.max(this.downed || 0, 1.4 + speed * 0.12);
+    this.stateTimer = this.downed;
+    this.thinkTimer = this.downed;
+    this.alerted = true;
+    this.play('fall', 1.15, 0.06);
+    return true;
   }
 
   kill() {

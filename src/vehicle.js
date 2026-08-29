@@ -55,6 +55,21 @@ export const VEHICLE_SPEC = Object.freeze({
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// Running someone over.
+//
+// The collision set is made of boxes that were placed once and never move, so
+// people are not in it: the car drove through the two men in the yard and they
+// drove through the player. A person is not scenery, though - hitting one is
+// the most consequential thing a car in this game can do, in either direction.
+//
+// The test is a rectangle in the car's own frame rather than a circle around
+// it. An Escort is four metres long and one and three quarters wide, and a man
+// standing beside the door is not in the same danger as a man in front of the
+// bumper.
+const STRIKE_SPEED = 2.2;      // m/s; below walking pace it is a nudge
+const STRIKE_LETHAL = 6.5;     // m/s, about fifteen miles an hour
+const STRIKE_COOLDOWN = 0.85;  // seconds before the same body can be hit again
+
 // The cabin the scan does not have.
 //
 // A photogrammetry car is a skin. Cut its windows open and you are looking at
@@ -309,6 +324,49 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     return false;
   }
 
+  // Who is standing where this car is going. The world supplies them; the car
+  // does not know or care what they are, only where they are, how wide, and
+  // what to call when it hits one.
+  let bystanders = null;
+  function setBystanders(source) { bystanders = source; }
+
+  const struckRecently = new Map();
+
+  function strike(dt) {
+    for (const [victim, wait] of struckRecently) {
+      if (wait <= dt) struckRecently.delete(victim); else struckRecently.set(victim, wait - dt);
+    }
+    const speed = Math.abs(state.speed);
+    if (!bystanders || speed < STRIKE_SPEED) return;
+    const list = bystanders();
+    if (!list?.length) return;
+    const sin = Math.sin(state.heading);
+    const cos = Math.cos(state.heading);
+    for (const victim of list) {
+      const point = victim.position;
+      if (!point || struckRecently.has(victim.id ?? victim)) continue;
+      const dx = point.x - state.x;
+      const dz = point.z - state.z;
+      // Into the car's frame. The nose is at -Z, so a positive closing speed
+      // and a negative local Z is the bumper.
+      const across = dx * cos - dz * sin;
+      const along = dx * sin + dz * cos;
+      const radius = victim.radius ?? 0.34;
+      if (Math.abs(across) > HALF_WIDTH + radius) continue;
+      if (Math.abs(along) > HALF_LENGTH + radius) continue;
+      // Standing on the roof is not being run over.
+      if (Math.abs((point.y ?? state.y) - state.y) > 1.9) continue;
+      struckRecently.set(victim.id ?? victim, STRIKE_COOLDOWN);
+      // Away from the car, along whichever way it is travelling.
+      const push = Math.sign(state.speed) || 1;
+      victim.struck?.(speed, -sin * push, -cos * push, speed >= STRIKE_LETHAL);
+      // Hitting a person is not hitting a wall: the car is checked, not
+      // stopped, and the bang the player hears is a body rather than a fence.
+      state.speed *= speed > STRIKE_LETHAL ? 0.86 : 0.62;
+      state.impact = Math.max(state.impact, speed * 0.45);
+    }
+  }
+
   function syncHull() {
     hull.cx = state.x;
     hull.cz = state.z;
@@ -401,6 +459,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     const travelFromZ = state.z;
     const wantX = state.x + _forward.x * travel;
     const wantZ = state.z + _forward.z * travel;
+
+    strike(dt);
 
     if (!blocked(wantX, wantZ, facing)) {
       state.x = wantX;
@@ -529,7 +589,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   }
 
   const api = {
-    root, state, update, seat, doorstep, boardingPoint, takeImpact,
+    root, state, update, seat, doorstep, boardingPoint, takeImpact, setBystanders,
     get speed() { return state.speed; },
     get heading() { return state.heading; },
     get occupied() { return state.occupied; },

@@ -2196,6 +2196,67 @@ export function createGameWorld(assets, options = {}) {
   // its collider in place. Nothing is asking it to move.
   const IDLE_CONTROLS = Object.freeze({ throttle: 0, steer: 0, brake: false });
 
+  // --- Who is in front of the car ------------------------------------------
+  //
+  // The collision set is boxes that were placed once and never move, so nobody
+  // walking around is in it: the car drove straight through the two men in the
+  // yard, and their car drove straight through the player. Every vehicle asks
+  // this for the people near it, and gets the same answer whether the player
+  // is driving or being driven at.
+  const _victimPoint = new THREE.Vector3();
+  const playerVictim = {
+    id: 'player',
+    radius: 0.38,
+    get position() { return player.position; },
+    struck(speed, dirX, dirZ, lethal) {
+      window.dispatchEvent(new CustomEvent('lostsignal:playerrunover', {
+        detail: { speed: +speed.toFixed(1), lethal: !!lethal, dirX, dirZ },
+      }));
+    },
+  };
+  // Which car, if any, the player is sitting in. Not the same question as
+  // which car is occupied: the one the two men stole is occupied as well, and
+  // it is the one most likely to run him down.
+  let playerDriving = null;
+  let playerSeatedIn = false;
+  window.addEventListener('lostsignal:drive', (event) => {
+    playerDriving = event.detail?.vehicle || null;
+    playerSeatedIn = false;
+  });
+
+  function bystandersFor(vehicle) {
+    if (playerDriving) {
+      // The event fires on the door handle, a frame before the seat is taken,
+      // so wait to see him in it before believing he has got out of it.
+      if (playerDriving.state.occupied) playerSeatedIn = true;
+      else if (playerSeatedIn) { playerDriving = null; playerSeatedIn = false; }
+    }
+    const out = [];
+    // Every car except the one he is driving. Inside it is the one place a car
+    // cannot run you over.
+    if (playerDriving !== vehicle) out.push(playerVictim);
+    for (const agent of townEnemies?.agents || []) {
+      if (agent.dead || agent.state === 'riding' || agent.state === 'boarding') continue;
+      out.push({
+        id: agent.root.name,
+        radius: 0.36,
+        position: agent.root.position,
+        struck: (speed, dirX, dirZ, lethal) => agent.struck(speed, dirX, dirZ, lethal),
+      });
+    }
+    for (const creature of creatures?.wildlife || []) {
+      if (creature.userData?.alive === false) continue;
+      out.push({
+        id: creature,
+        radius: 0.4,
+        position: creature.getWorldPosition(_victimPoint),
+        struck: () => creatures.agentFor?.(creature)?.kill?.(),
+      });
+    }
+    return out;
+  }
+  for (const vehicle of vehicles) vehicle.setBystanders?.(() => bystandersFor(vehicle));
+
   let elapsed=0;
   function update(dt, world = 'bunker', playerPosition = player.position, observed = null) {
     elapsed += dt;
