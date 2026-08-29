@@ -76,14 +76,34 @@ assert.ok(danceStart.distanceTo(danceLater) > 0.08, 'the dance clip did not move
 update(standing, 20);
 assert.equal(character.animationState(), 'stand', 'the dance continued after its D-pad state was released');
 
-for (const [name, state, minimumRate] of [
-  ['walk', { yaw: 0, speed: 2, grounded: true }, 0.64],
-  ['run', { yaw: 0, speed: 4.8, running: true, grounded: true }, 0.64],
+// Which cycle plays is decided by how fast the character is actually going.
+// The game's ordinary outdoor speed is 3.05 m/s - a jog - and it used to play
+// a walk cycle authored at 1 m/s three times too fast, which is what made the
+// locomotion look like a wind-up toy.
+for (const [name, state] of [
+  ['walk', { yaw: 0, speed: 1.1, grounded: true }],
+  ['run', { yaw: 0, speed: 3.05, grounded: true }],
+  ['run', { yaw: 0, speed: 5.25, running: true, grounded: true }],
 ]) {
-  update(state);
-  assert.equal(character.animationState(), name, `${name} input selected the wrong clip`);
-  assert.ok(character.actions[name].getEffectiveTimeScale() > minimumRate,
-    `${name} is not retimed to match physical movement speed`);
+  update(state, 30);
+  assert.equal(character.animationState(), name,
+    `${state.speed} m/s selected ${character.animationState()} rather than ${name}`);
+  // And it plays inside the band where a cycle still reads as the gait it is.
+  const rate = character.actions[name].getEffectiveTimeScale();
+  assert.ok(rate > 0.7 && rate < 2.0,
+    `${name} at ${state.speed} m/s plays at ${rate.toFixed(2)}x, outside the believable band`);
+}
+
+// Every locomotion cycle knows how far it actually carries the character,
+// measured from its own planted foot. Read off the hip translation track this
+// came out at 0.64 m/s for a walk, which is noise from a cycle authored in
+// place, and every playback rate built on it was wrong.
+for (const [name, low, high] of [
+  ['walk', 0.75, 1.6], ['run', 1.8, 3.2], ['stairsUp', 0.3, 1.2],
+]) {
+  const stride = character.travelSpeed(name);
+  assert.ok(stride > low && stride < high,
+    `the ${name} cycle measures ${stride?.toFixed(2)} m/s, which is not a ${name}`);
 }
 
 // The authored run contains a flight phase, but this game controller moves a
@@ -231,7 +251,7 @@ assert.ok(slungSwing > freeSwing * 0.7,
   + `against ${(freeSwing * 1000).toFixed(0)} mm empty-handed: the firing stance is still locked on`);
 
 // Walking: in both hands, at low ready, muzzle below the horizon.
-update({ yaw: 0, speed: 2, grounded: true, armed: true, aimTarget }, 40);
+update({ yaw: 0, speed: 1.2, grounded: true, armed: true, aimTarget }, 40);
 assert.equal(character.animationState(), 'walk', 'walking with a rifle left the walk cycle');
 report = carryReport();
 assert.equal(report.carry, 'ready',
@@ -243,7 +263,7 @@ assertGrip('walking rifle at the ready');
 // Aiming: up into the shoulder and onto the crosshair, whatever the legs do.
 for (const [name, state] of [
   ['hold', { ...standing, armed: true, aiming: true, aimTarget }],
-  ['walk', { yaw: 0, speed: 2, grounded: true, armed: true, aiming: true, aimTarget }],
+  ['walk', { yaw: 0, speed: 1.2, grounded: true, armed: true, aiming: true, aimTarget }],
   ['run', { yaw: 0, speed: 4.8, running: true, grounded: true, armed: true, aiming: true, aimTarget }],
   ['jump', {
     yaw: 0, speed: 2, grounded: false, verticalSpeed: 3, armed: true, aiming: true, aimTarget,
@@ -260,9 +280,36 @@ for (const [name, state] of [
   assertAim(`aimed rifle (${name})`);
 }
 
+// Slinging the weapon has to give the arms back cleanly. While the rifle
+// travels from the hands to the back the hands must not follow it: they sweep
+// across the chest and cross over each other, which is what a player sees and
+// calls the gun going through him.
+{
+  const handGap = (state, frames) => {
+    update(state, frames);
+    character.root.updateWorldMatrix(true, true);
+    const left = character.root.worldToLocal(
+      character.rig.bones.get('L_Hand').getWorldPosition(new THREE.Vector3()));
+    const right = character.root.worldToLocal(
+      character.rig.bones.get('R_Hand').getWorldPosition(new THREE.Vector3()));
+    return right.x - left.x;
+  };
+  // Walk with it in the hands, then break into a run and watch every frame of
+  // the transition rather than only where it ends up.
+  update({ yaw: 0, speed: 1.2, grounded: true, armed: true, aimTarget }, 60);
+  let narrowest = Infinity;
+  for (let frame = 0; frame < 90; frame++) {
+    narrowest = Math.min(narrowest,
+      handGap({ yaw: 0, speed: 5.25, running: true, grounded: true, armed: true, aimTarget }, 1));
+  }
+  assert.ok(narrowest > 0.12,
+    `slinging the rifle brought the hands to ${(narrowest * 1000).toFixed(0)} mm apart `
+    + `(negative means they crossed over)`);
+}
+
 // Firing from the hip brings it up on its own: a tracer leaving the crosshair
 // while the muzzle points at the floor is wrong in a way players feel.
-update({ yaw: 0, speed: 2, grounded: true, armed: true, aimTarget, recoil: 0.6 }, 90);
+update({ yaw: 0, speed: 1.2, grounded: true, armed: true, aimTarget, recoil: 0.6 }, 90);
 assert.equal(character.carry(), 'aimed', 'firing from the hip did not bring the weapon up');
 
 for (const family of ['sniper', 'shotgun', 'smg', 'pistol', 'revolver']) {

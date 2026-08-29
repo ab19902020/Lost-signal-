@@ -26,6 +26,7 @@ const PROBE_RADIUS = 0.82;
 
 const EYE = new THREE.Vector3(0.40, 1.30, -0.28);    // right-hand drive
 const DOOR = new THREE.Vector3(1.62, 0, -0.20);      // out of the driver's side
+const _boardingLocal = new THREE.Vector3();
 
 // Mk III RS Turbo character: a light, quick front-driver with five close gears
 // and a real 125-ish mph top end, rather than the forty-mph estate tune this
@@ -377,6 +378,21 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   const seat = (target = new THREE.Vector3()) => toWorld(EYE, state.x, state.z, target);
 
   /** Where the driver stands when they get out, clear of the car. */
+  /**
+   * Where somebody stands to get in on one side or the other.
+   *
+   * The player only ever uses the driver's door, but the two men who steal the
+   * car need one door each and they need to arrive at the right one, or they
+   * both walk to the same handle and shove each other.
+   */
+  function boardingPoint(side = 'driver') {
+    const local = _boardingLocal.copy(DOOR);
+    if (side !== 'driver') local.x = -local.x;
+    const point = toWorld(local, state.x, state.z, new THREE.Vector3());
+    point.y = groundAt(point.x, point.z);
+    return point;
+  }
+
   function doorstep() {
     const point = toWorld(DOOR, state.x, state.z, new THREE.Vector3());
     // Never put the player inside anything: walk out around the car if the
@@ -397,7 +413,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   }
 
   const api = {
-    root, state, update, seat, doorstep, takeImpact,
+    root, state, update, seat, doorstep, boardingPoint, takeImpact,
     get speed() { return state.speed; },
     get heading() { return state.heading; },
     get occupied() { return state.occupied; },

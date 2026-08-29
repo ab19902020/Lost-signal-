@@ -59,8 +59,11 @@ const BOUND_LOOK = 1.1;
 // Travelled less than this in this long, while it had somewhere to be? Stuck.
 const STUCK_TRAVEL = 0.22;
 const STUCK_SECONDS = 0.9;
-// Close enough that the player is the problem rather than the silo door.
+// Close enough that the player is the problem rather than the car.
 const CONTACT_RANGE = 15;
+// How long one of them will stand at a door before giving up on his mate and
+// driving off without him.
+const BOARD_PATIENCE = 9;
 const _box = new THREE.Box3();
 const _size = new THREE.Vector3();
 const _toward = new THREE.Vector3();
@@ -292,6 +295,11 @@ class TownEnemy {
     this.contactTarget = null;
     this.contactTimer = 0;
     this.holding = null;
+    this.carDoor = null;
+    this.boardTimer = 0;
+    // Who takes the wheel. Assigned by the squad so there is exactly one of
+    // each, and reassigned if the driver is shot before he reaches the door.
+    this.role = 'passenger';
     this.stuckWatch = new THREE.Vector3(...position);
     this.stuckWatchTimer = 0;
     this.unstickAttempts = 0;
@@ -859,9 +867,61 @@ class TownEnemy {
         this.target = null;
         this.destination = null;
       }
+    } else if (this.state === 'to_car') {
+      // The car is what they came for. Each man has his own door, so they do
+      // not arrive at the same handle and shove each other.
+      const door = this.mission.boardingPoint?.(this.role);
+      if (!door) { this.state = 'assault_yard'; return; }
+      const gap = this.root.position.distanceTo(door);
+      // Re-route while the car is still where it was; a car that has moved
+      // makes every waypoint behind it wrong.
+      if (!this.target || this.carDoor === null || this.carDoor.distanceTo(door) > 1.5) {
+        this.carDoor = door.clone();
+        this.destination = door.clone();
+        this.route = this.planRoute(this.destination);
+        this.target = this.route.shift() || this.destination.clone();
+      }
+      const speed = (visible ? 3.3 : 5.2) * this.personality.pace * this.plan.pace;
+      if (visible) this.playTravel('run', speed, 1, .1);
+      if (gap < 1.15 || this.followRoute(speed, dt)) {
+        this.state = 'boarding';
+        this.target = null;
+        this.destination = null;
+      }
+    } else if (this.state === 'boarding') {
+      // Waiting at the door for the other one. A driver who pulls away while
+      // his mate is still crossing the yard is not two men stealing a car.
+      this.holding = 'boarding';
+      this.play('stand', 1, .16);
+      const door = this.mission.boardingPoint?.(this.role);
+      if (door) this.face(door, dt, 5);
+      this.boardTimer += dt;
+      if (this.mission.readyToDrive?.(this) || this.boardTimer > BOARD_PATIENCE) {
+        if (this.mission.board?.(this)) {
+          this.state = 'riding';
+          this.model.visible = false;
+          // A man in the car is not also a bollard beside it. Leaving their
+          // colliders at the doors meant the car's own body was blocked by its
+          // occupants and it could not pull away.
+          this.collider.enabled = false;
+        }
+      }
+    } else if (this.state === 'riding') {
+      this.holding = 'riding';
+      // Carried by the car. The body still tracks the seat so a shot through
+      // the window still finds the man in it, but it is not in the way of the
+      // car it is sitting in.
+      const seat = this.mission.seatPosition?.(this);
+      if (seat) this.root.position.copy(seat);
+      this.collider.cx = this.root.position.x;
+      this.collider.cz = this.root.position.z;
+      this.collider.minY = this.root.position.y;
+      this.collider.maxY = this.root.position.y + HEIGHT;
     } else if (this.state === 'breach_gate') {
       if (this.mission.gateIsPassable?.()) {
-        this.state = 'assault_yard';
+        // Through the gate, and then straight for the car. Breaking into the
+        // shelter was never the plan: the shelter has nothing they can drive.
+        this.state = this.mission.boardingPoint ? 'to_car' : 'assault_yard';
         this.target = null;
         this.destination = null;
       } else {
@@ -1015,7 +1075,10 @@ class TownEnemy {
 
     const distance = this.root.position.distanceTo(playerPosition);
     if (this.assaulting) {
-      this.model.visible = active && distance < ASSAULT_RENDER_DISTANCE;
+      // Inside the car they are not standing in the yard. The body still
+      // exists and still moves with the car, so it can still be shot at.
+      this.model.visible = active && distance < ASSAULT_RENDER_DISTANCE
+        && this.state !== 'riding';
       const beforeX = this.root.position.x;
       const beforeZ = this.root.position.z;
       this.updateAssault(dt, playerPosition, active, distance);
@@ -1157,6 +1220,11 @@ class TownEnemy {
   kill() {
     if (this.dead) return false;
     this.dead = true;
+    // If the man with the keys goes down, his mate moves across.
+    if (this.squad?.driver === this.root.name) {
+      this.squad.driver = null;
+      this.mission.driverDown?.(this);
+    }
     this.root.userData.alive = false;
     this.collider.enabled = false;
     for (const volume of this.hitVolumes) {
@@ -1177,7 +1245,7 @@ export function createTownEnemies({ scene, colliders, assets, entries,
   const navigator = createNavigator({ colliders });
   // What the two of them know about each other. Two attackers who both charge
   // are one attacker twice; two who notice the other is busy are a pair.
-  const squad = { engaged: null, breached: false, lanes: new Set() };
+  const squad = { engaged: null, breached: false, lanes: new Set(), driver: null };
 
   // A seed the caller can pin for a test and leave alone in the game, so the
   // siege is a different afternoon each time it is played and the same one
@@ -1196,10 +1264,14 @@ export function createTownEnemies({ scene, colliders, assets, entries,
     // shoulder to shoulder.
     const pick = pool.length ? Math.floor(nextRandom() * pool.length) % pool.length : 0;
     const plan = pool.length ? pool.splice(pick, 1)[0] : ASSAULT_PLANS[0];
-    agents.push(new TownEnemy({
+    const agent = new TownEnemy({
       gltf, scene, colliders, navigationObstacles, lowCost, sharedMelee, mission,
       navigator, plan, squad, ...entry,
-    }));
+    });
+    // One driver, one passenger. Whoever is drawn first takes the wheel; if he
+    // is shot before he gets to it, the other one moves across.
+    if (!squad.driver) { squad.driver = agent.root.name; agent.role = 'driver'; }
+    agents.push(agent);
   }
   return {
     agents,
