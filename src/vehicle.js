@@ -79,23 +79,40 @@ const STRIKE_COOLDOWN = 0.85;  // seconds before the same body can be hit again
 // eighteen boxes and it never moves relative to the body, so it costs a draw
 // call and nothing else - but it is the difference between glass you can see
 // through and glass you can see nothing through.
+// Very dark, and matte. Looking into a car from outside on a bright day, the
+// interior reads as nearly black behind the glass - anything lighter than this
+// turns the cabin into a stack of grey boxes sitting in a greenhouse.
 const CABIN_DARK = new THREE.MeshStandardMaterial({
-  name: 'Ford_Escort_Cabin', color: 0x1b1c1f, roughness: 0.92, metalness: 0.02,
+  name: 'Ford_Escort_Cabin', color: 0x0b0c0e, roughness: 0.97, metalness: 0.0,
 });
 const CABIN_TRIM = new THREE.MeshStandardMaterial({
-  name: 'Ford_Escort_Trim', color: 0x2c2e33, roughness: 0.78, metalness: 0.05,
+  name: 'Ford_Escort_Trim', color: 0x121317, roughness: 0.94, metalness: 0.0,
 });
+// Two separate passes lift crushed blacks out of the surface so a dark prop
+// under a moon does not read as a hole cut in the picture. Both are right for
+// what they were written for and both are wrong here: an unlit cabin behind
+// glass is meant to be nearly black, and lifting it is what turned the
+// interior into a stack of grey boxes sitting in a greenhouse.
+CABIN_DARK.userData.lsKeepDark = true;
+CABIN_TRIM.userData.lsKeepDark = true;
 
 // Where a person's backside goes, in the body's own frame. Right-hand drive:
 // the driver sits on +X, which is the same side EYE and DOOR are on.
 export const SEAT_HEIGHT = 0.52;
-// The highest a head can be and still be inside the car: the roof is at 1.40
-// and hair needs somewhere to go.
-export const CABIN_HEADROOM = 1.37;
+// How much headroom there is over a seat is not the height of the car. The
+// Escort's highest point is over the rear of its roof; above the front seats
+// the roof has already started to fall away towards the windscreen, and the
+// difference is four and a half centimetres - which is exactly enough for two
+// heads to come through it while every number says they are inside the car.
+// So it is measured off the shell, over the seats, rather than assumed.
+const HEAD_CLEARANCE = 0.03;
+export let CABIN_HEADROOM = 1.34;
 export const SEAT_Z = -0.16;
 export const SEAT_X = 0.36;
 const FLOOR = 0.26;
 const CABIN_WIDTH = 1.24;
+// Where the glass starts. Nothing solid goes above it but the wheel.
+const BELTLINE = 0.76;
 const WHEEL_Y = 0.85;
 const WHEEL_Z = -0.50;
 const WHEEL_RIM = 0.19;    // a 380 mm wheel, which is what the car had
@@ -113,42 +130,92 @@ function box(parent, material, [w, h, d], [x, y, z], tilt = 0) {
   return mesh;
 }
 
+// The lowest the roof gets anywhere a head might be: sampled over both seats
+// and the space between them, straight off the shell's own triangles.
+const _roofA = new THREE.Vector3();
+const _roofB = new THREE.Vector3();
+const _roofC = new THREE.Vector3();
+function measureHeadroom(shell) {
+  const geometry = shell?.geometry;
+  const position = geometry?.attributes?.position;
+  if (!position) return null;
+  const index = geometry.index;
+  const count = index ? index.count : position.count;
+  // Where the tops of their heads actually are, in the body's own frame.
+  const columns = [[SEAT_X, SEAT_Z], [-SEAT_X, SEAT_Z], [0, SEAT_Z],
+    [SEAT_X, SEAT_Z - 0.12], [-SEAT_X, SEAT_Z - 0.12]];
+  const roof = columns.map(() => -Infinity);
+  for (let triangle = 0; triangle < count; triangle += 3) {
+    const a = index ? index.getX(triangle) : triangle;
+    const b = index ? index.getX(triangle + 1) : triangle + 1;
+    const c = index ? index.getX(triangle + 2) : triangle + 2;
+    _roofA.fromBufferAttribute(position, a);
+    _roofB.fromBufferAttribute(position, b);
+    _roofC.fromBufferAttribute(position, c);
+    const minX = Math.min(_roofA.x, _roofB.x, _roofC.x);
+    const maxX = Math.max(_roofA.x, _roofB.x, _roofC.x);
+    const minZ = Math.min(_roofA.z, _roofB.z, _roofC.z);
+    const maxZ = Math.max(_roofA.z, _roofB.z, _roofC.z);
+    const top = Math.max(_roofA.y, _roofB.y, _roofC.y);
+    for (let column = 0; column < columns.length; column++) {
+      const [x, z] = columns[column];
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      if (top > roof[column]) roof[column] = top;
+    }
+  }
+  const lowest = Math.min(...roof.filter(Number.isFinite));
+  return Number.isFinite(lowest) ? lowest - HEAD_CLEARANCE : null;
+}
+
 function buildCabin(parent) {
   const cabin = new THREE.Group();
   cabin.name = 'Car_Cabin';
-  // Floor, transmission tunnel, rear bulkhead, parcel shelf.
-  // Nothing in here is wider than the inside of the car. The shell measures
-  // 1.72 m across its arches; the cabin between the door skins is a good deal
-  // narrower than that, and a floor pan cut to the outside width comes through
-  // the wings as a black slab.
-  box(cabin, CABIN_DARK, [CABIN_WIDTH, 0.05, 2.05], [0, FLOOR, -0.10]);
-  box(cabin, CABIN_DARK, [0.26, 0.16, 1.90], [0, FLOOR + 0.07, -0.10]);
-  box(cabin, CABIN_DARK, [CABIN_WIDTH, 0.52, 0.07], [0, 0.58, 0.92]);
-  box(cabin, CABIN_DARK, [CABIN_WIDTH - 0.08, 0.05, 0.44], [0, 0.84, 1.02]);
+  // Everything here stops at the beltline.
+  //
+  // The first version built a full interior - seat backs, headrests, a
+  // dashboard top, door cards to shoulder height - and it was a mistake you
+  // could see from thirty metres. Cutting the windows open and then filling
+  // them with grey blocks is worse than not cutting them: the car read as a
+  // greenhouse with a stack of boxes in it, and the two men you had gone to
+  // the trouble of seating were competing with furniture for the view.
+  //
+  // Below the glass it is doing the only job it needs to do, which is stop
+  // you seeing daylight through the bottom of the car. Above the glass the
+  // only things left are the two men and the wheel one of them is holding,
+  // which is all there was ever any reason to see.
+  const beam = (material, [w, h, d], [x, y, z], tilt = 0) => {
+    const top = y + h / 2;
+    return box(cabin, material, [w, h, d],
+      [x, top > BELTLINE ? BELTLINE - h / 2 : y, z], tilt);
+  };
+  // Floor, transmission tunnel and the bulkhead behind the seats.
+  beam(CABIN_DARK, [CABIN_WIDTH, 0.05, 2.05], [0, FLOOR, -0.10]);
+  beam(CABIN_DARK, [0.26, 0.16, 1.90], [0, FLOOR + 0.07, -0.10]);
+  beam(CABIN_DARK, [CABIN_WIDTH, 0.44, 0.07], [0, 0.54, 0.92]);
   // Dashboard and centre stack, up against the base of the windscreen.
-  box(cabin, CABIN_TRIM, [CABIN_WIDTH, 0.30, 0.34], [0, 0.80, -1.10]);
-  box(cabin, CABIN_DARK, [0.34, 0.26, 0.18], [0, 0.64, -0.96]);
+  beam(CABIN_TRIM, [CABIN_WIDTH, 0.28, 0.34], [0, 0.62, -1.10]);
+  beam(CABIN_DARK, [0.34, 0.26, 0.18], [0, 0.54, -0.96]);
   // Door cards, so the inside of a door is a door.
   for (const side of [-1, 1]) {
-    box(cabin, CABIN_TRIM, [0.05, 0.36, 1.30], [side * (CABIN_WIDTH * 0.5 - 0.02), 0.56, -0.30]);
+    beam(CABIN_TRIM, [0.05, 0.32, 1.30], [side * (CABIN_WIDTH * 0.5 - 0.02), 0.58, -0.30]);
   }
-  // Front seats and rear bench: a squab and a back apiece.
+  // Seats: a cushion to sit on and as much back as fits under the glass.
   for (const side of [-1, 1]) {
-    box(cabin, CABIN_TRIM, [0.48, 0.12, 0.50], [side * SEAT_X, SEAT_HEIGHT - 0.06, SEAT_Z]);
-    box(cabin, CABIN_TRIM, [0.48, 0.62, 0.12], [side * SEAT_X, SEAT_HEIGHT + 0.27, SEAT_Z + 0.30], -0.16);
-    box(cabin, CABIN_DARK, [0.24, 0.16, 0.14], [side * SEAT_X, SEAT_HEIGHT + 0.62, SEAT_Z + 0.35]);
+    beam(CABIN_TRIM, [0.48, 0.12, 0.50], [side * SEAT_X, SEAT_HEIGHT - 0.06, SEAT_Z]);
+    beam(CABIN_TRIM, [0.48, 0.34, 0.12], [side * SEAT_X, SEAT_HEIGHT + 0.14, SEAT_Z + 0.30], -0.16);
   }
-  box(cabin, CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.12, 0.44], [0, SEAT_HEIGHT - 0.08, 0.62]);
-  box(cabin, CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.50, 0.10], [0, SEAT_HEIGHT + 0.22, 0.86], -0.12);
-  // The wheel goes where the driver's hands actually come to rest, measured off
-  // the seated pose, rather than where a catalogue would put it. A wheel his
-  // arms cannot reach is worse than no wheel at all.
-  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 8), CABIN_DARK);
+  beam(CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.12, 0.44], [0, SEAT_HEIGHT - 0.08, 0.62]);
+  beam(CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.30, 0.10], [0, SEAT_HEIGHT + 0.14, 0.86], -0.12);
+  // The wheel is the one thing that belongs above the glass line, because a
+  // driver with his hands on nothing is worse than no wheel at all. It goes
+  // where his hands actually come to rest, measured off the seated pose,
+  // rather than where a catalogue would put it.
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.36, 8), CABIN_DARK);
   column.rotation.set(1.22, 0, 0);
-  column.position.set(SEAT_X, 0.95, -0.64);
+  column.position.set(SEAT_X, 0.82, -0.64);
   column.userData.skipBallistics = true;
   cabin.add(column);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_RIM, 0.018, 6, 20), CABIN_DARK);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_RIM, 0.016, 6, 20), CABIN_DARK);
   rim.name = 'Car_SteeringWheel';
   rim.rotation.set(1.22, 0, 0);
   rim.position.set(SEAT_X, WHEEL_Y, WHEEL_Z);
@@ -228,6 +295,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // without this the cabin is a hole you can see the far door through, and two
   // men sitting in it would appear to float in mid-air.
   const cabin = buildCabin(shell || root);
+  const headroom = measureHeadroom(shell);
+  if (headroom) CABIN_HEADROOM = headroom;
   // The wheel comes from the cabin, so it has to be found after the cabin is
   // built. The scan has no interior of its own to take one from.
   const steeringWheel = findNamed(root, 'Car_SteeringWheel');
@@ -590,6 +659,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
 
   const api = {
     root, state, update, seat, doorstep, boardingPoint, takeImpact, setBystanders,
+    // Measured off this car's own roof, over its own seats.
+    headroom: headroom || CABIN_HEADROOM,
     get speed() { return state.speed; },
     get heading() { return state.heading; },
     get occupied() { return state.occupied; },

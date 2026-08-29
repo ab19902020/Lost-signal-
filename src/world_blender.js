@@ -1048,7 +1048,7 @@ export function createGameWorld(assets, options = {}) {
     if (!gateCar) return null;
     const offset = seatOffsets[agent.role] || seatOffsets.passenger;
     const onCushion = SEAT_HEIGHT + 0.05 - (agent.seatRise?.() ?? 0.95);
-    const underRoof = CABIN_HEADROOM - (agent.seatCrown?.() ?? 1.35);
+    const underRoof = (gateCar.headroom ?? CABIN_HEADROOM) - (agent.seatCrown?.() ?? 1.35);
     return _seatPoint.copy(offset).applyAxisAngle(_seatUp, gateCar.state.heading)
       .add(new THREE.Vector3(gateCar.state.x,
         gateCar.state.y + Math.min(onCushion, underRoof), gateCar.state.z));
@@ -1540,6 +1540,8 @@ export function createGameWorld(assets, options = {}) {
   const lifted = new Map();
   const liftFromBlack = (material) => {
     if (!material?.color) return material;
+    // Except where the black is the point. See CABIN_DARK in vehicle.js.
+    if (material.userData?.lsKeepDark) return material;
     if (lifted.has(material)) return lifted.get(material);
     const luminance = material.color.r * 0.29 + material.color.g * 0.59 + material.color.b * 0.12;
     if (luminance >= 0.055) {

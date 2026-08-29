@@ -663,6 +663,28 @@ async function prepare() {
           down: { ...gamepad.state.down },
           pressed: { ...gamepad.state.pressed },
         }),
+        // What the engine is actually doing, so a harness can ask whether the
+        // sound changes with load or only with revs - which is the difference
+        // between an engine and a drone, and not something you can hear in a
+        // screenshot.
+        engineVoice: () => (engine ? {
+          kind: engine.kind,
+          firing: +engine.block[0].frequency.value.toFixed(1),
+          level: +engine.out.gain.value.toFixed(4),
+          induction: +engine.inductionGain.gain.value.toFixed(4),
+          boost: +engine.boost.toFixed(3),
+          orders: (engine.orders || []).map((order) => ({
+            multiple: order.multiple,
+            hz: +order.oscillator.frequency.value.toFixed(1),
+            gain: +order.gain.gain.value.toFixed(5),
+          })),
+        } : null),
+        // Drive the engine's voice directly, as the car does each frame,
+        // starting it first if nobody is sitting in the car.
+        engineAt: (speedRatio, throttle, rpm) => {
+          if (!engine) { startAudio(); startEngineAudio('car'); }
+          return engineAudio(speedRatio, throttle, null, rpm, false);
+        },
         lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
         horn: () => hornSound(),
         holster: (on) => setHolstered(on === undefined ? !holstered : on, { announce: false }),
@@ -3413,6 +3435,30 @@ function startEngineAudio(kind = 'car') {
   exhaust.connect(exhaustGain); exhaustGain.connect(filter);
   exhaust.start();
 
+  // Engine orders.
+  //
+  // Two oscillators at the firing frequency is a drone: it changes pitch with
+  // the revs and nothing else, so a car pulling hard up a hill sounds exactly
+  // like a car coasting down one. What makes an engine sound like it is
+  // working is the harmonics above the firing frequency - the second and
+  // fourth orders come up hard under load and fall away the moment you lift.
+  // Their pitch follows the revs; their level follows the accelerator, and
+  // that is the whole difference.
+  const orders = [
+    { multiple: 2, type: 'sawtooth', peak: 0.052, floor: 0.004 },
+    { multiple: 3, type: 'square', peak: 0.026, floor: 0.002 },
+    { multiple: 4, type: 'sawtooth', peak: 0.020, floor: 0.001 },
+  ].map((order) => {
+    const oscillator = ac.createOscillator();
+    oscillator.type = order.type;
+    oscillator.frequency.value = 32 * order.multiple;
+    const gain = ac.createGain();
+    gain.gain.value = order.floor;
+    oscillator.connect(gain); gain.connect(filter);
+    oscillator.start();
+    return { ...order, oscillator, gain };
+  });
+
   const induction = ac.createBufferSource();
   induction.buffer = noiseBuffer(2);
   induction.loop = true;
@@ -3524,11 +3570,12 @@ function startEngineAudio(kind = 'car') {
     wind.start();
   }
 
-  engine = { out, compressor, filter, block, exhaust, induction, inductionFilter,
+  engine = { out, compressor, filter, block, orders, exhaust, induction, inductionFilter,
     inductionGain, mechanical, mechanicalFilter, mechanicalGain,
     rumble, rumbleFilter, rumbleGain, prop, propGain, turbo, turboGain,
     road, roadFilter, roadGain, wind, windFilter, windGain,
-    kind, revs: 0, throttle: 0, lastPop: -Infinity, lastDump: -Infinity, boost: 0 };
+    kind, revs: 0, throttle: 0, lastPop: -Infinity, lastDump: -Infinity, boost: 0,
+    lope: 0, lopePhase: 0 };
   out.gain.setTargetAtTime(0.42, ac.currentTime, 0.35);
 }
 
@@ -3540,6 +3587,9 @@ function stopEngineAudio() {
   dying.out.gain.setTargetAtTime(0, t, 0.12);
   setTimeout(() => {
     for (const o of dying.block) { try { o.stop(); } catch { /* already stopped */ } }
+    for (const order of dying.orders || []) {
+      try { order.oscillator.stop(); } catch { /* already stopped */ }
+    }
     try { dying.exhaust.stop(); } catch { /* already stopped */ }
     try { dying.prop?.stop(); } catch { /* already stopped */ }
     try { dying.turbo?.stop(); } catch { /* already stopped */ }
@@ -3584,9 +3634,29 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   const engineRpm = 950 + normalised * 5500;
   const shiftDip = shifted ? 0.78 : 1;
   const firing = engineRpm / 30 * shiftDip;
-  engine.block[0].frequency.setTargetAtTime(firing, t, 0.055);
-  engine.block[1].frequency.setTargetAtTime(firing * 1.006, t, 0.06);
-  engine.exhaust.frequency.setTargetAtTime(firing * .5, t, 0.065);
+  // A four-cylinder at idle does not turn at a constant speed: it hunts, a
+  // little, cylinder to cylinder. Without this the idle is a held organ note,
+  // which is the one part of an engine everybody can hear is synthetic. It
+  // fades out as the revs come up, because at four thousand nobody can hear it.
+  engine.lopePhase = (engine.lopePhase + 0.11 + Math.random() * 0.08) % (Math.PI * 2);
+  const lopeDepth = Math.max(0, 1 - normalised * 3.2) * (1 - load * 0.7);
+  const lope = 1 + Math.sin(engine.lopePhase) * 0.022 * lopeDepth;
+
+  engine.block[0].frequency.setTargetAtTime(firing * lope, t, 0.055);
+  engine.block[1].frequency.setTargetAtTime(firing * 1.006 * lope, t, 0.06);
+  engine.exhaust.frequency.setTargetAtTime(firing * .5 * lope, t, 0.065);
+
+  // The orders track the revs and are voiced by the accelerator. Under power
+  // the engine hardens; the moment the throttle shuts they drop away and what
+  // is left is the induction hiss and the mechanical layer, which is what
+  // engine braking sounds like.
+  const pulling = THREE.MathUtils.clamp(Math.max(0, throttle), 0, 1);
+  const hardness = pulling * (0.35 + normalised * 0.65);
+  for (const order of engine.orders || []) {
+    order.oscillator.frequency.setTargetAtTime(firing * order.multiple * lope, t, 0.06);
+    order.gain.gain.setTargetAtTime(
+      order.floor + (order.peak - order.floor) * hardness, t, 0.09);
+  }
   engine.mechanical?.frequency.setTargetAtTime(engineRpm / 60 * 2.15, t, .07);
   engine.mechanicalFilter?.frequency.setTargetAtTime(560 + normalised * 1250, t, .09);
   engine.mechanicalGain?.gain.setTargetAtTime(.012 + normalised * .026, t, .1);
@@ -3595,7 +3665,11 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   engine.inductionGain.gain.setTargetAtTime(0.008 + load * 0.052, t, 0.085);
   engine.rumbleGain?.gain.setTargetAtTime(.012 + load * .026 + speedRatio * .014, t, .12);
   if (engine.turbo) engine.turbo.frequency.setTargetAtTime(980 + normalised * 2150, t, 0.08);
-  engine.out.gain.setTargetAtTime((0.34 + load * 0.23) * (shifted ? 0.84 : 1), t, 0.055);
+  // Overrun: off the throttle at revs, an engine gets quieter and thinner
+  // rather than carrying on at the same volume in a lower key.
+  const overrun = normalised > 0.3 && throttle < 0.08 ? 0.72 : 1;
+  engine.out.gain.setTargetAtTime(
+    (0.34 + load * 0.23) * (shifted ? 0.84 : 1) * overrun, t, 0.055);
 
   // One restrained exhaust cough on a high-rpm lift. It is event-driven, not
   // a random crackle loop, so coasting does not sound like continuous gunfire.

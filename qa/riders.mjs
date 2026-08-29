@@ -59,6 +59,29 @@ const result = await page.evaluate(() => {
   const bones = ['Head', 'Hip', 'L_Hand', 'R_Hand', 'L_Foot', 'R_Foot', 'L_Calf', 'R_Calf'];
   const wheelAt = wheel ? wheel.getWorldPosition(new V3()) : null;
 
+  // Bones are cheap to check and they are not the thing anyone looks at. A
+  // sleeve out through a door and a head out through a roof are both skin, and
+  // both happened while every bone was comfortably inside the car. So this
+  // walks the actual posed vertices - all ninety thousand of them, once.
+  const skin = (agent) => {
+    const point = new V3();
+    const worst = { top: -Infinity, x: 0, z: 0 };
+    agent.model.traverse((part) => {
+      if (!part.isSkinnedMesh || !part.applyBoneTransform) return;
+      const position = part.geometry.attributes.position;
+      for (let index = 0; index < position.count; index++) {
+        point.fromBufferAttribute(position, index);
+        part.applyBoneTransform(index, point);
+        part.localToWorld(point);
+        car.root.worldToLocal(point);
+        if (point.y > worst.top) worst.top = point.y;
+        worst.x = Math.max(worst.x, Math.abs(point.x));
+        worst.z = Math.max(worst.z, Math.abs(point.z));
+      }
+    });
+    return { top: +worst.top.toFixed(3), x: +worst.x.toFixed(3), z: +worst.z.toFixed(3) };
+  };
+
   return {
     glass: glass ? {
       triangles: glass.geometry.index ? glass.geometry.index.count / 3 : 0,
@@ -69,6 +92,8 @@ const result = await page.evaluate(() => {
     } : null,
     cabin: !!car.root.getObjectByName('Car_Cabin'),
     roof: +body.max.y.toFixed(2),
+    // What the car actually has over its seats, which is not its own height.
+    headroom: +car.headroom.toFixed(3),
     riders: agents.map((agent) => {
       const at = (name) => {
         const bone = agent.model.getObjectByName(name);
@@ -89,6 +114,7 @@ const result = await page.evaluate(() => {
         // steering wheel is not holding it either.
         toRim: wheelAt ? +Math.abs(hand.distanceTo(wheelAt) - 0.19).toFixed(2) : null,
         outside,
+        skin: skin(agent),
       };
     }),
   };
@@ -111,8 +137,17 @@ for (const rider of result.riders) {
   assert.ok(rider.drawn, `${rider.name} is not drawn while riding`);
   assert.deepEqual(rider.outside, [],
     `${rider.name} has ${rider.outside.join(', ')} outside the bodywork`);
-  assert.ok(rider.crown < result.roof - 0.01,
-    `${rider.name}'s head is through the roof (${rider.crown} vs ${result.roof})`);
+  // Against the roof over the seats, not the top of the car. The Escort's
+  // highest point is over the rear of its roof; above the front seats the roof
+  // has already begun falling away, and the four and a half centimetres of
+  // difference is exactly what two heads came through.
+  assert.ok(rider.skin.top <= result.headroom + 0.03,
+    `${rider.name}'s head comes through the roof: his highest vertex is at `
+    + `${rider.skin.top} and there is ${result.headroom} m over the seat`);
+  assert.ok(rider.skin.x < 0.90,
+    `${rider.name} has skin ${rider.skin.x} m off the centreline, out through the door`);
+  assert.ok(rider.skin.z < 2.05,
+    `${rider.name} has skin ${rider.skin.z} m up the car, out through the screen`);
   assert.ok(rider.hipAboveKnee > -0.15 && rider.hipAboveKnee < 0.35,
     `${rider.name} is not folded at the hip (hip is ${rider.hipAboveKnee} m above the knee)`);
   assert.ok(rider.kneeAboveFoot > 0.12,
