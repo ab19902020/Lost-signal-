@@ -2885,6 +2885,11 @@ function updateThirdPersonCamera(dt, targetHeight = body.eyeHeight) {
   const allowedShoulder = requestedShoulder * shoulderClear;
   cameraShoulder = THREE.MathUtils.damp(cameraShoulder, allowedShoulder,
     allowedShoulder < cameraShoulder ? 24 : 12, dt);
+  // Damping is for easing back out, never for easing in. A damped retraction
+  // is a camera that spends a fifth of a second inside the wall it just found,
+  // and on the frame the world is built - or a door opens into the boom - that
+  // fifth of a second is what the player sees.
+  cameraShoulder = Math.min(cameraShoulder, allowedShoulder);
   thirdPersonAnchor.copy(thirdPersonTarget).addScaledVector(thirdPersonRight, cameraShoulder);
 
   thirdPersonDesired.copy(thirdPersonAnchor).addScaledVector(thirdPersonForward, -distance);
@@ -2892,6 +2897,7 @@ function updateThirdPersonCamera(dt, targetHeight = body.eyeHeight) {
   const allowedBoom = Math.max(0.34, distance * boomClear);
   cameraBoom = THREE.MathUtils.damp(cameraBoom, allowedBoom,
     allowedBoom < cameraBoom ? 24 : 9, dt);
+  cameraBoom = Math.min(cameraBoom, allowedBoom);
   game.camera.position.copy(thirdPersonAnchor).addScaledVector(thirdPersonForward, -cameraBoom);
   game.camera.rotation.set(cameraPitch, yaw, recoilRoll * 0.18, 'YXZ');
   game.camera.updateWorldMatrix(true, false);
