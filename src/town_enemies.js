@@ -119,15 +119,81 @@ export const TOWN_ENEMY_ANIMATIONS = Object.freeze({
   }),
 });
 
-function authoredTravelSpeed(source) {
-  const track = source.tracks.find((entry) => /Hip\.position$/.test(entry.name));
-  if (!track || source.duration <= 0) return 1;
-  const stride = track.getValueSize();
-  const last = track.values.length - stride;
-  return Math.hypot(
-    track.values[last] - track.values[0],
-    track.values[last + 1] - track.values[1],
-  ) / source.duration;
+// How fast a clip walks, measured off the feet.
+//
+// The old reading took the Hip track's first key against its last and called
+// the distance between them the stride. It was wrong twice over: a walk cycle
+// returns to where it started, so the answer on a clean loop is nearly zero,
+// and the two components it compared were x and y - sideways and vertical -
+// rather than the ground plane the man is actually crossing. Everything then
+// slammed into the rate clamp and the two of them ran with their feet skating
+// under them.
+//
+// So the clip is played and watched instead: solo it, step through it, and add
+// up how far the planted foot travels backwards underneath the body. That is
+// what a stride is, and dividing it by the clip's length is the speed the
+// animation is authored to walk at.
+function measureStride(mixer, actions, clips, root, model, name, fallback = 1) {
+  const clip = clips[name];
+  const left = model.getObjectByName('L_Foot');
+  const right = model.getObjectByName('R_Foot');
+  if (!clip || clip.duration <= 0 || !left || !right) return fallback;
+
+  const restore = [];
+  for (const [key, action] of Object.entries(actions)) {
+    restore.push([action, action.enabled, action.weight]);
+    action.stop();
+    action.enabled = key === name;
+    action.setEffectiveWeight(key === name ? 1 : 0);
+    action.setEffectiveTimeScale(1);
+    if (key === name) action.play();
+  }
+
+  const steps = 72;
+  const point = new THREE.Vector3();
+  // Sample the whole cycle first. Which foot is on the ground cannot be known
+  // from one frame - in a run there are moments when neither of them is - so
+  // the ground has to be found before anything is called planted.
+  const samples = [];
+  for (let step = 0; step <= steps; step++) {
+    mixer.setTime((step / steps) * clip.duration);
+    model.updateMatrixWorld(true);
+    // In the root's frame, not the model's. The model carries the scale that
+    // brings a one-metre upload up to a man, so measuring inside it returns a
+    // stride in upload units - and the rate computed from that runs the cycle
+    // most of twice as fast as the ground underneath it.
+    const lowLeft = root.worldToLocal(left.getWorldPosition(point.clone()));
+    const lowRight = root.worldToLocal(right.getWorldPosition(point.clone()));
+    const side = lowLeft.y <= lowRight.y ? 'L' : 'R';
+    samples.push({ side, foot: side === 'L' ? lowLeft : lowRight });
+  }
+  const ground = Math.min(...samples.map((sample) => sample.foot.y));
+  let stride = 0;
+  let planted = 0;
+  let previous = null;
+  let previousSide = null;
+  for (const sample of samples) {
+    // Down, and the same foot as last frame. The swap from one foot to the
+    // other is not stride, it is the other leg arriving; the flight phase of a
+    // run is not stride either, it is nobody touching anything.
+    const down = sample.foot.y < ground + 0.06;
+    if (down && previous && sample.side === previousSide) {
+      stride += Math.abs(sample.foot.z - previous.z);
+      planted += clip.duration / steps;
+    }
+    previous = down ? sample.foot : null;
+    previousSide = down ? sample.side : null;
+  }
+  // Put every action back the way it was before anything returns: soloing a
+  // clip to measure it and then leaving it soloed would be a worse bug than
+  // the one this fixes.
+  for (const [action, enabled, weight] of restore) {
+    action.stop();
+    action.enabled = enabled;
+    action.setEffectiveWeight(weight);
+  }
+  mixer.setTime(0);
+  return planted > 0.02 ? stride / planted : fallback;
 }
 
 function inPlace(source, name, hipBind) {
@@ -214,7 +280,6 @@ function prepareModel(gltf, style, lowCost = false, sharedMelee = null) {
   const travelSpeeds = {};
   for (const [name, index] of Object.entries(map)) {
     const source = gltf.animations[index];
-    travelSpeeds[name] = authoredTravelSpeed(source) * scale;
     clips[name] = inPlace(source, name, hip?.position || new THREE.Vector3());
     const action = mixer.clipAction(clips[name]);
     action.enabled = true;
@@ -250,6 +315,13 @@ function prepareModel(gltf, style, lowCost = false, sharedMelee = null) {
   clips.stand = stillClip(clips.walk, 'stand');
   actions.stand = mixer.clipAction(clips.stand);
   actions.stand.enabled = true;
+  // Measured once per model, after every clip exists, because measuring one
+  // means soloing it against all the others.
+  for (const name of ['walk', 'run', 'flee', 'stairsUp', 'climb']) {
+    if (clips[name]) {
+      travelSpeeds[name] = measureStride(mixer, actions, clips, root, model, name, 1.2);
+    }
+  }
   return { root, model, mixer, clips, actions, travelSpeeds };
 }
 
@@ -443,7 +515,12 @@ class TownEnemy {
 
   playTravel(name, speed, multiplier = 1, fade = .16) {
     const authored = Math.max(.18, this.travelSpeeds[name] || speed);
-    const rate = THREE.MathUtils.clamp(speed / authored, .72, 2.25) * multiplier;
+    // The floor was 0.72, which was too high to match a patrol walk against a
+    // clip authored at a brisker one: the cycle had to run faster than the
+    // ground and his feet skated. Now the clamp is only there to stop a rate
+    // that would look like a fast-forward, not to hold the animation above
+    // the speed the man is actually moving at.
+    const rate = THREE.MathUtils.clamp(speed / authored, .5, 2.25) * multiplier;
     this.play(name, rate, fade);
   }
 
