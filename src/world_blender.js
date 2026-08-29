@@ -2005,10 +2005,15 @@ export function createGameWorld(assets, options = {}) {
     // anyone is driving or not, so a parked car is still something you have to
     // walk around.
     for (const vehicle of vehicles) {
-      if (world !== 'outside' || vehicle.state.occupied) continue;
+      if (world !== 'outside') continue;
+      // "Occupied" means somebody is in it, and a stolen car has two somebodies
+      // in it - which is exactly why it needs updating. Only the car the player
+      // is driving is updated elsewhere.
+      const stolen = theft.stolen && vehicle === gateCar && theft.thief;
+      if (vehicle.state.occupied && !stolen) continue;
       // A stolen car is driven, not parked. The controls come from the same
       // place the player's do, so it handles the same and stops the same way.
-      if (theft.stolen && vehicle === gateCar && theft.thief) {
+      if (stolen) {
         vehicle.update(dt, theft.thief.update(dt));
         if (!theft.escaped && (theft.thief.done
           || Math.hypot(vehicle.state.x, vehicle.state.z) > 430)) {
