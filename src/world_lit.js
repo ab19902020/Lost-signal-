@@ -44,6 +44,14 @@ function gradeMaterials(scene) {
       m.userData.lsGraded = true;
       const name = (m.name || '').toLowerCase();
 
+      // A car's interior seen from outside on a bright day is nearly black,
+      // and that is the whole point of it: it is what stops the cabin reading
+      // as a stack of grey boxes in a greenhouse. The crushed-black lift below
+      // exists for the shelter's own surfaces and would undo it.
+      if (m.userData.lsKeepDark || name.includes('cabin') || name.includes('escort_trim')) {
+        continue;
+      }
+
       if (name.includes('darksteel')) m.color.copy(colors.darkSteel);
       else if (name.includes('brushed')) m.color.copy(colors.brushed);
       else if (name.includes('steel')) m.color.copy(colors.steel);

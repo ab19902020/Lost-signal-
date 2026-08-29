@@ -351,6 +351,7 @@ const SEAT_POSE = Object.freeze({
   adduct: 0.52,   // and both of them keep their elbows inside the car
 });
 const _seatPoint = new THREE.Vector3();
+const _crownPoint = new THREE.Vector3();
 const _hingeFrom = new THREE.Vector3();
 const _hingeTo = new THREE.Vector3();
 const _hingeAxis = new THREE.Vector3();
@@ -1231,23 +1232,55 @@ class TownEnemy {
     };
 
     // Measure the pose we are about to use, not the standing one, and measure
-    // the top of his head rather than the bone in it. The Head bone sits at the
-    // base of the skull; going by that put both men's hair through the roof
-    // while every number said they were safely inside it.
-    this.root.updateMatrixWorld(true);
-    const head = bone('Head');
-    const standing = head
-      ? head.getWorldPosition(_seatPoint).y - this.root.position.y : HEIGHT * 0.87;
-    const crown = Math.max(0, HEIGHT - standing);
+    // the actual top of his head rather than the bone in it. The Head bone sits
+    // at the base of the skull, and the offset between the two changes when the
+    // neck tips - so an offset taken from the standing pose put both men's hair
+    // through the roof while every number said they were safely inside the car.
     this.applySeatedPose(this.role === 'driver');
     this.model.updateMatrixWorld(true);
     const hip = bone('Hip');
     if (hip) this.seatJoints.hipRise = hip.getWorldPosition(_seatPoint).y - this.root.position.y;
-    if (head) {
-      this.seatJoints.crownRise =
-        head.getWorldPosition(_seatPoint).y - this.root.position.y + crown;
-    }
+    this.seatJoints.crownRise = this.measureCrown();
     return this.seatJoints;
+  }
+
+  // The highest skinned vertex on him, in the pose he is actually in.
+  //
+  // Transforming ninety thousand vertices to find one number would be silly
+  // every time, so the candidates are chosen once from the bind pose: whatever
+  // is near the top of a standing man is what will be near the top of a seated
+  // one, and a few hundred of those can be posed exactly.
+  measureCrown() {
+    if (!this.crownSample) {
+      this.crownSample = [];
+      this.model.updateMatrixWorld(true);
+      this.model.traverse((part) => {
+        if (!part.isSkinnedMesh || !part.applyBoneTransform) return;
+        const position = part.geometry.attributes.position;
+        if (!position) return;
+        let highest = -Infinity;
+        for (let index = 0; index < position.count; index++) {
+          if (position.getY(index) > highest) highest = position.getY(index);
+        }
+        const band = highest - (position.count > 0 ? 0.08 / Math.max(this.model.scale.y, 1e-3) : 0);
+        const indices = [];
+        for (let index = 0; index < position.count; index++) {
+          if (position.getY(index) >= band) indices.push(index);
+        }
+        if (indices.length) this.crownSample.push({ part, indices });
+      });
+    }
+    let top = -Infinity;
+    for (const { part, indices } of this.crownSample) {
+      const position = part.geometry.attributes.position;
+      for (const index of indices) {
+        _crownPoint.fromBufferAttribute(position, index);
+        part.applyBoneTransform(index, _crownPoint);
+        part.localToWorld(_crownPoint);
+        if (_crownPoint.y > top) top = _crownPoint.y;
+      }
+    }
+    return Number.isFinite(top) ? top - this.root.position.y : HEIGHT * 0.78;
   }
 
   // Fold him into the seat. Runs after the mixer, because the mixer would
