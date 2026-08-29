@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { cloneGLTF } from './assets.js';
+import { createNavigator } from './navigation.js';
 
 const HEIGHT = 1.78;
 const DETECT = 96;
@@ -15,6 +16,51 @@ const PERSONALITY = Object.freeze({
   black: Object.freeze({ courage: 0.24, patience: 1.25, pace: 0.92 }),
   red: Object.freeze({ courage: 0.46, patience: 0.82, pace: 1.04 }),
 });
+
+// How each attacker goes about it, drawn fresh every time the world is built.
+//
+// The siege used to be one script: both men ran down the middle of the road at
+// the same speed, hit the gate, walked their own lane across the yard and hit
+// the door. It was the same every game and it read as two things on rails.
+// A plan changes where they come from, how they move while they do it, and
+// what they do when the player turns up - so two playthroughs are not the same
+// afternoon twice.
+const ASSAULT_PLANS = Object.freeze([
+  {
+    key: 'rush', lane: 0.0, pace: 1.14, bound: 0, standoff: 0,
+    contact: 'charge', label: 'straight up the middle at a run',
+  },
+  {
+    key: 'left-hook', lane: -1.0, pace: 1.0, bound: 0, standoff: 0,
+    contact: 'flank', label: 'wide on the left and in at the corner',
+  },
+  {
+    key: 'right-hook', lane: 1.0, pace: 1.0, bound: 0, standoff: 0,
+    contact: 'flank', label: 'wide on the right and in at the corner',
+  },
+  {
+    key: 'bounding', lane: -0.5, pace: 0.92, bound: 1, standoff: 0,
+    contact: 'cover', label: 'short rushes with a look between each',
+  },
+  {
+    key: 'patient', lane: 0.7, pace: 0.86, bound: 1, standoff: 26,
+    contact: 'cover', label: 'holds off and waits for the yard to go quiet',
+  },
+  {
+    key: 'creep', lane: -0.8, pace: 0.78, bound: 0, standoff: 0,
+    contact: 'cover', label: 'walks the whole way in and keeps to the edges',
+  },
+]);
+
+// Long enough that a plan is a plan rather than a twitch, short enough that a
+// bound reads as a decision.
+const BOUND_RUN = 2.6;
+const BOUND_LOOK = 1.1;
+// Travelled less than this in this long, while it had somewhere to be? Stuck.
+const STUCK_TRAVEL = 0.22;
+const STUCK_SECONDS = 0.9;
+// Close enough that the player is the problem rather than the silo door.
+const CONTACT_RANGE = 15;
 const _box = new THREE.Box3();
 const _size = new THREE.Vector3();
 const _toward = new THREE.Vector3();
@@ -204,7 +250,8 @@ function prepareModel(gltf, style, lowCost = false, sharedMelee = null) {
 class TownEnemy {
   constructor({ gltf, style, scene, colliders, position, heading, name, patrol,
     cover = [], navigationObstacles = [], lowCost = false, sharedMelee = null,
-    assaultRoute = [], yardRoute = [], mission = {} }) {
+    assaultRoute = [], yardRoute = [], mission = {}, navigator = null,
+    plan = ASSAULT_PLANS[0], squad = null }) {
     Object.assign(this, prepareModel(gltf, style, lowCost, sharedMelee));
     this.style = style;
     this.root.name = name;
@@ -214,9 +261,41 @@ class TownEnemy {
     this.patrol = patrol.map(([x, z]) => new THREE.Vector3(x, position[1], z));
     this.cover = cover.map(([x, z]) => new THREE.Vector3(x, position[1], z));
     this.navigationObstacles = navigationObstacles.filter(Boolean).map((box) => box.clone());
-    this.assaultRoute = assaultRoute.map(([x, z]) => new THREE.Vector3(x, position[1], z));
+    // Push the whole approach sideways by the plan's lane. Computed against
+    // each segment rather than a fixed axis, so a route that bends round the
+    // countryside keeps its offset relative to the road rather than sliding
+    // into the ditch on one side of it.
+    this.assaultRoute = assaultRoute.map(([x, z], index) => {
+      const point = new THREE.Vector3(x, position[1], z);
+      if (!plan.lane || assaultRoute.length < 2) return point;
+      const other = assaultRoute[Math.min(index + 1, assaultRoute.length - 1)]
+        === assaultRoute[index] ? assaultRoute[index - 1] : assaultRoute[Math.min(index + 1, assaultRoute.length - 1)];
+      const dx = other[0] - x;
+      const dz = other[1] - z;
+      const length = Math.hypot(dx, dz) || 1;
+      // Perpendicular, and gently faded out at the end so both lanes still
+      // arrive at the gate rather than at the fence either side of it.
+      const taper = 1 - index / Math.max(1, assaultRoute.length - 1);
+      point.x += (-dz / length) * plan.lane * 5.5 * taper;
+      point.z += (dx / length) * plan.lane * 5.5 * taper;
+      return point;
+    });
     this.yardRoute = yardRoute.map(([x, z]) => new THREE.Vector3(x, position[1], z));
     this.mission = mission;
+    this.navigator = navigator;
+    this.plan = plan;
+    this.squad = squad;
+    // Bounding: run for a while, then stop and look. Started off-phase so two
+    // attackers running the same plan do not move as one animal.
+    this.boundTimer = 0;
+    this.bounding = false;
+    this.contactTarget = null;
+    this.contactTimer = 0;
+    this.holding = null;
+    this.stuckWatch = new THREE.Vector3(...position);
+    this.stuckWatchTimer = 0;
+    this.unstickAttempts = 0;
+    this.replans = 0;
     this.assaulting = this.assaultRoute.length > 0;
     this.assaultIndex = 0;
     this.yardIndex = 0;
@@ -349,8 +428,27 @@ class TownEnemy {
     return this.segmentBlocked(a, b, .32, .42);
   }
 
-  /** Shortest clear route over the perimeter cover graph. */
+  /**
+   * A route to somewhere, by whatever means will actually find one.
+   *
+   * The grid search is the one that works: it goes around things, and it does
+   * not need anybody to have placed a waypoint near the obstacle first. The
+   * cover graph is kept behind it because it is cheap and it encodes where the
+   * good hiding places are, which a grid knows nothing about.
+   */
   planRoute(destination) {
+    if (!destination) return [];
+    if (this.navigator) {
+      this.collider.enabled = false;
+      const route = this.navigator.path(this.root.position, destination);
+      this.collider.enabled = true;
+      if (route && route.length) return route;
+    }
+    return this.planCoverRoute(destination);
+  }
+
+  /** Shortest clear route over the perimeter cover graph. */
+  planCoverRoute(destination) {
     if (!destination) return [];
     const points = [this.root.position, ...this.cover];
     let goal = this.cover.indexOf(destination) + 1;
@@ -530,17 +628,67 @@ class TownEnemy {
       if (this.stuckTimer > .18 && !this.avoidTarget) {
         this.avoidTarget = this.chooseDetour(target);
       }
-      if (this.stuckTimer > 1.1 && !this.avoidTarget) {
+      if (this.stuckTimer > .9 && !this.avoidTarget) {
+        // The old code asked the cover graph for a new route and, when it
+        // returned nothing - which it did whenever no authored waypoint had a
+        // clear line - carried on pushing at the same obstacle for the rest of
+        // the game. There is no path back to that behaviour now: the search
+        // that goes around things is tried first, and if even that fails the
+        // agent breaks contact with whatever it is against and tries again
+        // from somewhere else.
         const reroute = this.planRoute(this.destination || target);
         if (reroute.length) {
           this.route = reroute;
           this.target = this.route.shift() || target;
+          this.replans++;
+        } else {
+          this.breakLoose();
         }
         this.stuckTimer = 0;
       }
     }
     this.syncCollider();
     return !this.avoidTarget && distance <= .38;
+  }
+
+  /**
+   * Back out of whatever has hold of it and go somewhere else for a moment.
+   *
+   * Being genuinely unable to route anywhere is rare and always transient -
+   * two characters in a doorway, a gate closing on somebody, a corner the grid
+   * rounded off. What matters is that it ends, so the agent steps away from
+   * the obstruction rather than leaning on it.
+   */
+  breakLoose() {
+    this.unstickAttempts++;
+    const away = Math.atan2(
+      this.root.position.x - (this.avoidTarget || this.target || this.home).x,
+      this.root.position.z - (this.avoidTarget || this.target || this.home).z);
+    const spread = (this.random() - .5) * 2.2;
+    const reach = 1.6 + this.random() * 2.4;
+    const candidate = new THREE.Vector3(
+      this.root.position.x + Math.sin(away + spread) * reach,
+      this.root.position.y,
+      this.root.position.z + Math.cos(away + spread) * reach);
+    this.collider.enabled = false;
+    const blocked = this.colliders.contains(candidate.x, candidate.z, .34,
+      candidate.y + .12, candidate.y + 1.62);
+    this.collider.enabled = true;
+    this.avoidTarget = blocked ? null : candidate;
+    this.route = [];
+    this.stuckTimer = 0;
+  }
+
+  /** Has it stopped getting anywhere? Measured over a window, not a frame. */
+  watchForWedge(dt) {
+    this.stuckWatchTimer += dt;
+    if (this.stuckWatchTimer < STUCK_SECONDS) return false;
+    const travelled = this.root.position.distanceTo(this.stuckWatch);
+    this.stuckWatch.copy(this.root.position);
+    this.stuckWatchTimer = 0;
+    // Standing still on purpose is not being stuck.
+    const wants = !!(this.target || this.destination) && !this.holding;
+    return wants && travelled < STUCK_TRAVEL;
   }
 
   followRoute(speed, dt) {
@@ -560,10 +708,11 @@ class TownEnemy {
     if (index >= points.length) return true;
     if (!this.target) {
       this.destination = points[index].clone();
-      // The first town leg is planned over the cover graph so a spawn behind
-      // either uploaded building walks around its real bounds. Once on the
-      // road, authored lane waypoints are clearer and cheaper than replanning.
-      this.route = index === 0 ? this.planRoute(this.destination) : [];
+      // Every leg is routed now, not only the first. Authored waypoints are a
+      // line somebody drew on a map; the yard has a car, a barrier line and
+      // another attacker in it, and walking a drawn line through those is what
+      // left them leaning on the scenery.
+      this.route = this.planRoute(this.destination);
       this.target = this.route.shift() || this.destination.clone();
       this.avoidTarget = null;
     }
@@ -606,9 +755,102 @@ class TownEnemy {
       return;
     }
 
+    // Standing still on purpose is a decision, not a wedge, and the two have
+    // to be told apart or every deliberate pause reads as a fault.
+    this.holding = null;
+    if (this.watchForWedge(dt)) this.breakLoose();
+
+    // What each of them does about the player, and what the other one does
+    // about that. Two attackers who both charge are one attacker twice.
+    if (active && this.canSeePlayer && distance < CONTACT_RANGE
+      && this.state !== 'silo_breached') {
+      const mine = this.squad && (!this.squad.engaged || this.squad.engaged === this.root.name);
+      if (this.squad && mine) this.squad.engaged = this.root.name;
+      const behaviour = mine ? this.plan.contact : 'press';
+      if (behaviour === 'charge') {
+        this.playTravel('run', 3.5 * this.personality.pace, 1.04, .1);
+        this.faceAndMove(playerPosition, 3.5 * this.personality.pace, dt);
+        return;
+      }
+      if (behaviour === 'flank' || behaviour === 'press') {
+        // Come at them from the side rather than up the middle: a point off
+        // the player's shoulder, on whichever side this one is already nearer.
+        if (!this.contactTarget || this.contactTimer <= 0) {
+          const side = Math.sign(this.root.position.x - playerPosition.x) || 1;
+          const swing = 5.5 + this.random() * 3.5;
+          this.contactTarget = new THREE.Vector3(
+            playerPosition.x + side * swing,
+            this.root.position.y,
+            playerPosition.z + (this.random() - .5) * swing);
+          this.route = this.planRoute(this.contactTarget);
+          this.contactTimer = 2.4 + this.random() * 1.6;
+        }
+        this.contactTimer -= dt;
+        const speed = 3.1 * this.personality.pace * this.plan.pace;
+        this.playTravel('run', speed, 1, .12);
+        if (this.followRoute(speed, dt)) this.contactTimer = 0;
+        return;
+      }
+      if (behaviour === 'cover') {
+        // Break the line and wait. The player loses track of one of them,
+        // which is worth more to the pair than another body in the open.
+        if (!this.contactTarget || this.contactTimer <= 0) {
+          this.contactTarget = this.chooseCover(playerPosition, true);
+          this.route = this.planRoute(this.contactTarget);
+          this.contactTimer = 3 + this.random() * 2.5;
+        }
+        this.contactTimer -= dt;
+        const speed = 2.6 * this.personality.pace;
+        this.playTravel('run', speed, 1, .12);
+        if (this.followRoute(speed, dt)) {
+          this.play('stand', 1, .2);
+          this.face(playerPosition, dt, 3);
+        }
+        return;
+      }
+    } else if (this.squad && this.squad.engaged === this.root.name) {
+      this.squad.engaged = null;
+      this.contactTarget = null;
+      this.contactTimer = 0;
+    }
+
     const visible = this.model.visible;
-    const roadSpeed = visible ? ASSAULT_RUN_SPEED * this.personality.pace
-      : STRATEGIC_RUN_SPEED * this.personality.pace;
+    const roadSpeed = (visible ? ASSAULT_RUN_SPEED : STRATEGIC_RUN_SPEED)
+      * this.personality.pace * this.plan.pace;
+
+    // Bounding: run, then stop and look at where you are going. It is what
+    // makes one attacker read as careful and the other as reckless, and it is
+    // the difference between two figures crossing a field and two figures
+    // advancing across it.
+    if (this.plan.bound && visible && this.state !== 'breach_gate'
+      && this.state !== 'breach_silo' && this.state !== 'silo_breached') {
+      this.boundTimer -= dt;
+      if (this.boundTimer <= 0) {
+        this.bounding = !this.bounding;
+        this.boundTimer = this.bounding
+          ? BOUND_RUN * (0.7 + this.random() * 0.7)
+          : BOUND_LOOK * (0.6 + this.random() * 1.1);
+      }
+      if (!this.bounding) {
+        this.holding = 'bound';
+        this.play('stand', 1, .2);
+        // Look where the trouble is, not where the feet are going.
+        this.face(this.canSeePlayer ? playerPosition
+          : (this.mission.siloTarget || this.lastSeen), dt, 3);
+        return;
+      }
+    }
+
+    // A patient plan will not walk into an occupied yard. It holds at its
+    // standoff until the player is out of sight, which turns the siege into
+    // something the player can affect by where they stand.
+    if (this.plan.standoff && this.canSeePlayer && distance < this.plan.standoff
+      && this.state === 'assault_road') {
+      this.holding = 'standoff';
+      this.play('stand', 1, .18);
+      this.face(playerPosition, dt, 3.2);
+      return;
+    }
 
     if (this.state === 'assault_road') {
       if (visible) this.playTravel('run', roadSpeed, 1, .12);
@@ -927,18 +1169,42 @@ class TownEnemy {
 }
 
 export function createTownEnemies({ scene, colliders, assets, entries,
-  navigationObstacles = [], lowCost = false, mission = {} }) {
+  navigationObstacles = [], lowCost = false, mission = {}, seed = null }) {
   const agents = [];
   const sharedMelee = assets.enemyOldManRed?.animations?.[TOWN_ENEMY_ANIMATIONS.red.melee] || null;
+  // One navigator for the squad: the walkability of a cell is a fact about the
+  // world, not about who is asking, so the cache is worth sharing.
+  const navigator = createNavigator({ colliders });
+  // What the two of them know about each other. Two attackers who both charge
+  // are one attacker twice; two who notice the other is busy are a pair.
+  const squad = { engaged: null, breached: false, lanes: new Set() };
+
+  // A seed the caller can pin for a test and leave alone in the game, so the
+  // siege is a different afternoon each time it is played and the same one
+  // every time it is asserted.
+  let draw = (seed === null ? (Math.random() * 4294967296) >>> 0 : seed) >>> 0;
+  const nextRandom = () => {
+    draw = (Math.imul(draw, 1664525) + 1013904223) >>> 0;
+    return draw / 4294967296;
+  };
+
+  const pool = [...ASSAULT_PLANS];
   for (const entry of entries) {
     const gltf = assets[entry.asset];
     if (!gltf?.animations?.length) continue;
+    // Drawn without replacement, so the two of them never run the same plan
+    // shoulder to shoulder.
+    const pick = pool.length ? Math.floor(nextRandom() * pool.length) % pool.length : 0;
+    const plan = pool.length ? pool.splice(pick, 1)[0] : ASSAULT_PLANS[0];
     agents.push(new TownEnemy({
-      gltf, scene, colliders, navigationObstacles, lowCost, sharedMelee, mission, ...entry,
+      gltf, scene, colliders, navigationObstacles, lowCost, sharedMelee, mission,
+      navigator, plan, squad, ...entry,
     }));
   }
   return {
     agents,
+    navigator,
+    plans: () => agents.map((agent) => ({ name: agent.root.name, plan: agent.plan.key })),
     roots: agents.map((agent) => agent.root),
     update(dt, playerPosition, active = true) {
       for (const agent of agents) agent.update(dt, playerPosition, active);
@@ -950,7 +1216,8 @@ export function createTownEnemies({ scene, colliders, assets, entries,
         animations: Object.keys(agent.actions), animation: agent.current,
         state: agent.state, dead: agent.dead, settled: agent.deathSettled,
         assaultIndex: agent.assaultIndex, yardIndex: agent.yardIndex,
-        breachHits: agent.breachHits,
+        breachHits: agent.breachHits, plan: agent.plan.key,
+        replans: agent.replans, unstick: agent.unstickAttempts,
       }));
     },
   };

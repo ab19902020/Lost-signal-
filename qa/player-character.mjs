@@ -135,16 +135,19 @@ gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.18, 0.80),
 const aimTarget = new THREE.Vector3(0.85, 1.45, -22);
 character.setWeapon(gun, { family: 'rifle' });
 character.setWeaponVisible(true);
-update({ ...standing, armed: true, aimTarget }, 24);
+// Bringing a rifle up takes about half a second, so the harness has to give
+// it half a second before judging where the hands are.
+update({ ...standing, armed: true, aiming: true, aimTarget }, 90);
 assert.equal(character.animationState(), 'hold',
   'standing with a gun played an authored gesture instead of the stable hold');
 
-function assertGrip(label) {
+function assertGrip(label, limit = 0.012) {
   for (const [hand, error] of Object.entries(character.gripError())) {
     assert.equal(typeof error, 'number', `${label} did not solve the ${hand} hand`);
-    assert.ok(error < 0.012,
-      `${label} ${hand} hand missed its grip by ${error.toFixed(3)} m`);
+    assert.ok(error < limit,
+      `${label} ${hand} hand missed its grip by ${error.toFixed(4)} m`);
   }
+  return character.gripError();
 }
 
 function assertAim(label) {
@@ -168,38 +171,122 @@ for (const side of ['L', 'R']) {
   assert.ok(side === 'R' ? elbow.x > shoulder.x + 0.08 : elbow.x > shoulder.x + 0.03,
     `${side} firearm elbow crossed or collapsed into the torso`);
 }
+// The three ways a weapon is carried. This is the part the player reads off
+// the character at a glance, and getting it wrong is what put the barrel
+// through his own chest while sprinting.
+const mountLocal = new THREE.Vector3();
+const muzzleForward = new THREE.Vector3();
+function carryReport() {
+  character.root.updateWorldMatrix(true, true);
+  mountLocal.copy(character.weaponMount.getWorldPosition(new THREE.Vector3()));
+  character.root.worldToLocal(mountLocal);
+  // Measured against the spine, not the feet: a sprinting man leans a long way
+  // forward, so everything about him is forward of his own origin and that
+  // tells you nothing about whether the rifle is inside his back.
+  const spine = character.root.worldToLocal(
+    character.rig.bones.get('Spine02').getWorldPosition(new THREE.Vector3()));
+  muzzleForward.set(0, 0, -1)
+    .applyQuaternion(character.weaponMount.getWorldQuaternion(new THREE.Quaternion()));
+  return {
+    carry: character.carry(), blend: character.carryBlend(), mountLocal, muzzleForward,
+    behindSpine: mountLocal.z - spine.z,
+  };
+}
+
+// Sprinting: on the back, out of the hands, and behind the chest rather than
+// through it. The character faces -Z, so anything the far side of the spine
+// has a positive local Z.
+update({ yaw: 0, speed: 5.4, running: true, grounded: true, armed: true, aimTarget }, 40);
+assert.equal(character.animationState(), 'run', 'sprinting with a rifle left the run cycle');
+let report = carryReport();
+assert.equal(report.carry, 'slung',
+  `a sprinting rifle is ${report.carry}, not slung (${JSON.stringify(report.blend)})`);
+// A torso is about 0.2 m thick, so anything less than that behind the spine is
+// still inside the man wearing it.
+// A torso is about 0.2 m thick, so anything less than that behind the spine is
+// still inside the man wearing it.
+assert.ok(report.behindSpine > 0.16,
+  `the slung rifle sits ${report.behindSpine.toFixed(3)} m behind the spine, which is inside his back`);
+assert.equal(character.gripError().right, null,
+  'the hands are still solved onto a weapon that is on the back');
+// And the arms are the run animation's again, not frozen in a firing stance.
+// The measure that means something is the comparison: a man sprinting with a
+// rifle on his back should swing his arms about as freely as a man sprinting
+// with nothing, because that is the whole reason to sling it.
+function sprintArmSwing(state) {
+  const samples = [];
+  const point = new THREE.Vector3();
+  for (let frame = 0; frame < 60; frame++) {
+    update({ yaw: 0, speed: 5.4, running: true, grounded: true, ...state }, 1);
+    samples.push(character.rig.bones.get('R_Hand').getWorldPosition(point).clone());
+  }
+  let widest = 0;
+  for (const a of samples) for (const b of samples) widest = Math.max(widest, a.distanceTo(b));
+  return widest;
+}
+const freeSwing = sprintArmSwing({});
+const slungSwing = sprintArmSwing({ armed: true, aimTarget });
+assert.ok(slungSwing > freeSwing * 0.7,
+  `sprinting with a slung rifle swings the arms ${(slungSwing * 1000).toFixed(0)} mm `
+  + `against ${(freeSwing * 1000).toFixed(0)} mm empty-handed: the firing stance is still locked on`);
+
+// Walking: in both hands, at low ready, muzzle below the horizon.
+update({ yaw: 0, speed: 2, grounded: true, armed: true, aimTarget }, 40);
+assert.equal(character.animationState(), 'walk', 'walking with a rifle left the walk cycle');
+report = carryReport();
+assert.equal(report.carry, 'ready',
+  `a walking rifle is ${report.carry}, not at the ready (${JSON.stringify(report.blend)})`);
+assert.ok(report.muzzleForward.y < -0.12,
+  `the low-ready muzzle points ${report.muzzleForward.y.toFixed(3)} up rather than down`);
+assertGrip('walking rifle at the ready');
+
+// Aiming: up into the shoulder and onto the crosshair, whatever the legs do.
 for (const [name, state] of [
-  ['walk', { yaw: 0, speed: 2, grounded: true, armed: true, aimTarget }],
-  ['run', { yaw: 0, speed: 4.8, running: true, grounded: true, armed: true, aimTarget }],
+  ['hold', { ...standing, armed: true, aiming: true, aimTarget }],
+  ['walk', { yaw: 0, speed: 2, grounded: true, armed: true, aiming: true, aimTarget }],
+  ['run', { yaw: 0, speed: 4.8, running: true, grounded: true, armed: true, aiming: true, aimTarget }],
   ['jump', {
-    yaw: 0, speed: 2, grounded: false, verticalSpeed: 3, armed: true, aimTarget,
+    yaw: 0, speed: 2, grounded: false, verticalSpeed: 3, armed: true, aiming: true, aimTarget,
   }],
 ]) {
+  // Settle the aim standing still, then start moving - which is the order it
+  // happens in play, and which stops the test judging the clamped last frame
+  // of a jump that has been held for a second and a half.
+  update({ ...standing, armed: true, aiming: true, aimTarget }, 90);
   update(state, 12);
   assert.equal(character.animationState(), name);
-  assertGrip(`moving rifle (${name})`);
-  assertAim(`moving rifle (${name})`);
+  assert.equal(character.carry(), 'aimed', `aiming while ${name} did not bring the weapon up`);
+  assertGrip(`aimed rifle (${name})`);
+  assertAim(`aimed rifle (${name})`);
 }
+
+// Firing from the hip brings it up on its own: a tracer leaving the crosshair
+// while the muzzle points at the floor is wrong in a way players feel.
+update({ yaw: 0, speed: 2, grounded: true, armed: true, aimTarget, recoil: 0.6 }, 90);
+assert.equal(character.carry(), 'aimed', 'firing from the hip did not bring the weapon up');
 
 for (const family of ['sniper', 'shotgun', 'smg', 'pistol', 'revolver']) {
   character.setWeapon(gun, { family });
-  update({ ...standing, armed: true, aimTarget }, 20);
+  update({ ...standing, armed: true, aiming: true, aimTarget }, 90);
   assertGrip(family);
   assertAim(family);
+  // Every family has somewhere to put the weapon when its owner runs.
+  update({ yaw: 0, speed: 5.4, running: true, grounded: true, armed: true, aimTarget }, 40);
+  assert.equal(character.carry(), 'slung', `a sprinting ${family} stayed in the hands`);
 }
 
 character.setWeapon(gun, { family: 'rifle' });
-update({ ...standing, armed: true, aimTarget }, 20);
-update({ ...standing, armed: true, aimTarget, crouching: true }, 20);
+update({ ...standing, armed: true, aiming: true, aimTarget }, 90);
+update({ ...standing, armed: true, aiming: true, aimTarget, crouching: true }, 90);
 assertGrip('crouched rifle');
-update({ ...standing, armed: true, aimTarget, seated: true }, 20);
+update({ ...standing, armed: true, aiming: true, aimTarget, seated: true }, 90);
 assertGrip('seated rifle');
 
 character.setWeapon(gun, { family: 'blade' });
-update({ ...standing, armed: true, aimTarget });
+update({ ...standing, armed: true, aiming: true, aimTarget }, 90);
 assert.equal(character.animationState(), 'hold', 'a held blade loops the attack animation');
 assert.ok(character.triggerAction('melee'), 'the melee action could not be triggered');
-update({ ...standing, armed: true, aimTarget });
+update({ ...standing, armed: true, aiming: true, aimTarget });
 assert.equal(character.animationState(), 'melee', 'an attack did not select the melee clip');
 assert.ok(character.gripError().right < 0.012, 'the melee hand missed the blade grip');
 assert.equal(character.gripError().left, null, 'the free melee hand should not target the blade');
@@ -208,4 +295,4 @@ character.setWeaponVisible(false);
 update(standing, 30);
 const height = character.bounds().getSize(new THREE.Vector3()).y;
 assert.ok(height > 1.70 && height < 1.90, `rugged character is ${height.toFixed(2)} m tall`);
-console.log('Player character QA passed: motionless stand, D-pad-only dance, natural walk/run/stairs and converged firearm aim.');
+console.log('Player character QA passed: motionless stand, D-pad-only dance, natural walk/run/stairs, slung/ready/aimed weapon carry and converged firearm aim.');

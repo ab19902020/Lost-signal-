@@ -507,10 +507,18 @@ assert.ok(worldSource.includes('createPlayerCharacter'),
 assert.ok(playerCharacterSource.includes('new THREE.AnimationMixer(model)')
   && playerCharacterSource.includes('PLAYER_ANIMATIONS'),
   'the rugged character does not play its authored animation set');
-assert.ok(playerCharacterSource.includes("solveArm('R', pose.right, pose.rightPole)")
-  && playerCharacterSource.includes("solveArm('L', pose.left, pose.leftPole)")
+// Matched without the closing bracket: the solver takes a carry weight now,
+// and a test that pins an argument list breaks every time the thing it is
+// guarding is improved.
+assert.ok(playerCharacterSource.includes("solveArm('R', pose.right, pose.rightPole")
+  && playerCharacterSource.includes("solveArm('L', pose.left, pose.leftPole")
   && worldSource.includes("family: family || 'rifle'"),
   'third-person guns are not placed into both animated hands by weapon family');
+// The three carry stances, and the blend between them.
+for (const marker of ['CARRY_STANCES', 'slungTransform', 'handsTransform', "SLUNG_KIND"]) {
+  assert.ok(playerCharacterSource.includes(marker),
+    `the character lost its weapon carry stances (${marker})`);
+}
 assert.ok(mainSource.includes('function updateThirdPersonCamera(')
   && mainSource.includes('function toggleCameraMode('),
   'first/third-person camera switching is missing');
