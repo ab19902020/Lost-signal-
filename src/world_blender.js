@@ -133,13 +133,105 @@ export function createGameWorld(assets, options = {}) {
     return group;
   }
 
+  // Which asset each loaded glTF came from, so a placed prop can carry the name
+  // of the thing it is. Without it the world is three hundred anonymous groups
+  // and no harness can ask how tall the chair is.
+  const assetNames = new Map();
+  for (const [key, value] of Object.entries(assets)) {
+    if (value && typeof value === 'object' && !assetNames.has(value)) assetNames.set(value, key);
+  }
+  const propName = (gltf) => {
+    const key = assetNames.get(gltf);
+    return key ? `Prop_${key[0].toUpperCase()}${key.slice(1)}` : 'Prop';
+  };
+
+  // --- Life size ------------------------------------------------------------
+  //
+  // The architecture and the outdoor props were tuned against real dimensions;
+  // the furniture never was, and it came out of Blender at roughly twice life
+  // size. The operator chair was 2.03 m tall with a 1.29 m seat - a throne -
+  // standing next to a correctly proportioned 1.78 m man, which is exactly
+  // what "he looks too small next to the chair" means. Nothing was wrong with
+  // the man.
+  //
+  // Measuring a whole model is the wrong question for anything with a stalk on
+  // it: the desk is "1.14 m tall" only because a monitor stands on it, and the
+  // CCTV console because a pendant light hangs over it. What a person reads is
+  // the surface they would touch, so where a model names one, the target is the
+  // height of that surface in life - a desk worktop at 0.74 m, a task chair
+  // seat at 0.47 m, a workbench at 0.92 m - and the rest follows from it.
+  //
+  // These sizes are absolute. The scale argument at the call site was tuned
+  // against the old oversized baseline, so for anything listed here it is
+  // deliberately ignored rather than compounded.
+  const LIFE_SIZE = Object.freeze({
+    chair:        { ref: 'Chair_Seat', top: 0.47 },
+    cctv:         { ref: 'Desk_0', top: 0.74 },
+    desk:         { ref: 'Desk_Top', top: 0.74 },
+    bench:        { ref: 'BenchTop', top: 0.92 },
+    generator:    { ref: 'Generator_Frame', top: 1.58 },
+    radio:        { ref: 'Radio_Body', top: 0.28 },
+    // The one model that is not merely large but out of proportion: a 4.2 m
+    // long double bed with a nearly correct frame height. It needs two numbers.
+    bed:          { ref: 'Mattress', top: 0.55, length: 2.05 },
+    lockers:      { height: 1.95 },
+    storage:      { height: 2.10 },
+    clutter:      { height: 0.86 },
+    electrical:   { height: 2.05 },
+    ventilation:  { height: 2.35 },
+    accessControl:{ height: 0.45 },
+    statusBoard:  { height: 1.05 },
+    habDirectory: { height: 1.90 },
+    siloCache:    { height: 0.85 },
+    rangeTarget:  { height: 1.80 },
+    wallCamera:   { height: 0.22 },
+    propBarrel:   { height: 0.88 },
+    propBarrier:  { height: 1.05 },
+  });
+  const _lifeBox = new THREE.Box3();
+  const _lifeSize = new THREE.Vector3();
+  const lifeScales = new Map();
+
+  // Measured once per asset, not once per placement: the shelter alone places
+  // some of these six times. Returns null for anything not on the list, which
+  // then keeps the scale its call site asked for.
+  function lifeScale(gltf) {
+    if (lifeScales.has(gltf)) return lifeScales.get(gltf);
+    const want = LIFE_SIZE[assetNames.get(gltf)];
+    let factor = null;
+    const scene = gltf?.scene ?? gltf;
+    if (want && scene) {
+      scene.updateMatrixWorld(true);
+      let subject = scene;
+      if (want.ref) {
+        scene.traverse((part) => { if (part.name === want.ref) subject = part; });
+      }
+      _lifeBox.setFromObject(subject);
+      _lifeBox.getSize(_lifeSize);
+      const vertical = want.top ? want.top / Math.max(_lifeBox.max.y, 1e-4)
+        : want.height / Math.max(_lifeSize.y, 1e-4);
+      if (want.length) {
+        const along = want.length / Math.max(_lifeSize.x, _lifeSize.z, 1e-4);
+        factor = new THREE.Vector3(along, vertical, along);
+      } else {
+        factor = new THREE.Vector3(vertical, vertical, vertical);
+      }
+    }
+    lifeScales.set(gltf, factor);
+    return factor;
+  }
+
   // Collision comes from the placed Blender geometry itself, so props can never
   // drift away from their hand-typed blocking rectangle again.
   function place(gltf, parent, pos, rot = [0,0,0], scale = 1, options = {}) {
     const root = cloneGLTF(gltf);
+    // glTF roots arrive called "Scene" or "Root_Scene". Overwrite that with the
+    // name of the asset, so what is in the world says what it is.
+    root.name = options.name || propName(gltf);
     root.position.set(...pos);
     root.rotation.set(...rot);
-    root.scale.setScalar(scale);
+    const life = lifeScale(gltf);
+    if (life) root.scale.copy(life); else root.scale.setScalar(scale);
     parent.add(root);
     const world = options.world ?? (parent === outside ? 'outside' : (parent === silo ? 'silo' : 'bunker'));
     if (options.collide !== false && colliders[world]) {
@@ -227,7 +319,9 @@ export function createGameWorld(assets, options = {}) {
   const terminalScreen = findNamed(desk,'Terminal_Screen') || desk;
   addInteraction(terminalScreen,'COMPUTER TERMINAL','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:computer')));
 
-  const radio = place(assets.radio, bunker, [3.55,1.10,-2.85], [0,0,0], .92, { collide: false });
+  // Sits on the desk, so it moves with the desk's worktop rather than at a
+  // height that was only ever right for the oversized one.
+  const radio = place(assets.radio, bunker, [3.55,.75,-2.85], [0,0,0], 1, { collide: false });
   addInteraction(radio,'SHORTWAVE RADIO','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:radio')));
 
   // CCTV console and operator chair
@@ -332,7 +426,7 @@ export function createGameWorld(assets, options = {}) {
     });
   }
 
-  const exitPanel = place(assets.accessControl, bunker, [-1.82,.60,-6.96], [0,0,0], .62, { collide: false });
+  const exitPanel = place(assets.accessControl, bunker, [-1.82,1.12,-6.96], [0,0,0], 1, { collide: false });
   addInteraction(exitPanel,'SURFACE ACCESS','bunker',()=>window.dispatchEvent(new CustomEvent('lostsignal:surface',{detail:{allowed:doorOpen}})));
 
   // Dust is an effect and is intentionally generated in Three.js.
@@ -1449,7 +1543,7 @@ export function createGameWorld(assets, options = {}) {
   });
 
   // Surface access uses the same Blender keypad asset.
-  const returnPanel = place(assets.accessControl,outside,[-2.15,.55,-13.55],[0,0,0],.64,{ collide: false });
+  const returnPanel = place(assets.accessControl,outside,[-2.15,1.12,-13.55],[0,0,0],1,{ collide: false });
   addInteraction(returnPanel,'RETURN TO SHELTER','outside',()=>window.dispatchEvent(new CustomEvent('lostsignal:return')));
 
   // Nothing lives up here. Whatever ended the world took the animals with it,
