@@ -967,6 +967,28 @@ function wireGameEvents() {
     flash('SILO SECURITY FAILED — THE ATTACKERS BROKE IN', 5000);
   });
 
+  // The car theft. What the two of them are actually here for, and the only
+  // thing on this compound they can drive away.
+  addEventListener('lostsignal:carstolen', () => {
+    crashSound(.9);
+    flash('THEY ARE TAKING THE CAR — ONE DRIVING, ONE RIDING', 4200);
+    completeObjective('defend');
+  });
+  addEventListener('lostsignal:cardriverdown', () => {
+    flash('DRIVER DOWN — THE CAR IS ROLLING TO A STOP', 3200);
+    clickSound(150, .18, .05);
+  });
+  addEventListener('lostsignal:carescaped', () => {
+    flash('THE ESCORT IS GONE. THEY TOOK IT UP THE ROAD.', 5200);
+  });
+  addEventListener('lostsignal:carrecovered', (event) => {
+    flash(event.detail?.escaped
+      ? 'THE ESCORT IS YOURS AGAIN — A LONG WAY FROM HOME'
+      : 'THE ESCORT IS YOURS AGAIN', 3600);
+    completeObjective('recover');
+    clickSound(760, .12, .04);
+  });
+
   addEventListener('lostsignal:bulkhead', (e) => {
     flash(e.detail.open
       ? `LEVEL ${e.detail.level} SERVICE BULKHEAD OPEN — MAINTENANCE ROOM ACCESSIBLE`
@@ -1042,7 +1064,8 @@ let cacheEmptied = false;
 // list to a couple of lines instead of a wall of spoilers.
 const OBJECTIVES = [
   { id: 'rifle', text: 'Enter the armoury and take a weapon off the wall' },
-  { id: 'defend', text: 'Protect the silo from the two attackers coming down the road' },
+  { id: 'defend', text: 'Two men are coming down the road for the car' },
+  { id: 'recover', text: 'Get the Escort back off whoever is driving it' },
   { id: 'cameras', text: 'Sweep the CCTV feeds, including the silo' },
   { id: 'hatch', text: 'Unseal the hatch in the shelter floor' },
   { id: 'descend', text: 'Descend into Silo 47' },
@@ -1104,6 +1127,12 @@ const _carPoint = new THREE.Vector3();
 
 function enterVehicle(vehicle) {
   if (!vehicle || driving || currentWorld !== 'outside') return false;
+  // You cannot get into a car that is being driven away from you. Stop it
+  // first - which, when the men who took it are inside, means the driver.
+  if (vehicle.occupied && Math.abs(vehicle.speed) > 1.5) {
+    flash('IT IS MOVING — STOP THE DRIVER FIRST', 2000);
+    return false;
+  }
   // Both hands are on the wheel. The weapon goes away on the way in and comes
   // back out on the way out, unless it was already put away — in which case it
   // stays where the player left it.
@@ -3425,10 +3454,46 @@ function startEngineAudio(kind = 'car') {
     turbo.start();
   }
 
+  // Everything above is the engine. These two are the car: the road under the
+  // tyres and the air over the body. A car with neither sounds like an engine
+  // on a bench, which is what this one did - the note changed with the revs
+  // and nothing changed with the speed.
+  let road = null;
+  let roadFilter = null;
+  let roadGain = null;
+  let wind = null;
+  let windFilter = null;
+  let windGain = null;
+  if (kind !== 'aircraft') {
+    road = ac.createBufferSource();
+    road.buffer = noiseBuffer(3);
+    road.loop = true;
+    roadFilter = ac.createBiquadFilter();
+    roadFilter.type = 'bandpass';
+    roadFilter.frequency.value = 240;
+    roadFilter.Q.value = 0.7;
+    roadGain = ac.createGain();
+    roadGain.gain.value = 0;
+    road.connect(roadFilter); roadFilter.connect(roadGain); roadGain.connect(out);
+    road.start();
+
+    wind = ac.createBufferSource();
+    wind.buffer = noiseBuffer(3);
+    wind.loop = true;
+    windFilter = ac.createBiquadFilter();
+    windFilter.type = 'highpass';
+    windFilter.frequency.value = 900;
+    windGain = ac.createGain();
+    windGain.gain.value = 0;
+    wind.connect(windFilter); windFilter.connect(windGain); windGain.connect(out);
+    wind.start();
+  }
+
   engine = { out, compressor, filter, block, exhaust, induction, inductionFilter,
     inductionGain, mechanical, mechanicalFilter, mechanicalGain,
     rumble, rumbleFilter, rumbleGain, prop, propGain, turbo, turboGain,
-    kind, revs: 0, throttle: 0, lastPop: -Infinity };
+    road, roadFilter, roadGain, wind, windFilter, windGain,
+    kind, revs: 0, throttle: 0, lastPop: -Infinity, lastDump: -Infinity, boost: 0 };
   out.gain.setTargetAtTime(0.42, ac.currentTime, 0.35);
 }
 
@@ -3445,6 +3510,8 @@ function stopEngineAudio() {
     try { dying.turbo?.stop(); } catch { /* already stopped */ }
     try { dying.mechanical?.stop(); } catch { /* already stopped */ }
     try { dying.rumble?.stop(); } catch { /* already stopped */ }
+    try { dying.road?.stop(); } catch { /* already stopped */ }
+    try { dying.wind?.stop(); } catch { /* already stopped */ }
     try { dying.induction.stop(); } catch { /* already stopped */ }
     dying.out.disconnect();
     dying.compressor?.disconnect();
@@ -3493,9 +3560,6 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   engine.inductionGain.gain.setTargetAtTime(0.008 + load * 0.052, t, 0.085);
   engine.rumbleGain?.gain.setTargetAtTime(.012 + load * .026 + speedRatio * .014, t, .12);
   if (engine.turbo) engine.turbo.frequency.setTargetAtTime(980 + normalised * 2150, t, 0.08);
-  if (engine.turboGain) engine.turboGain.gain.setTargetAtTime(
-    Math.max(0, normalised - 0.18) * load * (shifted ? 0.006 : 0.026), t,
-    shifted ? 0.02 : 0.08);
   engine.out.gain.setTargetAtTime((0.34 + load * 0.23) * (shifted ? 0.84 : 1), t, 0.055);
 
   // One restrained exhaust cough on a high-rpm lift. It is event-driven, not
@@ -3507,8 +3571,55 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
       type: 'lowpass' });
     noiseBurst({ at: t + .04, hz: 720, q: 1.3, decay: .07, level: .018 });
   }
+  // Boost builds while the throttle is open and bleeds away when it is not,
+  // which is what makes a turbo car sound like it is working rather than like
+  // a siren tied to the rev counter.
+  const wantBoost = Math.max(0, throttle) * normalised;
+  engine.boost += (wantBoost - engine.boost) * Math.min(1, (wantBoost > engine.boost ? 1.6 : 3.4) * 0.05);
+  if (engine.turboGain) {
+    engine.turboGain.gain.setTargetAtTime(
+      engine.boost * 0.052 * (shifted ? 0.15 : 1), t, shifted ? 0.02 : 0.06);
+  }
+
+  // The dump valve. Lift off a boosting RS Turbo and the compressor has
+  // nowhere to put its air: it is the noise the car is known for, and it was
+  // the one thing missing.
+  if (engine.throttle > .5 && throttle < .15 && engine.boost > .32
+    && t - engine.lastDump > .3) {
+    engine.lastDump = t;
+    dumpValveSound(engine.boost);
+  }
+
+  // The road under it and the air over it. Both follow speed, not revs - the
+  // difference between a car doing seventy and a car revving in neutral.
+  const road = THREE.MathUtils.clamp(speedRatio, 0, 1);
+  engine.roadGain?.gain.setTargetAtTime(road * road * 0.085 + road * 0.03, t, 0.1);
+  engine.roadFilter?.frequency.setTargetAtTime(190 + road * 520, t, 0.14);
+  engine.windGain?.gain.setTargetAtTime(Math.max(0, road - 0.18) ** 2 * 0.075, t, 0.12);
+  engine.windFilter?.frequency.setTargetAtTime(700 + road * 1500, t, 0.15);
+
   engine.throttle = throttle;
   engine.revs = engineRpm;
+}
+
+/** The compressor letting go when the throttle shuts on boost. */
+function dumpValveSound(boost) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const level = 0.02 + boost * 0.055;
+  // A short breath of air with a falling whistle riding on it.
+  noiseBurst({ at: t, hz: 3400, q: 1.1, decay: 0.13, level, type: 'bandpass' });
+  noiseBurst({ at: t + 0.01, hz: 1500, q: 0.9, decay: 0.19, level: level * 0.6,
+    type: 'bandpass' });
+  const whistle = ac.createOscillator();
+  const gain = ac.createGain();
+  whistle.type = 'triangle';
+  whistle.frequency.setValueAtTime(2900 + boost * 1400, t);
+  whistle.frequency.exponentialRampToValueAtTime(760, t + 0.17);
+  gain.gain.setValueAtTime(level * 0.5, t);
+  gain.gain.exponentialRampToValueAtTime(0.0004, t + 0.19);
+  whistle.connect(gain); gain.connect(master);
+  whistle.start(t); whistle.stop(t + 0.2);
 }
 
 /**

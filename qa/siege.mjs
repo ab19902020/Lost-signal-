@@ -64,7 +64,9 @@ for (let run = 0; run < runs; run++) {
         row.unstick = agent.unstickAttempts;
       }
     }
+    const theft = ls.game.carTheft?.() || null;
     return {
+      theft,
       agents: [...track.entries()].map(([name, row]) => ({
         name, plan: row.plan, states: [...row.states],
         travelled: +row.travelled.toFixed(1),
@@ -82,6 +84,11 @@ for (let run = 0; run < runs; run++) {
 let worst = 0;
 for (const [index, run] of all.entries()) {
   if (run.error) { console.log(`  run ${index + 1}: ${run.error}`); continue; }
+  if (run.theft) {
+    console.log(`  run ${index + 1} theft: stolen ${run.theft.stolen}, escaped ${run.theft.escaped}, `
+      + `aboard [${run.theft.aboard.join(', ')}], driver ${run.theft.driver || '-'}, `
+      + `car ${run.theft.distance} m out at ${run.theft.speed} m/s`);
+  }
   for (const agent of run.agents) {
     worst = Math.max(worst, agent.worstStall);
     console.log(`  run ${index + 1} ${agent.name.padEnd(17)} ${agent.plan.padEnd(11)} `

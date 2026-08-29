@@ -8,6 +8,7 @@ import { buildGarrison } from './garrison.js';
 import { createRange } from './range.js';
 import { createSky } from './sky.js';
 import { createVehicle } from './vehicle.js';
+import { createCarThief } from './car_thief.js';
 import { createAircraft } from './aircraft.js';
 import { createPlayerCharacter } from './player_character.js';
 import { createTownEnemies } from './town_enemies.js';
@@ -917,6 +918,78 @@ export function createGameWorld(assets, options = {}) {
   const redYardRoute = [
     [.7, 14.0], [5.8, 10.6], [7.2, 3.0], [7.2, -10.0], [4.8, -12.0], [1.15, -13.0],
   ];
+  // --- The car theft -------------------------------------------------------
+  //
+  // What the two men on the road are actually here for. The shelter has thick
+  // doors and nothing they can drive; the Escort is sitting in the yard with
+  // the keys in it. So they come for the car, one takes the wheel and one
+  // rides, and the player has to go and get it back.
+  const theft = {
+    aboard: new Set(),
+    stolen: false,
+    escaped: false,
+    driver: null,
+    thief: null,
+  };
+  const seatOffsets = { driver: new THREE.Vector3(0.40, 0.55, -0.28),
+    passenger: new THREE.Vector3(-0.40, 0.55, -0.28) };
+  const _seatPoint = new THREE.Vector3();
+
+  function carSeat(role) {
+    if (!gateCar) return null;
+    const offset = seatOffsets[role] || seatOffsets.passenger;
+    return _seatPoint.copy(offset).applyAxisAngle(new THREE.Vector3(0, 1, 0), gateCar.state.heading)
+      .add(new THREE.Vector3(gateCar.state.x, gateCar.state.y, gateCar.state.z));
+  }
+
+  function beginGetaway() {
+    if (theft.stolen || !gateCar) return;
+    theft.stolen = true;
+    gateCar.state.lights = true;
+    // Somebody is in it now, which takes its own hull off the collision set -
+    // a car cannot drive through the box that represents it standing still.
+    gateCar.occupied = true;
+    // Out through the gate and back up the road they came in on: the way out
+    // is the way in, which is also the only road on the map.
+    const out = [[0, 14], [0, 24], ...[40, 90, 150, 220, 300, 380, 460]
+      .map((distance) => xz(roadPoint(distance, 0)))];
+    theft.thief = createCarThief({ vehicle: gateCar, route: out });
+    window.dispatchEvent(new CustomEvent('lostsignal:carstolen', {
+      detail: { vehicle: gateCar } }));
+  }
+
+  const carMission = {
+    boardingPoint: (role) => (gateCar ? gateCar.boardingPoint(role) : null),
+    seatPosition: (agent) => carSeat(agent.role),
+    // Wait for the other one unless he is dead or has given up.
+    readyToDrive: (agent) => {
+      const others = townEnemies?.agents?.filter((other) => other !== agent) || [];
+      return others.every((other) => other.dead || other.state === 'boarding'
+        || other.state === 'riding');
+    },
+    board: (agent) => {
+      if (theft.escaped || !gateCar) return false;
+      theft.aboard.add(agent.root.name);
+      if (agent.role === 'driver') theft.driver = agent;
+      // One man can drive off alone; two is the plan.
+      const living = townEnemies?.agents?.filter((other) => !other.dead) || [];
+      if (living.every((other) => theft.aboard.has(other.root.name))) beginGetaway();
+      return true;
+    },
+    // The man with the keys is shot: whoever is left takes the wheel, and if
+    // that was the man driving, the car stops where it is.
+    driverDown: (agent) => {
+      if (theft.driver === agent) {
+        theft.driver = null;
+        theft.thief?.halt();
+        window.dispatchEvent(new CustomEvent('lostsignal:cardriverdown', {
+          detail: { vehicle: gateCar } }));
+      }
+      const heir = townEnemies?.agents?.find((other) => !other.dead && other !== agent);
+      if (heir) heir.role = 'driver';
+    },
+  };
+
   const townEnemies = createTownEnemies({
     scene: outside,
     colliders: colliders.outside,
@@ -931,6 +1004,7 @@ export function createGameWorld(assets, options = {}) {
       gateIsPassable: () => gateSlide > .82,
       damageGate,
       damageSilo,
+      ...carMission,
     },
     lowCost: options.quality === 'mobile',
     entries: [
@@ -950,6 +1024,26 @@ export function createGameWorld(assets, options = {}) {
   });
   // Preserve the public world API used by combat and existing saves while the
   // old static residents become actual animated hostiles.
+  // Getting back in is getting it back. Everyone still aboard is thrown out,
+  // which is the only sensible thing that can happen to them at that point.
+  window.addEventListener('lostsignal:drive', (event) => {
+    if (!theft.stolen || event.detail?.vehicle !== gateCar) return;
+    theft.stolen = false;
+    theft.thief = null;
+    theft.driver = null;
+    gateCar.occupied = true;
+    for (const agent of townEnemies.agents) {
+      if (!theft.aboard.has(agent.root.name)) continue;
+      agent.state = 'assault_road';
+      agent.model.visible = !agent.dead;
+      agent.route = [];
+      agent.target = null;
+    }
+    theft.aboard.clear();
+    window.dispatchEvent(new CustomEvent('lostsignal:carrecovered', {
+      detail: { vehicle: gateCar, escaped: theft.escaped } }));
+  });
+
   const townsfolk = townEnemies.roots;
   const downTownsfolk = (root) => townEnemies.down(root);
 
@@ -1911,7 +2005,20 @@ export function createGameWorld(assets, options = {}) {
     // anyone is driving or not, so a parked car is still something you have to
     // walk around.
     for (const vehicle of vehicles) {
-      if (world === 'outside' && !vehicle.state.occupied) vehicle.update(dt, IDLE_CONTROLS);
+      if (world !== 'outside' || vehicle.state.occupied) continue;
+      // A stolen car is driven, not parked. The controls come from the same
+      // place the player's do, so it handles the same and stops the same way.
+      if (theft.stolen && vehicle === gateCar && theft.thief) {
+        vehicle.update(dt, theft.thief.update(dt));
+        if (!theft.escaped && (theft.thief.done
+          || Math.hypot(vehicle.state.x, vehicle.state.z) > 430)) {
+          theft.escaped = true;
+          window.dispatchEvent(new CustomEvent('lostsignal:carescaped', {
+            detail: { vehicle } }));
+        }
+      } else {
+        vehicle.update(dt, IDLE_CONTROLS);
+      }
     }
     for (const plane of aircraft) {
       if (world === 'outside' && !plane.state.occupied) plane.update(dt, IDLE_CONTROLS);
@@ -1985,6 +2092,13 @@ export function createGameWorld(assets, options = {}) {
     gateTravel:()=>gateSlide,
     gateMode:()=>gateMode,
     gateIntegrity:()=>gateIntegrity,
+    carTheft: () => ({
+      stolen: theft.stolen, escaped: theft.escaped,
+      aboard: [...theft.aboard],
+      driver: theft.driver?.root.name || null,
+      distance: gateCar ? +Math.hypot(gateCar.state.x, gateCar.state.z).toFixed(1) : null,
+      speed: gateCar ? +gateCar.state.speed.toFixed(1) : null,
+    }),
     siloIntegrity:()=>siloIntegrity,
     siloBreached:()=>siloBreached,
     setGateMode,
