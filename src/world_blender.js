@@ -7,7 +7,7 @@ import { buildArmory } from './armory.js';
 import { buildGarrison } from './garrison.js';
 import { createRange } from './range.js';
 import { createSky } from './sky.js';
-import { createVehicle } from './vehicle.js';
+import { createVehicle, SEAT_HEIGHT, SEAT_X, SEAT_Z, CABIN_HEADROOM } from './vehicle.js';
 import { createCarThief } from './car_thief.js';
 import { createAircraft } from './aircraft.js';
 import { createPlayerCharacter } from './player_character.js';
@@ -1031,15 +1031,27 @@ export function createGameWorld(assets, options = {}) {
     shouted: false,
     tauntTimer: null,
   };
-  const seatOffsets = { driver: new THREE.Vector3(0.40, 0.55, -0.28),
-    passenger: new THREE.Vector3(-0.40, 0.55, -0.28) };
+  // Right-hand drive, so the driver is on +X. The height is worked out from the
+  // man rather than typed: what has to land on the cushion is his hip joint,
+  // and an agent's origin is under his feet, so the offset is the seat minus
+  // however far his hips stand above his boots.
+  const seatOffsets = { driver: new THREE.Vector3(SEAT_X, 0, SEAT_Z),
+    passenger: new THREE.Vector3(-SEAT_X, 0, SEAT_Z) };
   const _seatPoint = new THREE.Vector3();
+  const _seatUp = new THREE.Vector3(0, 1, 0);
 
-  function carSeat(role) {
+  // Two constraints, and the tighter of the two wins: his hips belong on the
+  // cushion, and the top of his head has to stay under the roof. These two men
+  // are different heights and sit differently, so which constraint binds is
+  // not the same for both of them.
+  function carSeat(agent) {
     if (!gateCar) return null;
-    const offset = seatOffsets[role] || seatOffsets.passenger;
-    return _seatPoint.copy(offset).applyAxisAngle(new THREE.Vector3(0, 1, 0), gateCar.state.heading)
-      .add(new THREE.Vector3(gateCar.state.x, gateCar.state.y, gateCar.state.z));
+    const offset = seatOffsets[agent.role] || seatOffsets.passenger;
+    const onCushion = SEAT_HEIGHT + 0.05 - (agent.seatRise?.() ?? 0.95);
+    const underRoof = CABIN_HEADROOM - (agent.seatCrown?.() ?? 1.35);
+    return _seatPoint.copy(offset).applyAxisAngle(_seatUp, gateCar.state.heading)
+      .add(new THREE.Vector3(gateCar.state.x,
+        gateCar.state.y + Math.min(onCushion, underRoof), gateCar.state.z));
   }
 
   function beginGetaway() {
@@ -1150,7 +1162,10 @@ export function createGameWorld(assets, options = {}) {
 
   const carMission = {
     boardingPoint: (role) => (gateCar ? gateCar.boardingPoint(role) : null),
-    seatPosition: (agent) => carSeat(agent.role),
+    seatPosition: (agent) => carSeat(agent),
+    // Facing the way the car is going, not the way he was walking when he
+    // got in.
+    seatHeading: () => (gateCar ? gateCar.state.heading : null),
     // Wait for the other one unless he is dead or has given up.
     readyToDrive: (agent) => {
       const others = townEnemies?.agents?.filter((other) => other !== agent) || [];

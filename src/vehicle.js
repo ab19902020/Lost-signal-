@@ -55,6 +55,94 @@ export const VEHICLE_SPEC = Object.freeze({
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// The cabin the scan does not have.
+//
+// A photogrammetry car is a skin. Cut its windows open and you are looking at
+// the inside of the far door, or straight out the other side, and anyone
+// sitting in it reads as floating in a glass box. So the inside is built: a
+// floor, a bulkhead behind the seats, a dash, and two seats to sit on. It is
+// eighteen boxes and it never moves relative to the body, so it costs a draw
+// call and nothing else - but it is the difference between glass you can see
+// through and glass you can see nothing through.
+const CABIN_DARK = new THREE.MeshStandardMaterial({
+  name: 'Ford_Escort_Cabin', color: 0x1b1c1f, roughness: 0.92, metalness: 0.02,
+});
+const CABIN_TRIM = new THREE.MeshStandardMaterial({
+  name: 'Ford_Escort_Trim', color: 0x2c2e33, roughness: 0.78, metalness: 0.05,
+});
+
+// Where a person's backside goes, in the body's own frame. Right-hand drive:
+// the driver sits on +X, which is the same side EYE and DOOR are on.
+export const SEAT_HEIGHT = 0.52;
+// The highest a head can be and still be inside the car: the roof is at 1.40
+// and hair needs somewhere to go.
+export const CABIN_HEADROOM = 1.37;
+export const SEAT_Z = -0.16;
+export const SEAT_X = 0.36;
+const FLOOR = 0.26;
+const CABIN_WIDTH = 1.24;
+const WHEEL_Y = 0.85;
+const WHEEL_Z = -0.50;
+const WHEEL_RIM = 0.19;    // a 380 mm wheel, which is what the car had
+
+function box(parent, material, [w, h, d], [x, y, z], tilt = 0) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  mesh.position.set(x, y, z);
+  mesh.rotation.x = tilt;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  // The interior is scenery, not cover: a round that goes through the window
+  // should reach the man behind it, not stop on the dashboard in front of him.
+  mesh.userData.skipBallistics = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function buildCabin(parent) {
+  const cabin = new THREE.Group();
+  cabin.name = 'Car_Cabin';
+  // Floor, transmission tunnel, rear bulkhead, parcel shelf.
+  // Nothing in here is wider than the inside of the car. The shell measures
+  // 1.72 m across its arches; the cabin between the door skins is a good deal
+  // narrower than that, and a floor pan cut to the outside width comes through
+  // the wings as a black slab.
+  box(cabin, CABIN_DARK, [CABIN_WIDTH, 0.05, 2.05], [0, FLOOR, -0.10]);
+  box(cabin, CABIN_DARK, [0.26, 0.16, 1.90], [0, FLOOR + 0.07, -0.10]);
+  box(cabin, CABIN_DARK, [CABIN_WIDTH, 0.52, 0.07], [0, 0.58, 0.92]);
+  box(cabin, CABIN_DARK, [CABIN_WIDTH - 0.08, 0.05, 0.44], [0, 0.84, 1.02]);
+  // Dashboard and centre stack, up against the base of the windscreen.
+  box(cabin, CABIN_TRIM, [CABIN_WIDTH, 0.30, 0.34], [0, 0.80, -1.10]);
+  box(cabin, CABIN_DARK, [0.34, 0.26, 0.18], [0, 0.64, -0.96]);
+  // Door cards, so the inside of a door is a door.
+  for (const side of [-1, 1]) {
+    box(cabin, CABIN_TRIM, [0.05, 0.36, 1.30], [side * (CABIN_WIDTH * 0.5 - 0.02), 0.56, -0.30]);
+  }
+  // Front seats and rear bench: a squab and a back apiece.
+  for (const side of [-1, 1]) {
+    box(cabin, CABIN_TRIM, [0.48, 0.12, 0.50], [side * SEAT_X, SEAT_HEIGHT - 0.06, SEAT_Z]);
+    box(cabin, CABIN_TRIM, [0.48, 0.62, 0.12], [side * SEAT_X, SEAT_HEIGHT + 0.27, SEAT_Z + 0.30], -0.16);
+    box(cabin, CABIN_DARK, [0.24, 0.16, 0.14], [side * SEAT_X, SEAT_HEIGHT + 0.62, SEAT_Z + 0.35]);
+  }
+  box(cabin, CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.12, 0.44], [0, SEAT_HEIGHT - 0.08, 0.62]);
+  box(cabin, CABIN_TRIM, [CABIN_WIDTH - 0.14, 0.50, 0.10], [0, SEAT_HEIGHT + 0.22, 0.86], -0.12);
+  // The wheel goes where the driver's hands actually come to rest, measured off
+  // the seated pose, rather than where a catalogue would put it. A wheel his
+  // arms cannot reach is worse than no wheel at all.
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 8), CABIN_DARK);
+  column.rotation.set(1.22, 0, 0);
+  column.position.set(SEAT_X, 0.95, -0.64);
+  column.userData.skipBallistics = true;
+  cabin.add(column);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_RIM, 0.018, 6, 20), CABIN_DARK);
+  rim.name = 'Car_SteeringWheel';
+  rim.rotation.set(1.22, 0, 0);
+  rim.position.set(SEAT_X, WHEEL_Y, WHEEL_Z);
+  rim.userData.skipBallistics = true;
+  cabin.add(rim);
+  parent.add(cabin);
+  return cabin;
+}
+
 export function createVehicle({ scene, colliders, assets, place, addInteraction,
   position = [0, 0, 0], heading = 0, name = 'Car', label = 'FORD ESCORT RS TURBO' }) {
   const source = assets.carDrivable || assets.estateCar;
@@ -71,8 +159,6 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // remain visually continuous with the fused body.
 
   const shell = findNamed(root, 'Car_Shell');
-  const steeringWheel = findNamed(root, 'Car_SteeringWheel');
-  const steeringWheelRest = steeringWheel?.rotation.z || 0;
   const wheels = ['LF', 'RF', 'LR', 'RR']
     .map((tag) => findNamed(root, `Car_Wheel_${tag}`));
 
@@ -101,6 +187,36 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     return { wheel, steer, spin };
   });
   const [frontLeftRig, frontRightRig] = wheelRigs;
+
+  // The glasshouse, cut out of the scan by tools/split_escort_glass.py. The
+  // upload had the windows painted onto a closed shell, so there was nothing
+  // to see through and no way to see who was driving your car away.
+  const glass = findNamed(root, 'Car_Glass');
+  if (glass?.material) {
+    glass.material = glass.material.clone();
+    glass.material.name = 'Ford_Escort_Glass';
+    glass.material.transparent = true;
+    // Glass does not occlude what is behind it, and a transparent surface that
+    // writes depth hides the two men sitting the other side of it.
+    glass.material.depthWrite = false;
+    glass.material.side = THREE.DoubleSide;
+    glass.castShadow = false;
+    glass.receiveShadow = false;
+    // Rounds go through a window; they do not stop at one. Ballistics skips it
+    // so aiming at a head through the windscreen hits the head.
+    glass.userData.skipBallistics = true;
+    glass.userData.carGlass = true;
+    glass.renderOrder = 2;
+  }
+
+  // Something to see when you look through it. The scan is a hollow skin, so
+  // without this the cabin is a hole you can see the far door through, and two
+  // men sitting in it would appear to float in mid-air.
+  const cabin = buildCabin(shell || root);
+  // The wheel comes from the cabin, so it has to be found after the cabin is
+  // built. The scan has no interior of its own to take one from.
+  const steeringWheel = findNamed(root, 'Car_SteeringWheel');
+  const steeringWheelRest = steeringWheel?.rotation.z || 0;
 
   // Lamps. The glass is modelled; the light and the glow are runtime, so a car
   // at night has beams on the road instead of two painted white circles.

@@ -10,6 +10,9 @@ const MEMORY_SECONDS = 12;
 const CORNERED_RANGE = 1.45;
 const PANIC_RANGE = 6.5;
 const ASSAULT_RENDER_DISTANCE = 230;
+// A man sitting in a car is smaller on screen than a man running at you, but
+// he is the one you are trying to shoot, so he is drawn a good way out.
+const RIDER_RENDER_DISTANCE = 190;
 const ASSAULT_RUN_SPEED = 3.35;
 const STRATEGIC_RUN_SPEED = 8.0;
 const PERSONALITY = Object.freeze({
@@ -248,6 +251,62 @@ function prepareModel(gltf, style, lowCost = false, sharedMelee = null) {
   actions.stand = mixer.clipAction(clips.stand);
   actions.stand.enabled = true;
   return { root, model, mixer, clips, actions, travelSpeeds };
+}
+
+// --- Sitting in the car ----------------------------------------------------
+//
+// Neither upload has a seated take, and there is no honest way to fake one out
+// of a walk cycle. So the pose is built: hips folded forward, knees folded
+// down, spine settled back, and for whoever has the wheel, hands out in front
+// of him.
+//
+// Which way a joint folds cannot be hardcoded, because it depends on how the
+// rig was authored and these two came out of a generator. So it is measured
+// once per skeleton: nudge the joint, see which way its child actually went,
+// and keep the axis and the sign that moved it the right way. A pose that
+// calibrates itself is a pose that survives the next upload.
+const SEAT_POSE = Object.freeze({
+  // Every one of these was read off the rig rather than guessed: swept through
+  // its range with the foot, the knee and the hand measured at each step, and
+  // set where they land on the floor pan and the wheel.
+  hip: 1.42,      // radians of thigh flexion - thighs come up to horizontal
+  knee: 0.35,     // shins forward into the footwell, soles on the floor
+  lean: 0.14,     // settled back into the seat rather than sitting bolt upright
+  shoulder: 0.75, // driver: arms out towards the wheel
+  elbow: 0.35,
+  restShoulder: 0.30, // passenger: hands in his lap, not on anything
+  restElbow: 0.95,
+  adduct: 0.52,   // and both of them keep their elbows inside the car
+});
+const _seatPoint = new THREE.Vector3();
+const _hingeFrom = new THREE.Vector3();
+const _hingeTo = new THREE.Vector3();
+const _hingeAxis = new THREE.Vector3();
+
+// The local axis of `bone` that swings `child` along `want`, and which sign of
+// rotation does it. Returns null when the bone has nothing to measure against.
+function hinge(bone, child, want) {
+  if (!bone || !child) return null;
+  const rest = bone.quaternion.clone();
+  let best = null;
+  for (let axis = 0; axis < 3; axis++) {
+    for (const sign of [1, -1]) {
+      bone.quaternion.copy(rest);
+      _hingeAxis.set(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+      bone.updateWorldMatrix(true, true);
+      child.getWorldPosition(_hingeFrom);
+      bone.rotateOnAxis(_hingeAxis, sign * 0.35);
+      bone.updateWorldMatrix(true, true);
+      child.getWorldPosition(_hingeTo);
+      const moved = _hingeTo.sub(_hingeFrom).dot(want);
+      if (!best || moved > best.moved) best = { axis, sign, moved };
+    }
+  }
+  bone.quaternion.copy(rest);
+  bone.updateWorldMatrix(true, true);
+  if (!best || best.moved < 1e-4) return null;
+  return { bone, rest, axis: new THREE.Vector3(
+    best.axis === 0 ? 1 : 0, best.axis === 1 ? 1 : 0, best.axis === 2 ? 1 : 0), sign: best.sign };
 }
 
 class TownEnemy {
@@ -908,11 +967,13 @@ class TownEnemy {
       }
     } else if (this.state === 'riding') {
       this.holding = 'riding';
-      // Carried by the car. The body still tracks the seat so a shot through
-      // the window still finds the man in it, but it is not in the way of the
-      // car it is sitting in.
+      // Carried by the car, sitting in it, facing the way it is going. The body
+      // still tracks the seat so a shot through the window finds the man in it,
+      // but it is not in the way of the car it is sitting in.
       const seat = this.mission.seatPosition?.(this);
       if (seat) this.root.position.copy(seat);
+      const facing = this.mission.seatHeading?.(this);
+      if (facing !== undefined && facing !== null) this.root.rotation.y = facing;
       this.collider.cx = this.root.position.x;
       this.collider.cz = this.root.position.z;
       this.collider.minY = this.root.position.y;
@@ -1037,6 +1098,102 @@ class TownEnemy {
     }
   }
 
+  // Measured once, the first time this man sits down. Rotating a bone before
+  // its rest pose is known would bake the nudge into the pose.
+  calibrateSeat() {
+    if (this.seatJoints) return this.seatJoints;
+    const bone = (name) => this.model.getObjectByName(name);
+    // Every test below is made in world space, because that is the space the
+    // bones report their children in, so "forward" has to be this man's
+    // forward and not the world's. Agents face -Z inside their own root.
+    this.root.updateMatrixWorld(true);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.root.quaternion).normalize();
+    const back = forward.clone().negate();
+    this.seatJoints = {
+      // Hips fold so the knees come forward. Knees fold so the feet go back -
+      // not down: from a standing leg the foot is already directly under the
+      // knee and no rotation on earth will take it lower, which is why asking
+      // for "down" here found no axis at all and left him standing up in his
+      // seat with his legs through the floor.
+      hips: ['L', 'R'].map((side) => hinge(bone(`${side}_Thigh`), bone(`${side}_Calf`), forward)),
+      knees: ['L', 'R'].map((side) => hinge(bone(`${side}_Calf`), bone(`${side}_Foot`), back)),
+      lean: hinge(bone('Spine01'), bone('Head'), back),
+      // Flexion alone leaves both men sitting with their arms out sideways, in
+      // the pose the model was uploaded in - the driver's right hand ended up
+      // outside the car, through the door. So each shoulder gets a second
+      // rotation that brings the arm back in against the ribs, on whichever
+      // axis actually moves that elbow towards this man's own centreline.
+      arms: ['L', 'R'].map((side) => {
+        const upper = bone(`${side}_Upperarm`);
+        const inward = new THREE.Vector3();
+        if (upper) {
+          upper.getWorldPosition(inward);
+          inward.subVectors(this.root.position, inward).setY(0).normalize();
+        }
+        return {
+          shoulder: hinge(upper, bone(`${side}_Forearm`), forward),
+          adduct: hinge(upper, bone(`${side}_Forearm`), inward),
+          elbow: hinge(bone(`${side}_Forearm`), bone(`${side}_Hand`), forward),
+        };
+      }),
+      hipRise: HEIGHT * 0.53,
+      crownRise: HEIGHT * 0.78,
+    };
+
+    // Measure the pose we are about to use, not the standing one, and measure
+    // the top of his head rather than the bone in it. The Head bone sits at the
+    // base of the skull; going by that put both men's hair through the roof
+    // while every number said they were safely inside it.
+    this.root.updateMatrixWorld(true);
+    const head = bone('Head');
+    const standing = head
+      ? head.getWorldPosition(_seatPoint).y - this.root.position.y : HEIGHT * 0.87;
+    const crown = Math.max(0, HEIGHT - standing);
+    this.applySeatedPose(this.role === 'driver');
+    this.model.updateMatrixWorld(true);
+    const hip = bone('Hip');
+    if (hip) this.seatJoints.hipRise = hip.getWorldPosition(_seatPoint).y - this.root.position.y;
+    if (head) {
+      this.seatJoints.crownRise =
+        head.getWorldPosition(_seatPoint).y - this.root.position.y + crown;
+    }
+    return this.seatJoints;
+  }
+
+  // Fold him into the seat. Runs after the mixer, because the mixer would
+  // otherwise write the standing pose straight back over it.
+  applySeatedPose(driving) {
+    const joints = this.calibrateSeat();
+    const bend = (joint, angle) => {
+      if (!joint) return;
+      joint.bone.quaternion.copy(joint.rest);
+      joint.bone.rotateOnAxis(joint.axis, joint.sign * angle);
+    };
+    for (const joint of joints.hips) bend(joint, SEAT_POSE.hip);
+    for (const joint of joints.knees) bend(joint, SEAT_POSE.knee);
+    bend(joints.lean, SEAT_POSE.lean);
+    for (const arm of joints.arms) {
+      // The shoulder takes two turns, so it is reset once and then rotated
+      // twice; bend() on its own would throw the first one away.
+      if (arm.shoulder || arm.adduct) {
+        const upper = (arm.shoulder || arm.adduct).bone;
+        upper.quaternion.copy((arm.shoulder || arm.adduct).rest);
+        if (arm.shoulder) {
+          upper.rotateOnAxis(arm.shoulder.axis,
+            arm.shoulder.sign * (driving ? SEAT_POSE.shoulder : SEAT_POSE.restShoulder));
+        }
+        if (arm.adduct) upper.rotateOnAxis(arm.adduct.axis, arm.adduct.sign * SEAT_POSE.adduct);
+      }
+      bend(arm.elbow, driving ? SEAT_POSE.elbow : SEAT_POSE.restElbow);
+    }
+  }
+
+  seatRise() { return this.calibrateSeat().hipRise; }
+
+  // How far the top of his head stands above his own origin once he is folded
+  // into the seat. This is what has to fit under the roof.
+  seatCrown() { return this.calibrateSeat().crownRise; }
+
   settleDeath() {
     if (this.deathSettled) return;
     this.deathSettled = true;
@@ -1083,8 +1240,11 @@ class TownEnemy {
     if (this.assaulting) {
       // Inside the car they are not standing in the yard. The body still
       // exists and still moves with the car, so it can still be shot at.
-      this.model.visible = active && viewDistance < ASSAULT_RENDER_DISTANCE
-        && this.state !== 'riding';
+      // Sitting in the car counts as being on screen: the point of cutting the
+      // windows open is that you can see who is in there. They are only culled
+      // when the car itself is too far off to make them out.
+      this.model.visible = active && viewDistance < (this.state === 'riding'
+        ? RIDER_RENDER_DISTANCE : ASSAULT_RENDER_DISTANCE);
       const beforeX = this.root.position.x;
       const beforeZ = this.root.position.z;
       this.updateAssault(dt, playerPosition, active, distance);
@@ -1100,7 +1260,12 @@ class TownEnemy {
           dt,
         };
       }
-      if (this.model.visible) this.mixer.update(dt);
+      if (this.model.visible) {
+        this.mixer.update(dt);
+        // After the mixer, never before: a clip written on top of the seated
+        // pose puts him back on his feet inside the car.
+        if (this.state === 'riding') this.applySeatedPose(this.role === 'driver');
+      }
       return;
     }
     if (!active) {
