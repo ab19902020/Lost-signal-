@@ -297,9 +297,18 @@ assert.ok(escortPosition.distanceTo(outsideSiloSpawn) < 7,
 
 const car = await loadGLB('../public/assets/supplied/ford_escort_rs_turbo.glb');
 for (const name of [
-  'Car_SteeringWheel', 'Car_Wheel_LF', 'Car_Wheel_RF', 'Car_Wheel_LR', 'Car_Wheel_RR',
+  'Car_Shell', 'Car_Wheel_LF', 'Car_Wheel_RF', 'Car_Wheel_LR', 'Car_Wheel_RR',
+  // The clean upload models its lamps as separate shells, so the car can light
+  // them at night instead of wearing two painted white circles.
+  'Car_Headlamp_L', 'Car_Headlamp_R', 'Car_Taillamp_L', 'Car_Taillamp_R',
 ]) {
   assert.ok(car.scene.getObjectByName(name), `uploaded Ford rig is missing ${name}`);
+}
+// Weight transfer rolls and pitches the shell. Anything bolted to the bodywork
+// has to be under it or it stays behind when the car leans.
+for (const name of ['Car_Headlamp_L', 'Car_Taillamp_R']) {
+  const lamp = car.scene.getObjectByName(name);
+  assert.equal(lamp.parent?.name, 'Car_Shell', `${name} is not mounted on the shell`);
 }
 const carBounds = new THREE.Box3().setFromObject(car.scene, true);
 const carSize = carBounds.getSize(new THREE.Vector3());
@@ -319,11 +328,11 @@ car.scene.traverse((part) => {
   if (!part.isMesh) return;
   carTriangles += (part.geometry.index?.count || part.geometry.attributes.position.count) / 3;
 });
-// The upper bound carries the seam repair: decimating the 1.95-million-triangle
-// upload tore 40,657 open edges into the body, and closing those holes costs
-// about 60,000 patch triangles. Re-rigging from the original scan with a
-// seam-aware decimation is what brings this back down.
-assert.ok(carTriangles > 230_000 && carTriangles < 320_000,
+// The car is now the clean upload rather than the photogrammetry scan, so the
+// budget is a floor as much as a ceiling: enough triangles that the body is
+// modelled rather than boxy, few enough that a phone draws it without thinking.
+// The scan it replaced cost 300,000 and still had holes in the doors.
+assert.ok(carTriangles > 3_000 && carTriangles < 40_000,
   `uploaded Ford rig missed its mobile detail budget (${Math.round(carTriangles)} triangles)`);
 assert.equal(VEHICLE_SPEC.drivenAxle, 'front');
 assert.equal(VEHICLE_SPEC.make, 'Ford');
@@ -354,16 +363,26 @@ testCar.root.traverse((part) => {
   escortMaterial ||= materials.find((material) =>
     material?.name === 'Ford_Escort_Supplied_PBR') || null;
 });
-assert.ok(escortMaterial?.map && escortMaterial?.normalMap && escortMaterial?.roughnessMap,
-  'the uploaded Ford did not retain its supplied base-colour/normal/PBR maps');
+// The clean upload ships one base-colour map and no normal or PBR maps: its
+// shape is modelled rather than baked, which is why it has no holes in it. The
+// paint values are the rig's, because the upload's flat matte finish made a
+// hot hatch look like a photograph of one.
+assert.ok(escortMaterial?.map, 'the uploaded Ford did not retain its supplied base-colour map');
+assert.ok(escortMaterial.metalness > 0.1 && escortMaterial.metalness < 0.4,
+  `Escort paint is not a clear coat (metalness ${escortMaterial.metalness})`);
+assert.ok(escortMaterial.roughness > 0.25 && escortMaterial.roughness < 0.6,
+  `Escort paint is not a clear coat (roughness ${escortMaterial.roughness})`);
 const wheelNames = ['LF', 'RF', 'LR', 'RR'];
 for (const tag of wheelNames) {
   const wheel = testCar.root.getObjectByName(`Car_Wheel_${tag}`);
   assert.ok(Math.abs(wheel.rotation.y) < 1e-6,
     `${tag} wheel is not straight when parked`);
 }
+// The clean upload has no cabin, and the car is only ever driven from the
+// chase camera, so there is no steering wheel to turn. The rig stays tolerant
+// of one in case a later upload brings an interior.
 const steeringWheel = testCar.root.getObjectByName('Car_SteeringWheel');
-const steeringWheelRest = steeringWheel.rotation.z;
+const steeringWheelRest = steeringWheel?.rotation.z ?? 0;
 testCar.occupied = true;
 for (let frame = 0; frame < 60; frame++) {
   testCar.update(1 / 60, { throttle: 1, steer: 0.65 });
@@ -384,8 +403,10 @@ for (const tag of ['LR', 'RR']) {
   assert.ok(Math.abs(testCar.root.getObjectByName(`Car_Wheel_${tag}`).rotation.y) < 1e-6,
     `${tag} rear wheel steers even though the car is front-steer only`);
 }
-assert.ok(Math.abs(steeringWheel.rotation.z - steeringWheelRest) > 0.3,
-  'the visible steering wheel did not follow the front wheels');
+if (steeringWheel) {
+  assert.ok(Math.abs(steeringWheel.rotation.z - steeringWheelRest) > 0.3,
+    'the visible steering wheel did not follow the front wheels');
+}
 for (let frame = 0; frame < 60 * 17; frame++) {
   testCar.update(1 / 60, { throttle: 1, steer: 0 });
 }

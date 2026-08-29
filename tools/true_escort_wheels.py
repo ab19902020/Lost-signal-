@@ -77,7 +77,8 @@ def fit_hub(plane: np.ndarray) -> tuple[float, float, float]:
     return float(centre[0]), float(centre[1]), radius
 
 
-def envelope_profile(angle: np.ndarray, distance: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def envelope_profile(angle: np.ndarray, distance: np.ndarray,
+                     smooth_degrees: float = ENVELOPE_SMOOTH_DEGREES) -> tuple[np.ndarray, np.ndarray]:
     """Outermost radius per angular bin, wrapped and smoothed."""
     bins = np.clip(((angle + np.pi) / (2 * np.pi) * ENVELOPE_BINS).astype(int),
                    0, ENVELOPE_BINS - 1)
@@ -95,7 +96,7 @@ def envelope_profile(angle: np.ndarray, distance: np.ndarray) -> tuple[np.ndarra
         envelope[~filled] = np.interp(
             positions[~filled], positions[filled], envelope[filled], period=ENVELOPE_BINS,
         )
-    width = max(1, int(round(ENVELOPE_SMOOTH_DEGREES / 360.0 * ENVELOPE_BINS)))
+    width = max(1, int(round(smooth_degrees / 360.0 * ENVELOPE_BINS)))
     kernel = np.ones(width) / width
     smoothed = np.convolve(np.concatenate((envelope, envelope, envelope)), kernel, mode="same")
     envelope = smoothed[ENVELOPE_BINS:2 * ENVELOPE_BINS]
