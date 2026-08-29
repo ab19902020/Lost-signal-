@@ -20,9 +20,13 @@ assert.ok(main.includes('firstWorldImpact(world') && world.includes('addBallisti
   'combat does not use the broad-phase/proxy path');
 assert.ok(!main.includes('intersectObjects(worldGeometry(world), true'),
   'a shot still recursively raycasts the entire world');
+// The cull is now against whoever is looking - the player's eyes, or a CCTV
+// camera he is watching from the shelter - but it is still a cull, and the two
+// distances it uses have to stay in the file for it to be one.
 assert.ok(enemies.includes('root.userData.hitVolumes')
-  && enemies.includes('distance > ACTIVATE')
-  && enemies.includes('distance < 215 || this.alerted'),
+  && enemies.includes('Math.min(distance, viewDistance) > ACTIVATE')
+  && enemies.includes('viewDistance < 215 || this.alerted')
+  && enemies.includes('viewDistance < ASSAULT_RENDER_DISTANCE'),
   'high-detail enemies lack hit volumes or distance culling');
 assert.equal((world.match(/placeTownBuilding\(assets\./g) || []).length, 2,
   'more than the two requested buildings are spawned');

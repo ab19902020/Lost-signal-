@@ -24,6 +24,23 @@ export function createCarThief({ vehicle, route = [], arrive = 7, cruise = 17 } 
   let index = 0;
   let stopping = false;
 
+  // How close counts as reaching a waypoint depends on how far apart they are.
+  // A route laid out every sixty metres wants a generous capture; a turnaround
+  // arc drawn every three wants a tight one, or the car ticks through the whole
+  // arc in six frames without ever steering round it and carries on straight.
+  const capture = points.map((point, at) => (at === 0 ? arrive
+    : Math.max(1.5, Math.min(arrive, point.distanceTo(points[at - 1]) * 0.55))));
+
+  // Driving past a waypoint counts as reaching it. Without this a car that ran
+  // a corner wide turns back for a point it has already left behind.
+  function cleared(gap) {
+    if (index === 0 || gap > arrive * 2.4) return false;
+    const here = points[index];
+    const previous = points[index - 1];
+    return (vehicle.state.x - here.x) * (here.x - previous.x)
+      + (vehicle.state.z - here.z) * (here.z - previous.z) > 0;
+  }
+
   function lookahead() {
     // Aim a little further along than the next waypoint once close to it, so
     // the car flows through a bend instead of pecking at each point in turn.
@@ -31,8 +48,9 @@ export function createCarThief({ vehicle, route = [], arrive = 7, cruise = 17 } 
     const here = points[Math.min(index, points.length - 1)];
     if (!here) return null;
     const distance = Math.hypot(here.x - vehicle.state.x, here.z - vehicle.state.z);
-    if (distance > arrive * 1.6 || here === next) return here;
-    return _to.copy(here).lerp(next, THREE.MathUtils.clamp(1 - distance / (arrive * 1.6), 0, 0.7));
+    const blendAt = Math.min(arrive * 1.6, capture[Math.min(index, capture.length - 1)] * 2.4);
+    if (distance > blendAt || here === next) return here;
+    return _to.copy(here).lerp(next, THREE.MathUtils.clamp(1 - distance / blendAt, 0, 0.7));
   }
 
   return {
@@ -50,7 +68,8 @@ export function createCarThief({ vehicle, route = [], arrive = 7, cruise = 17 } 
       }
       const target = lookahead();
       const here = points[index];
-      if (Math.hypot(here.x - state.x, here.z - state.z) < arrive) {
+      const gap = Math.hypot(here.x - state.x, here.z - state.z);
+      if (gap < capture[index] || cleared(gap)) {
         index++;
         if (index >= points.length) return { throttle: 0, steer: 0 };
       }

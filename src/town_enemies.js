@@ -1054,7 +1054,11 @@ class TownEnemy {
     this.root.userData.deathSettled = true;
   }
 
-  update(dt, playerPosition, active) {
+  // `viewer` is wherever the picture is being taken from — the player's own
+  // eyes normally, a CCTV camera when he is watching one from the bunker.
+  // Only drawing and dormancy key off it; every decision still keys off the
+  // real player, because that is who they are actually reacting to.
+  update(dt, playerPosition, active, viewer = playerPosition) {
     dt = Math.min(dt, 0.05);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.stateTimer = Math.max(0, this.stateTimer - dt);
@@ -1074,10 +1078,12 @@ class TownEnemy {
     }
 
     const distance = this.root.position.distanceTo(playerPosition);
+    const viewDistance = viewer === playerPosition
+      ? distance : this.root.position.distanceTo(viewer);
     if (this.assaulting) {
       // Inside the car they are not standing in the yard. The body still
       // exists and still moves with the car, so it can still be shot at.
-      this.model.visible = active && distance < ASSAULT_RENDER_DISTANCE
+      this.model.visible = active && viewDistance < ASSAULT_RENDER_DISTANCE
         && this.state !== 'riding';
       const beforeX = this.root.position.x;
       const beforeZ = this.root.position.z;
@@ -1107,14 +1113,14 @@ class TownEnemy {
     // they were placed instead of seeming to teleport in from a simulation the
     // player could not see.
     if (!this.activated) {
-      if (distance > ACTIVATE) {
+      if (Math.min(distance, viewDistance) > ACTIVATE) {
         this.model.visible = false;
         return;
       }
       this.activated = true;
       this.thinkTimer = this.random() * 0.16;
     }
-    this.model.visible = distance < 215 || this.alerted;
+    this.model.visible = viewDistance < 215 || this.alerted;
     if (!this.model.visible) return;
 
     this.canSeePlayer = distance < DETECT
@@ -1278,8 +1284,8 @@ export function createTownEnemies({ scene, colliders, assets, entries,
     navigator,
     plans: () => agents.map((agent) => ({ name: agent.root.name, plan: agent.plan.key })),
     roots: agents.map((agent) => agent.root),
-    update(dt, playerPosition, active = true) {
-      for (const agent of agents) agent.update(dt, playerPosition, active);
+    update(dt, playerPosition, active = true, viewer = playerPosition) {
+      for (const agent of agents) agent.update(dt, playerPosition, active, viewer);
     },
     down(root) { return root?.userData?.enemyAgent?.kill?.() ?? false; },
     animationSummary() {

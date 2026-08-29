@@ -19,6 +19,7 @@
     "qa:brain": "node qa/enemy-brain.mjs",
     "qa:theft": "node qa/car-theft.mjs",
     "qa:siege": "node qa/siege.mjs http://127.0.0.1:5173/Lost-signal-/ qa/out/siege 3",
+    "qa:cctv": "node qa/cctv-theft.mjs http://127.0.0.1:5173/Lost-signal-/",
     "qa:car": "node qa/car.mjs http://127.0.0.1:5173/Lost-signal-/qa/model.html?glb=../assets/supplied/ford_escort_rs_turbo.glb qa/out/escort",
     "qa:character": "node qa/player-character.mjs",
     "qa:aim": "node qa/third-person-aim.mjs",

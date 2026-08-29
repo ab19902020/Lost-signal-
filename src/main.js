@@ -94,6 +94,8 @@ let currentWorld = 'bunker';
 let started = false;
 let modal = false;
 let cctv = false;
+// Where the active camera is standing, when one is up.
+const _observerPoint = new THREE.Vector3();
 let currentCam = 0;
 let yaw = 0;
 let pitch = -0.03;
@@ -980,6 +982,14 @@ function wireGameEvents() {
   });
   addEventListener('lostsignal:carescaped', () => {
     flash('THE ESCORT IS GONE. THEY TOOK IT UP THE ROAD.', 5200);
+  });
+  // They come back to gloat. Horn first, from up the road, so you look up
+  // before you read anything.
+  addEventListener('lostsignal:cartaunt', (event) => {
+    hornSound();
+    setTimeout(() => hornSound(), 420);
+    flash(`\u201C${event.detail?.line || 'STILL WALKING?'}\u201D`, 4200);
+    setTimeout(() => flash('THEY ARE DRIVING PAST IN YOUR ESCORT', 3000), 4300);
   });
   addEventListener('lostsignal:carrecovered', (event) => {
     flash(event.detail?.escaped
@@ -4757,7 +4767,14 @@ function simulate(dt) {
   updatePlayer(dt);
   activeScene().updateMatrixWorld();
   updatePrompt();
-  game.update(dt, currentWorld, game.player.position);
+  // What the player is looking at is not always where the player is standing.
+  // Watching the yard on a camera from inside the shelter has to keep the yard
+  // running and its people drawn, or the theft the cameras exist to show you
+  // happens to an empty compound.
+  game.update(dt, currentWorld, game.player.position, cctv ? {
+    world: game.cctvScenes?.[currentCam] || 'outside',
+    position: game.cctvCameras?.[currentCam]?.getWorldPosition(_observerPoint) || null,
+  } : null);
   recoil = THREE.MathUtils.damp(recoil, 0, 13, dt);
   updateRecoil(dt);
   if (shotCooldown > 0) shotCooldown = Math.max(0, shotCooldown - dt);
