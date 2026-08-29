@@ -458,10 +458,21 @@ async function prepare() {
         simulate: (count = 1, dt = 1 / 60) => { for (let i = 0; i < count; i++) simulate(dt); },
         // Walk under the same input path the player uses, from inside an
         // evaluated block where synthetic key events are not available.
+        // Accepts a list, because some things a player does need two keys at
+        // once - sprinting is forward *and* shift, and a harness that can only
+        // hold one of them can never photograph a sprint.
         walkFrames: (count = 1, code = 'KeyW', dt = 1 / 60) => {
-          keys[code] = true;
+          const codes = Array.isArray(code) ? code : [code];
+          for (const held of codes) keys[held] = true;
           for (let i = 0; i < count; i++) simulate(dt);
-          keys[code] = false;
+          for (const held of codes) keys[held] = false;
+        },
+        carry: () => game.playerCharacter?.carry?.() ?? null,
+        // Hold inputs down and let the game run its own loop, rather than
+        // stepping it by hand. A sprint photographed between two synthetic
+        // frames is not the sprint the player sees.
+        hold: (code, down = true) => {
+          for (const held of (Array.isArray(code) ? code : [code])) keys[held] = !!down;
         },
         arm: (key = DEFAULT_WEAPON) => {
           loadout.resupply(key);

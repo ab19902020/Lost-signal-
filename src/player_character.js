@@ -62,6 +62,14 @@ const _layer = new THREE.Quaternion();
 const _lookMatrix = new THREE.Matrix4();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _worldUp = new THREE.Vector3(0, 1, 0);
+const _armRest = [new THREE.Quaternion(), new THREE.Quaternion()];
+const _slungPosition = new THREE.Vector3();
+const _slungQuaternion = new THREE.Quaternion();
+const _handsPosition = new THREE.Vector3();
+const _handsQuaternion = new THREE.Quaternion();
+const _readyQuaternion = new THREE.Quaternion();
+const _boneMatrix = new THREE.Matrix4();
+const _stanceEuler = new THREE.Euler();
 
 const LOOP_ONCE = new Set(['climb', 'gesture', 'fall', 'melee', 'jump']);
 const NO_VERTICAL_ROOT = new Set(['climb', 'fall', 'jump']);
@@ -109,6 +117,43 @@ const WEAPON_POSES = Object.freeze({
     right: [0.02, -0.04, 0.13], left: null, muzzle: [0, 0, -0.27],
     rightPole: [0.48, 0.98, 0.14], leftPole: null,
   },
+});
+
+// How a weapon is carried, and it is never only one way.
+//
+// The game had a single pose per weapon: chest height, pointing where the
+// player looked, arms solved onto it whatever the body was doing. Running with
+// a rifle therefore locked the torso in a firing stance over a sprinting pair
+// of legs, and the barrel swung through the character's own chest. A soldier
+// carries a rifle three ways, and which one tells you what they are about to
+// do - so the game should too.
+//
+// Each stance is expressed as an offset from the family's aimed pose, so
+// adding a weapon family means describing it once.
+const CARRY_STANCES = Object.freeze({
+  // Slung: running. The weapon rides the back on its sling, both hands are
+  // free to swing, and the upper body is given back to the run animation.
+  slung: {
+    // Relative to the upper spine, so it rides the torso rather than floating
+    // behind a body that is leaning into its stride.
+    bone: 'Spine02',
+    rifle: { position: [-0.04, -0.02, 0.21], rotation: [0.22, 0.16, -1.98] },
+    pistol: { position: [0.19, -0.36, 0.10], rotation: [0.12, 0.18, -0.40] },
+    blade: { position: [0.21, -0.36, 0.09], rotation: [0.08, 0.10, -0.30] },
+  },
+  // Low ready: walking and standing. In both hands, tucked in against the
+  // chest, muzzle down and off the line of anyone in front.
+  ready: {
+    offset: [-0.02, -0.07, 0.15], rotation: [-0.52, 0.16, 0.05],
+    pistolOffset: [-0.01, -0.10, 0.13], pistolRotation: [-0.62, 0.10, 0.03],
+  },
+});
+
+// Which stance a family slings like. Long guns go on the back; anything short
+// goes on the hip.
+const SLUNG_KIND = Object.freeze({
+  rifle: 'rifle', sniper: 'rifle', shotgun: 'rifle', smg: 'rifle',
+  pistol: 'pistol', revolver: 'pistol', blade: 'blade',
 });
 
 function collectRig(root) {
@@ -375,6 +420,10 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
   let forcedAction = null;
   let forcedTimer = 0;
   let groundOffset = 0;
+  // How much of the weapon's weight is in the hands (0 = slung on the body)
+  // and how far up into the shoulder it has come.
+  let hands = 1;
+  let aimBlend = 0;
   const gripError = { right: null, left: null };
 
   function syncVisibility() {
@@ -442,12 +491,16 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     previous?.fadeOut(name === 'jump' || name === 'fall' ? 0.07 : 0.13);
   }
 
-  function applyUpperBodyHold(state) {
+  function applyUpperBodyHold(state, hold) {
     if (!state.armed || !weapon || weaponFamily === 'blade' || currentState === 'melee') return;
+    // `hold` is how much of the character is holding the weapon. At zero the
+    // gun is on their back and the run animation owns the arms completely,
+    // which is the whole point: a sprinting figure swings its arms.
+    if (hold <= 0.001) return;
     for (const [name, weight] of Object.entries(UPPER_BODY_WEIGHTS)) {
       const bone = rig.bones.get(name);
       const neutral = neutralUpperBody.get(name);
-      if (bone && neutral) bone.quaternion.slerp(neutral, weight);
+      if (bone && neutral) bone.quaternion.slerp(neutral, weight * hold);
     }
   }
 
@@ -469,7 +522,7 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
   }
 
   /** Analytic two-bone arm placement with a stable elbow pole. */
-  function solveArm(side, localTarget, localPole) {
+  function solveArm(side, localTarget, localPole, weight = 1) {
     if (!localTarget) return null;
     const hand = rig.bones.get(`${side}_Hand`);
     const forearm = rig.bones.get(`${side}_Forearm`);
@@ -517,9 +570,19 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     _desiredElbow.copy(_shoulder).addScaledVector(_direction, along)
       .addScaledVector(_poleDirection, bend);
 
+    // Solve, then ease the result back toward the animated arm by however much
+    // of the weapon's weight the character is actually taking. Without this the
+    // hands snap onto the gun the instant a sprint ends.
+    _armRest[0].copy(upperarm.quaternion);
+    _armRest[1].copy(forearm.quaternion);
     rotateJointToward(upperarm, forearm, _desiredElbow);
     upperarm.updateWorldMatrix(true, true);
     rotateJointToward(forearm, hand, _target);
+    if (weight < 0.999) {
+      upperarm.quaternion.slerp(_armRest[0], 1 - weight);
+      forearm.quaternion.slerp(_armRest[1], 1 - weight);
+      upperarm.updateWorldMatrix(true, true);
+    }
     hand.updateWorldMatrix(true, false);
     hand.getWorldPosition(_end);
     return _end.distanceTo(_target);
@@ -547,31 +610,112 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     return groundOffset;
   }
 
-  function updateWeaponPose(state) {
-    const pose = WEAPON_POSES[weaponFamily] || WEAPON_POSES.rifle;
-    weaponMount.position.fromArray(pose.position);
-    // `root.position.y` already lowers the whole character for crouching and
-    // sitting. Lowering the mount a second time dragged the gun below the
-    // chest and forced the arms into an impossible reach.
-    weaponMount.position.y += groundOffset;
+  // A damped blend approaches its target and never arrives, so a weapon that
+  // is "aimed" stays a thousandth short of aimed for ever and the sights never
+  // quite line up. Land it.
+  function settle(value) {
+    if (value > 0.998) return 1;
+    if (value < 0.002) return 0;
+    return value;
+  }
 
-    if (state.aimTarget?.isVector3) {
+  /** Where the weapon rides when it is on the body rather than in the hands. */
+  function slungTransform() {
+    const kind = SLUNG_KIND[weaponFamily] || 'rifle';
+    const stance = CARRY_STANCES.slung[kind] || CARRY_STANCES.slung.rifle;
+    const bone = rig.bones.get(CARRY_STANCES.slung.bone);
+
+    // The spine gives the height and the lean - so the weapon rides the torso
+    // rather than floating behind a body bent into its stride - but the offset
+    // itself is in the character's own frame. A spine bone's local axes run
+    // along the bone, and treating them as forward and back is what put the
+    // rifle inside the ribcage.
+    if (bone) {
+      bone.updateWorldMatrix(true, false);
+      bone.getWorldPosition(_slungPosition);
+      root.worldToLocal(_slungPosition);
+    } else {
+      _slungPosition.set(0, 1.32, 0);
+    }
+    _slungPosition.x += stance.position[0];
+    _slungPosition.y += stance.position[1] + groundOffset;
+    // The character faces -Z, so behind them is +Z.
+    _slungPosition.z += stance.position[2];
+
+    _stanceEuler.set(...stance.rotation);
+    _slungQuaternion.setFromEuler(_stanceEuler);
+  }
+
+  /** The two-handed pose, from low ready through to fully aimed. */
+  function handsTransform(state, pose, aim) {
+    const short = weaponFamily === 'pistol' || weaponFamily === 'revolver';
+    const stance = CARRY_STANCES.ready;
+    const offset = short ? stance.pistolOffset : stance.offset;
+    const tilt = short ? stance.pistolRotation : stance.rotation;
+
+    _handsPosition.fromArray(pose.position);
+    // Low ready pulls the weapon in against the chest and drops the muzzle;
+    // aiming pushes it back out onto the line of sight. Blending the two is
+    // what makes bringing a gun up read as a movement rather than a snap.
+    _handsPosition.x += offset[0] * (1 - aim);
+    _handsPosition.y += offset[1] * (1 - aim);
+    _handsPosition.z += offset[2] * (1 - aim);
+    _handsPosition.y += groundOffset;
+
+    _stanceEuler.set(...pose.rotation);
+    _handsQuaternion.setFromEuler(_stanceEuler);
+    if (state.aimTarget?.isVector3 && aim > 0.001) {
       root.updateWorldMatrix(true, false);
-      _mountWorld.copy(weaponMount.position);
+      _mountWorld.copy(_handsPosition);
       root.localToWorld(_mountWorld);
       if (_mountWorld.distanceToSquared(state.aimTarget) > 1e-6) {
         _lookMatrix.lookAt(_mountWorld, state.aimTarget, _worldUp);
         _worldAim.setFromRotationMatrix(_lookMatrix);
         root.getWorldQuaternion(_parentWorld);
-        weaponMount.quaternion.copy(_parentWorld).invert().multiply(_worldAim);
+        _worldAim.premultiply(_parentInverse.copy(_parentWorld).invert());
+        _handsQuaternion.slerp(_worldAim, aim);
       }
+    }
+    if (aim < 0.999) {
+      _stanceEuler.set(tilt[0] * (1 - aim), tilt[1] * (1 - aim), tilt[2] * (1 - aim));
+      _handsQuaternion.multiply(_readyQuaternion.setFromEuler(_stanceEuler));
+    }
+  }
+
+  function updateWeaponPose(dt, state) {
+    const pose = WEAPON_POSES[weaponFamily] || WEAPON_POSES.rifle;
+
+    // Three states, and the difference between them is what the player reads
+    // off another figure at fifty metres: gun on the back means running, gun
+    // in both hands means walking up on something, gun in the shoulder means
+    // about to fire.
+    // Firing counts as aiming whatever the sights are doing: a shot from the
+    // hip still comes up onto the target, and a muzzle pointing at the floor
+    // while the tracer leaves the crosshair is the sort of detail that makes a
+    // game feel wrong without the player being able to say why.
+    const firing = (state.recoil || 0) > 0.02;
+    // Sitting down does not put a weapon away - someone in a chair with a
+    // rifle across their knees is still holding it - so only running slings it.
+    const wantsHands = !!state.armed && (!state.running || firing);
+    const wantsAim = !!state.aiming || firing;
+    hands = settle(THREE.MathUtils.damp(hands, wantsHands || wantsAim ? 1 : 0,
+      wantsHands || wantsAim ? 9 : 12, dt));
+    aimBlend = settle(THREE.MathUtils.damp(aimBlend, wantsAim ? 1 : 0, wantsAim ? 14 : 10, dt));
+    const aim = aimBlend * hands;
+
+    handsTransform(state, pose, aim);
+    if (hands > 0.999) {
+      weaponMount.position.copy(_handsPosition);
+      weaponMount.quaternion.copy(_handsQuaternion);
     } else {
-      weaponMount.rotation.set(...pose.rotation);
+      slungTransform();
+      weaponMount.position.copy(_slungPosition).lerp(_handsPosition, hands);
+      weaponMount.quaternion.copy(_slungQuaternion).slerp(_handsQuaternion, hands);
     }
 
     // A short, procedural recoil is part of the holding pose. It moves the
     // visible third-person muzzle without changing where the round is traced.
-    const kick = THREE.MathUtils.clamp(state.recoil || 0, 0, 1.4);
+    const kick = THREE.MathUtils.clamp(state.recoil || 0, 0, 1.4) * hands;
     if (kick > 0) {
       weaponMount.position.y += kick * 0.018;
       weaponMount.position.z += kick * 0.035;
@@ -579,13 +723,13 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
       weaponMount.quaternion.multiply(_layer);
     }
 
-    if (!state.armed || !weaponVisible || !weapon) {
+    if (!state.armed || !weaponVisible || !weapon || hands <= 0.02) {
       gripError.right = gripError.left = null;
       return;
     }
     root.updateWorldMatrix(true, true);
-    gripError.right = solveArm('R', pose.right, pose.rightPole);
-    gripError.left = solveArm('L', pose.left, pose.leftPole);
+    gripError.right = solveArm('R', pose.right, pose.rightPole, hands);
+    gripError.left = solveArm('L', pose.left, pose.leftPole, hands);
   }
 
   function update(dt, state = {}) {
@@ -607,8 +751,8 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     }
     root.position.y = -drop;
     updateGroundContact(dt, state, animation);
-    applyUpperBodyHold(state);
-    updateWeaponPose(state);
+    applyUpperBodyHold(state, hands);
+    updateWeaponPose(dt, state);
     syncVisibility();
   }
 
@@ -640,6 +784,9 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     animationState: () => currentState,
     weaponFamily: () => weaponFamily,
     gripError: () => ({ ...gripError }),
+    // What the weapon is doing, for the QA harness and the HUD.
+    carry: () => (hands < 0.35 ? 'slung' : aimBlend * hands > 0.6 ? 'aimed' : 'ready'),
+    carryBlend: () => ({ hands: +hands.toFixed(3), aim: +aimBlend.toFixed(3) }),
     groundOffset: () => groundOffset,
     travelSpeed: (name) => travelSpeeds[name] ?? null,
     setVisible(value) { visible = !!value; syncVisibility(); },
