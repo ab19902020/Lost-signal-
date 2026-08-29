@@ -233,14 +233,14 @@ function rigSuppliedAircraft(root) {
   const isProp = (index) => (nosePositive
     ? attribute.getComponent(index, fuselage) >= cut
     : attribute.getComponent(index, fuselage) <= cut);
-  const index = geometry.index;
-  const total = index ? index.count : attribute.count;
+  const indexed = geometry.index;
+  const total = indexed ? indexed.count : attribute.count;
   const bodyIndices = [];
   const propIndices = [];
   for (let triangle = 0; triangle < total; triangle += 3) {
-    const a = index ? index.getX(triangle) : triangle;
-    const b = index ? index.getX(triangle + 1) : triangle + 1;
-    const c = index ? index.getX(triangle + 2) : triangle + 2;
+    const a = indexed ? indexed.getX(triangle) : triangle;
+    const b = indexed ? indexed.getX(triangle + 1) : triangle + 1;
+    const c = indexed ? indexed.getX(triangle + 2) : triangle + 2;
     (isProp(a) && isProp(b) && isProp(c) ? propIndices : bodyIndices).push(a, b, c);
   }
   if (!propIndices.length) return { visual, prop: null, propDisc: null };
