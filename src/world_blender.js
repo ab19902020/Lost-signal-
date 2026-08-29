@@ -930,6 +930,12 @@ export function createGameWorld(assets, options = {}) {
     escaped: false,
     driver: null,
     thief: null,
+    // The gloating passes: which one we are on, whether one is running, and
+    // how long until the next.
+    pass: 0,
+    taunting: false,
+    shouted: false,
+    tauntTimer: null,
   };
   const seatOffsets = { driver: new THREE.Vector3(0.40, 0.55, -0.28),
     passenger: new THREE.Vector3(-0.40, 0.55, -0.28) };
@@ -951,11 +957,101 @@ export function createGameWorld(assets, options = {}) {
     gateCar.occupied = true;
     // Out through the gate and back up the road they came in on: the way out
     // is the way in, which is also the only road on the map.
-    const out = [[0, 14], [0, 24], ...[40, 90, 150, 220, 300, 380, 460]
-      .map((distance) => xz(roadPoint(distance, 0)))];
-    theft.thief = createCarThief({ vehicle: gateCar, route: out });
+    theft.thief = createCarThief({ vehicle: gateCar, route: getawayRoute() });
+    theft.pass = 0;
+    theft.taunting = false;
+    theft.shouted = false;
+    theft.tauntTimer = null;
     window.dispatchEvent(new CustomEvent('lostsignal:carstolen', {
       detail: { vehicle: gateCar } }));
+  }
+
+  // --- Coming back to gloat ------------------------------------------------
+  //
+  // Losing the car once, at night, while you were somewhere else, is a thing
+  // you can miss entirely - and several people did. So they do not vanish up
+  // the road for good. They turn round, come back down past the gate with the
+  // horn going, shout something at you, and leave again. It gives the theft a
+  // second and a third showing, it puts the car back inside rifle range, and
+  // it is what two men who have just taken your only car would actually do.
+  const TAUNT_LINES = Object.freeze([
+    'NICE MOTOR! WE\u2019LL LOOK AFTER IT!',
+    'THANKS FOR THE KEYS, GRANDAD!',
+    'STILL WALKING? SHOULD HAVE LOCKED IT!',
+    'WAVE GOODBYE TO YOUR ESCORT!',
+    'WE\u2019LL BRING IT BACK. PROBABLY NOT.',
+  ]);
+  const TAUNT_FIRST_WAIT = 16;   // seconds after the getaway before pass one
+  const TAUNT_WAIT = 26;         // and between the passes after that
+  const TAUNT_SHOUT_RANGE = 62;  // how close they get before they start
+  const TAUNT_TURN_AT = 21;      // where on the road the U-turn is centred
+  const TAUNT_TURN_RADIUS = 6.5; // the Escort's own lock is good for 3.5 m
+
+  // Up the road and away. The getaway starts inside the compound and has to
+  // come out through the gate first; a gloating pass is already out there, so
+  // it only wants the road.
+  const outboundRoute = (from = 0) => [40, 90, 150, 220, 300, 380, 460]
+    .filter((distance) => distance > from).map((distance) => xz(roadPoint(distance, 0)));
+  const getawayRoute = () => [[0, 14], [0, 24], ...outboundRoute()];
+
+  // A half circle laid on the road surface, entered heading in and left
+  // heading out. Pure pursuit cannot invent a U-turn out of two opposed
+  // waypoints, but it follows an arc drawn for it perfectly well.
+  function turnaround(at, radius, across = -3.0) {
+    const points = [];
+    for (let step = 1; step <= 6; step++) {
+      const angle = (Math.PI * step) / 6;
+      points.push(xz(roadPoint(at - radius * Math.sin(angle),
+        across + radius - radius * Math.cos(angle))));
+    }
+    return points;
+  }
+
+  function beginTaunt() {
+    if (!gateCar || !theft.stolen) return;
+    const here = Math.hypot(gateCar.state.x, gateCar.state.z - 18);
+    theft.pass = (theft.pass || 0) + 1;
+    theft.taunting = true;
+    theft.shouted = false;
+    theft.thief = createCarThief({
+      vehicle: gateCar,
+      route: [
+        // Back down the road, the arc outside the gate, and away again.
+        ...[380, 300, 220, 150, 90, 46, 32].filter((distance) => distance < here - 12)
+          .map((distance) => xz(roadPoint(distance, -3.0))),
+        ...turnaround(TAUNT_TURN_AT, TAUNT_TURN_RADIUS),
+        ...outboundRoute(TAUNT_TURN_AT + 14),
+      ],
+      cruise: 19,
+    });
+  }
+
+  // Runs whenever the surface is live, driven or watched. Owns the phase the
+  // stolen car is in: away, coming back, shouting, leaving again.
+  function updateTheft(dt, viewer) {
+    if (!theft.stolen || !theft.thief || !gateCar) return;
+    if (theft.thief.halted) return; // driver shot; it goes nowhere.
+    if (!theft.thief.done) {
+      if (theft.taunting && !theft.shouted && viewer
+        && Math.hypot(gateCar.state.x - viewer.x, gateCar.state.z - viewer.z)
+          < TAUNT_SHOUT_RANGE) {
+        theft.shouted = true;
+        window.dispatchEvent(new CustomEvent('lostsignal:cartaunt', {
+          detail: {
+            vehicle: gateCar,
+            pass: theft.pass,
+            line: TAUNT_LINES[(theft.pass - 1) % TAUNT_LINES.length],
+          },
+        }));
+      }
+      return;
+    }
+    // Out of road. Wait a while, then come back down it.
+    theft.taunting = false;
+    theft.tauntTimer = (theft.tauntTimer ?? (theft.pass ? TAUNT_WAIT : TAUNT_FIRST_WAIT)) - dt;
+    if (theft.tauntTimer > 0) return;
+    theft.tauntTimer = TAUNT_WAIT;
+    beginTaunt();
   }
 
   const carMission = {
@@ -1031,6 +1127,8 @@ export function createGameWorld(assets, options = {}) {
     theft.stolen = false;
     theft.thief = null;
     theft.driver = null;
+    theft.taunting = false;
+    theft.tauntTimer = null;
     gateCar.occupied = true;
     for (const agent of townEnemies.agents) {
       if (!theft.aboard.has(agent.root.name)) continue;
@@ -1990,8 +2088,16 @@ export function createGameWorld(assets, options = {}) {
   const IDLE_CONTROLS = Object.freeze({ throttle: 0, steer: 0, brake: false });
 
   let elapsed=0;
-  function update(dt, world = 'bunker', playerPosition = player.position) {
+  function update(dt, world = 'bunker', playerPosition = player.position, observed = null) {
     elapsed += dt;
+    // A world is live if the player is in it or a camera is pointed at it.
+    // Everything below that used to test `world === 'outside'` was really
+    // asking "is anyone looking at the surface", and the answer was wrong for
+    // the whole time the player was sitting at the camera desk watching it.
+    const watchingOutside = observed?.world === 'outside';
+    const outsideLive = world === 'outside' || watchingOutside;
+    const outsideViewer = watchingOutside && observed.position
+      ? observed.position : playerPosition;
     // Cull the silo's lights around the camera rather than the body. In play
     // they are the same place; with the debug free camera they are not, and a
     // room the camera is standing in went dark because the body was elsewhere.
@@ -1999,13 +2105,13 @@ export function createGameWorld(assets, options = {}) {
       siloWorld?.update(dt, camera.getWorldPosition(_cullPoint));
       garrison?.update(dt, playerPosition);
     }
-    if (world === 'outside') range?.update(dt);
+    if (outsideLive) range?.update(dt);
     updateGate(dt, world === 'outside' ? playerPosition : null);
     // Vehicles settle onto the ground and keep their collider in step whether
     // anyone is driving or not, so a parked car is still something you have to
     // walk around.
     for (const vehicle of vehicles) {
-      if (world !== 'outside') continue;
+      if (!outsideLive) continue;
       // "Occupied" means somebody is in it, and a stolen car has two somebodies
       // in it - which is exactly why it needs updating. Only the car the player
       // is driving is updated elsewhere.
@@ -2021,25 +2127,29 @@ export function createGameWorld(assets, options = {}) {
           window.dispatchEvent(new CustomEvent('lostsignal:carescaped', {
             detail: { vehicle } }));
         }
+        updateTheft(dt, outsideViewer);
       } else {
         vehicle.update(dt, IDLE_CONTROLS);
       }
     }
     for (const plane of aircraft) {
-      if (world === 'outside' && !plane.state.occupied) plane.update(dt, IDLE_CONTROLS);
+      if (outsideLive && !plane.state.occupied) plane.update(dt, IDLE_CONTROLS);
     }
     // Time passes wherever the player is standing. The sky is a few dozen
     // sums and a handful of uniform writes, so it runs every frame and the
     // surface is never waiting at the moment you left it.
-    sky.update(dt, world === 'outside' ? playerPosition : null);
+    sky.update(dt, outsideLive ? outsideViewer : null);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
-    townEnemies.update(dt, playerPosition, world === 'outside');
-    if (world === 'outside') {
+    // The attackers keep going, and stay drawn, for whoever is watching -
+    // which on the camera desk is a lens on a pole three hundred metres from
+    // the player's body.
+    townEnemies.update(dt, playerPosition, outsideLive, outsideViewer);
+    if (outsideLive) {
       for (const building of townBuildings) {
         const reach = building.userData.renderDistance || 900;
-        const dx = building.position.x - playerPosition.x;
-        const dz = building.position.z - playerPosition.z;
+        const dx = building.position.x - outsideViewer.x;
+        const dz = building.position.z - outsideViewer.z;
         building.visible = dx * dx + dz * dz <= reach * reach;
       }
     }
@@ -2101,6 +2211,9 @@ export function createGameWorld(assets, options = {}) {
       stolen: theft.stolen, escaped: theft.escaped,
       aboard: [...theft.aboard],
       driver: theft.driver?.root.name || null,
+      pass: theft.pass, taunting: theft.taunting,
+      gate: gateCar
+        ? +Math.hypot(gateCar.state.x, gateCar.state.z - 18).toFixed(1) : null,
       distance: gateCar ? +Math.hypot(gateCar.state.x, gateCar.state.z).toFixed(1) : null,
       speed: gateCar ? +gateCar.state.speed.toFixed(1) : null,
     }),
