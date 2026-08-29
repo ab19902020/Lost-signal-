@@ -14,7 +14,8 @@ import { findNamed } from './assets.js';
 
 const WHEELBASE = 2.48;        // measured between the uploaded model's hubs
 const TRACK = 1.44;            // hub-to-hub track measured from the upload
-const WHEEL_RADIUS = 0.315;     // actual tyre radius after the clean extraction
+const WHEEL_RADIUS = 0.281;     // the rigged tyre's actual radius, so the
+                                // tread turns at the speed of the road under it
 const HALF_LENGTH = 2.10;
 const HALF_WIDTH = 0.86;
 // The body is tested as three circles down its spine rather than one big one:

@@ -10,9 +10,16 @@ import * as THREE from 'three';
 
 const EPSILON = 1e-4;
 const TAU = Math.PI * 2;
+// How finely a sparse object is split, and how full its bounding box has to be
+// before splitting is not worth the extra collider tests.
+const OBJECT_CELL = 0.75;
+const OBJECT_GRID = 4;
+const OBJECT_FILL = 0.8;
+const OBJECT_TRIANGLE_BUDGET = 20000;
 const normaliseAngle = (a) => ((a % TAU) + TAU) % TAU;
 const _box = new THREE.Box3();
 const _size = new THREE.Vector3();
+const _point = new THREE.Vector3();
 
 export class ColliderSet {
   constructor(bounds = null) {
@@ -114,15 +121,104 @@ export class ColliderSet {
   }
 
   // Register the world-space bounds of a placed Blender object.
+  //
+  // One box around the whole object is only honest when the object fills it. A
+  // rotated shelf, an L-shaped console or a bench with a gap under it fills
+  // perhaps half of its own bounding box, and the rest is a wall the player
+  // can feel but not see. Where that happens the object is split over a coarse
+  // grid and each occupied cell gets a collider shrunk onto what is actually
+  // in it, so the shape you walk into is the shape you can see.
   addObject(root, options = {}) {
     root.updateWorldMatrix(true, true);
     _box.setFromObject(root);
     if (!isFinite(_box.min.x) || _box.isEmpty()) return null;
-    return this.addBox(_box.clone(), options);
+    // Remember what the collider came from, so an audit can say which line of
+    // world building put a wall somewhere rather than only where it hurts.
+    const settings = { source: root.name || root.type, ...options };
+    const whole = _box.clone();
+
+    // Most props in this game are a single merged Blender mesh, so splitting
+    // by mesh would find nothing to split. Read the triangles instead: they are
+    // what the player can see, and they are what the collider should follow.
+    const parts = [];
+    root.traverse((part) => {
+      if (!part.isMesh && !part.isSkinnedMesh) return;
+      if (part.userData.hitProxy || part.userData.ballisticProxy) return;
+      if (part.visible === false) return;
+      const geometry = part.geometry;
+      const position = geometry?.attributes?.position;
+      if (!position) return;
+      const index = geometry.index;
+      const count = index ? index.count : position.count;
+      const triangles = Math.floor(count / 3);
+      if (!triangles) return;
+      // A detailed scan does not need every triangle to describe its footprint.
+      const stride = Math.max(1, Math.ceil(triangles / OBJECT_TRIANGLE_BUDGET));
+      part.updateWorldMatrix(true, false);
+      const matrix = part.matrixWorld;
+      for (let triangle = 0; triangle < triangles; triangle += stride) {
+        const bounds = new THREE.Box3();
+        for (let corner = 0; corner < 3; corner++) {
+          const vertex = index ? index.getX(triangle * 3 + corner) : triangle * 3 + corner;
+          _point.fromBufferAttribute(position, vertex).applyMatrix4(matrix);
+          bounds.expandByPoint(_point);
+        }
+        parts.push(bounds);
+      }
+    });
+    if (parts.length < 2) return this.addBox(whole, settings);
+
+    const width = whole.max.x - whole.min.x;
+    const depth = whole.max.z - whole.min.z;
+    const columns = THREE.MathUtils.clamp(Math.round(width / OBJECT_CELL), 1, OBJECT_GRID);
+    const rows = THREE.MathUtils.clamp(Math.round(depth / OBJECT_CELL), 1, OBJECT_GRID);
+    if (columns * rows < 2) return this.addBox(whole, settings);
+
+    const cells = [];
+    let filled = 0;
+    let split = 0;
+    for (let column = 0; column < columns; column++) {
+      for (let row = 0; row < rows; row++) {
+        const x0 = whole.min.x + (width * column) / columns;
+        const x1 = whole.min.x + (width * (column + 1)) / columns;
+        const z0 = whole.min.z + (depth * row) / rows;
+        const z1 = whole.min.z + (depth * (row + 1)) / rows;
+        let cell = null;
+        for (const bounds of parts) {
+          if (bounds.max.x <= x0 || bounds.min.x >= x1) continue;
+          if (bounds.max.z <= z0 || bounds.min.z >= z1) continue;
+          // Clip the part to the cell, so a long shelf does not drag its whole
+          // length into every cell it passes through.
+          const clipped = new THREE.Box3(
+            new THREE.Vector3(Math.max(bounds.min.x, x0), bounds.min.y, Math.max(bounds.min.z, z0)),
+            new THREE.Vector3(Math.min(bounds.max.x, x1), bounds.max.y, Math.min(bounds.max.z, z1)));
+          cell = cell ? cell.union(clipped) : clipped;
+        }
+        if (cell) {
+          filled++;
+          split += (cell.max.x - cell.min.x) * (cell.max.y - cell.min.y) * (cell.max.z - cell.min.z);
+        }
+        cells.push(cell);
+      }
+    }
+    // Compare volumes, not footprints. A console fills its own footprint and
+    // still leaves most of its bounding box empty, because the box is as tall
+    // as its highest screen everywhere - which is the wall you walk into on
+    // the way past the desk.
+    const volume = width * (whole.max.y - whole.min.y) * depth;
+    if (!filled || split >= volume * OBJECT_FILL) return this.addBox(whole, settings);
+
+    const added = [];
+    for (const cell of cells) {
+      if (!cell) continue;
+      const collider = this.addBox(cell, settings);
+      if (collider) added.push(collider);
+    }
+    return added.length ? added[0] : this.addBox(whole, settings);
   }
 
   addBox(box, options = {}) {
-    const { shrink = 0, climbable = false } = options;
+    const { shrink = 0, climbable = false, source = null } = options;
     if (shrink) {
       box.min.x += shrink; box.max.x -= shrink;
       box.min.z += shrink; box.max.z -= shrink;
@@ -130,7 +226,7 @@ export class ColliderSet {
     }
     box.getSize(_size);
     if (_size.x < 0.02 || _size.z < 0.02) return null;
-    const collider = { box, climbable, enabled: options.enabled ?? true };
+    const collider = { box, climbable, source, enabled: options.enabled ?? true };
     this.boxes.push(collider);
     return collider;
   }

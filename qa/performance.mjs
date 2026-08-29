@@ -51,7 +51,11 @@ const escort = glbTriangles(await readFile(new URL(
   '../public/assets/supplied/ford_escort_rs_turbo.glb', import.meta.url)));
 assert.ok(ruin > 400_000, 'performance regression fixture is no longer the high-detail ruin');
 assert.ok(clinic < 10_000, `clinic should use the compact matching upload (${clinic} triangles)`);
-assert.ok(escort > 190_000 && escort < 250_000,
+// The Escort is the clean upload, not the photogrammetry scan: a modelled car
+// whose wheels, lamps and trim are already separate shells. It costs about a
+// sixtieth of what the scan cost and has no holes in it, which is the whole
+// reason it replaced it.
+assert.ok(escort > 3_000 && escort < 20_000,
   `supplied Ford should retain detail inside its mobile budget (${escort} triangles)`);
 
 console.log(`Performance QA passed: direct mobile render, ${Math.round(ruin).toLocaleString()}-triangle ruin proxy, ${Math.round(clinic).toLocaleString()}-triangle clinic, ${Math.round(escort).toLocaleString()}-triangle rigged Ford, culled enemy skins and staged audio.`);

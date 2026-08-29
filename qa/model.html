@@ -68,6 +68,22 @@ globalThis.__spin = (name, axis, radians) => {
   const part = model?.getObjectByName(name);
   if (part) part.rotation[axis] = radians;
 };
+// Strip the maps. A scan's defects are either in its geometry or in its
+// texture atlas, and the only way to tell which is to look at the shape on
+// its own.
+const flatMaterial = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: .55, metalness: .12 });
+globalThis.__flat = (on) => {
+  model?.traverse((part) => {
+    if (!part.isMesh) return;
+    if (on) {
+      part.userData.__material = part.userData.__material || part.material;
+      part.material = flatMaterial;
+    } else if (part.userData.__material) {
+      part.material = part.userData.__material;
+    }
+  });
+  renderer.render(scene, camera);
+};
 globalThis.__show = (name, visible) => {
   const part = model?.getObjectByName(name);
   if (part) part.visible = visible;
