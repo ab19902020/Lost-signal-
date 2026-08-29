@@ -147,6 +147,8 @@ let recoilYaw = 0;
 let recoilSettlePitch = 0;
 let recoilSettleYaw = 0;
 let sprinting = false;
+// Dev-only: stops simulation while rendering continues. Stripped with __ls.
+let frozen = false;
 let seated = null;
 // The car, while you are in it. Driving replaces walking outright: the
 // capsule is parked at the seat, the weapon comes down and W/A/S/D go to
@@ -474,6 +476,12 @@ async function prepare() {
         hold: (code, down = true) => {
           for (const held of (Array.isArray(code) ? code : [code])) keys[held] = !!down;
         },
+        // Stop the world so a harness can pose the character and put the
+        // camera where it likes. Without this every frame the loop draws
+        // overwrites both, and a screenshot can only ever show the chase view.
+        freeze: (value = true) => { frozen = !!value; return frozen; },
+        renderer,
+        camera: game.camera,
         arm: (key = DEFAULT_WEAPON) => {
           loadout.resupply(key);
           // Straight into the hands, without walking the carry rules: a test
@@ -4682,7 +4690,10 @@ function loop() {
   const dt = Math.min(clock.getDelta(), .05);
   if (!game) return;
 
-  simulate(dt);
+  // Frozen: keep drawing, stop stepping. A harness that wants to look at one
+  // pose from a chosen angle cannot do it while the loop is re-posing the
+  // character and re-placing the camera sixty times a second.
+  if (!frozen) simulate(dt);
   updateFrameBudget(dt);
 
   if (cctv) {

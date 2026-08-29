@@ -32,6 +32,12 @@ export const PLAYER_EXTRA_ANIMATIONS = Object.freeze({
   runNatural: 8,
 });
 
+// Below this much of the weapon in the hands, the hands are off it entirely.
+const GRIP_RELEASE = 0.55;
+// Above this the walk cycle is being asked to do a job the run cycle is for.
+const WALK_TO_RUN = 1.55;
+const WALK_RATE_LIMITS = Object.freeze([0.72, 1.55]);
+const RUN_RATE_LIMITS = Object.freeze([0.70, 1.95]);
 const CHARACTER_HEIGHT = 1.78;
 const CLIMB_WINDOW = 0.82;
 const _box = new THREE.Box3();
@@ -424,6 +430,7 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
   // and how far up into the shoulder it has come.
   let hands = 1;
   let aimBlend = 0;
+  let holdWeight = 1;
   const gripError = { right: null, left: null };
 
   function syncVisibility() {
@@ -442,7 +449,13 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
 
   function animationRate(name, state) {
     if (name === 'run' || name === 'walk') {
-      return THREE.MathUtils.clamp((state.speed || 0) / Math.max(0.15, travelSpeeds[name]), 0.65, 4.2);
+      // A cycle stretched past about twice its authored speed stops reading as
+      // the same gait, so the rate is held inside the band where it does and
+      // the remainder is allowed to show as a little foot slide. That is a far
+      // smaller sin than fast-forward.
+      const [slowest, fastest] = name === 'run' ? RUN_RATE_LIMITS : WALK_RATE_LIMITS;
+      return THREE.MathUtils.clamp(
+        (state.speed || 0) / Math.max(0.15, travelSpeeds[name]), slowest, fastest);
     }
     if (name === 'climb') return clips.climb.duration / CLIMB_WINDOW;
     if (name === 'stairsUp' || name === 'stairsDown') {
@@ -465,7 +478,14 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     if (forcedAction && forcedTimer > 0) return forcedAction;
     if (!state.grounded) return (state.verticalSpeed || 0) >= -0.15 ? 'jump' : 'fall';
     const speed = Math.max(0, state.speed || 0);
-    if (!state.seated && speed > 0.11) return state.running ? 'run' : 'walk';
+    // Pick the cycle by how fast they are actually going, not by whether the
+    // sprint key is down. The default outdoor speed is 3.05 m/s - a jog - and
+    // it was playing a walk cycle authored at 1 m/s three times too fast,
+    // which is what made the locomotion look like a wind-up toy. The run cycle
+    // strides at 2.36 m/s and covers that speed at a natural rate.
+    if (!state.seated && speed > 0.11) {
+      return speed >= WALK_TO_RUN || state.running ? 'run' : 'walk';
+    }
     if (state.seated) return 'seat';
     if (state.crouching) return 'crouch';
     if (state.dancing && !state.armed && !state.seated) return 'dance';
@@ -682,9 +702,12 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     }
   }
 
-  function updateWeaponPose(dt, state) {
-    const pose = WEAPON_POSES[weaponFamily] || WEAPON_POSES.rifle;
-
+  /**
+   * Decide where the weapon is between the back and the shoulder, and how much
+   * of it is in the hands. Run before the upper-body hold, because the hold is
+   * worth exactly as much as the grip is.
+   */
+  function updateCarryBlend(dt, state) {
     // Three states, and the difference between them is what the player reads
     // off another figure at fifty metres: gun on the back means running, gun
     // in both hands means walking up on something, gun in the shoulder means
@@ -701,7 +724,18 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     hands = settle(THREE.MathUtils.damp(hands, wantsHands || wantsAim ? 1 : 0,
       wantsHands || wantsAim ? 9 : 12, dt));
     aimBlend = settle(THREE.MathUtils.damp(aimBlend, wantsAim ? 1 : 0, wantsAim ? 14 : 10, dt));
+    // How much the hands are actually on the weapon, which is not the same as
+    // where the weapon is. Letting go happens early and fast: a rifle going
+    // onto its sling is released and then travels, and hands that follow it
+    // all the way there sweep across the body and cross over each other.
+    const reach = THREE.MathUtils.clamp((hands - GRIP_RELEASE) / (1 - GRIP_RELEASE), 0, 1);
+    holdWeight = reach * reach * (3 - 2 * reach);
+  }
+
+  function updateWeaponPose(state) {
+    const pose = WEAPON_POSES[weaponFamily] || WEAPON_POSES.rifle;
     const aim = aimBlend * hands;
+    const grip = holdWeight;
 
     handsTransform(state, pose, aim);
     if (hands > 0.999) {
@@ -723,13 +757,13 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
       weaponMount.quaternion.multiply(_layer);
     }
 
-    if (!state.armed || !weaponVisible || !weapon || hands <= 0.02) {
+    if (!state.armed || !weaponVisible || !weapon || grip <= 0.02) {
       gripError.right = gripError.left = null;
       return;
     }
     root.updateWorldMatrix(true, true);
-    gripError.right = solveArm('R', pose.right, pose.rightPole, hands);
-    gripError.left = solveArm('L', pose.left, pose.leftPole, hands);
+    gripError.right = solveArm('R', pose.right, pose.rightPole, grip);
+    gripError.left = solveArm('L', pose.left, pose.leftPole, grip);
   }
 
   function update(dt, state = {}) {
@@ -751,9 +785,75 @@ export function createPlayerCharacter(gltf, motionGltf = null) {
     }
     root.position.y = -drop;
     updateGroundContact(dt, state, animation);
-    applyUpperBodyHold(state, hands);
-    updateWeaponPose(dt, state);
+    // The blend runs first: it decides how much of the weapon is in the hands,
+    // and that is what the upper-body hold is worth this frame. Then the hold
+    // sets the firing stance, and the solver puts the hands on the weapon.
+    updateCarryBlend(dt, state);
+    applyUpperBodyHold(state, holdWeight);
+    updateWeaponPose(state);
     syncVisibility();
+  }
+
+  /**
+   * How fast a locomotion cycle actually carries the character, measured from
+   * its own feet.
+   *
+   * This used to be read off the Hip translation track, first sample to last.
+   * For a cycle authored in place - which these are - that displacement is
+   * noise, and it came out at 0.64 m/s for a walk. The game walks at 2 m/s, so
+   * the clip was driven at 3.1 times its natural speed: a stroll played at a
+   * scuttle, with the feet skating over the ground because the stride was
+   * never as long as the distance covered. Watching the planted foot travel
+   * backwards through the character over one cycle gives the real stride, and
+   * the real stride is what the playback rate has to match.
+   */
+  function measureStride(name) {
+    const clip = clips[name];
+    if (!clip || clip.duration <= 0) return travelSpeeds[name] || 1;
+    const left = rig.bones.get('L_Foot');
+    const right = rig.bones.get('R_Foot');
+    if (!left || !right) return travelSpeeds[name] || 1;
+
+    const restore = [];
+    for (const [key, action] of Object.entries(actions)) {
+      restore.push([action, action.enabled, action.weight]);
+      action.stop();
+      action.enabled = key === name;
+      action.setEffectiveWeight(key === name ? 1 : 0);
+      action.setEffectiveTimeScale(1);
+      if (key === name) action.play();
+    }
+
+    const steps = 72;
+    const point = new THREE.Vector3();
+    let stride = 0;
+    let previous = null;
+    let previousSide = null;
+    for (let step = 0; step <= steps; step++) {
+      mixer.setTime((step / steps) * clip.duration);
+      model.updateMatrixWorld(true);
+      const lowLeft = root.worldToLocal(left.getWorldPosition(point.clone()));
+      const lowRight = root.worldToLocal(right.getWorldPosition(point.clone()));
+      const side = lowLeft.y <= lowRight.y ? 'L' : 'R';
+      const foot = side === 'L' ? lowLeft : lowRight;
+      // Only while the same foot stays down: the swap from one foot to the
+      // other is not stride, it is the other leg arriving.
+      if (previous && side === previousSide) stride += Math.max(0, foot.z - previous.z);
+      previous = foot;
+      previousSide = side;
+    }
+
+    for (const [action, enabled, weight] of restore) {
+      action.stop();
+      action.enabled = enabled;
+      action.setEffectiveWeight(weight);
+    }
+    mixer.setTime(0);
+    return stride > 0.05 ? stride / clip.duration : (travelSpeeds[name] || 1);
+  }
+
+  for (const name of ['walk', 'run', 'stairsUp', 'stairsDown', 'flee']) {
+    if (clips[name]) travelSpeeds[name] = measureStride(name);
   }
 
   playState('stand', { speed: 0 });
