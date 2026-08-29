@@ -44,12 +44,14 @@ for (let run = 0; run < runs; run++) {
     const previous = new Map(enemies.agents.map((agent) =>
       [agent.root.name, agent.root.position.clone()]));
 
-    // The attackers start half a kilometre down the road, so the siege needs
-    // real minutes to reach the gate. Stepped by hand so the result does not
-    // depend on how fast this machine renders.
+    // Step the whole world, not just the enemies. Driving the agents directly
+    // leaves the gate frozen shut - its leaves only move inside the world's
+    // own update - so they hammered a gate that could never open and the
+    // theft could never start. The bug was in the harness, but a harness that
+    // does not run the real path cannot be trusted about the real path.
     const seconds = Number(globalThis.__siegeSeconds || 90);
     for (let frame = 0; frame < 60 * seconds; frame++) {
-      enemies.update(1 / 60, player, true);
+      ls.game.update(1 / 60, 'outside', player);
       for (const agent of enemies.agents) {
         const row = track.get(agent.root.name);
         const moved = agent.root.position.distanceTo(previous.get(agent.root.name));
@@ -62,6 +64,7 @@ for (let run = 0; run < runs; run++) {
         row.worstStall = Math.max(row.worstStall, row.stall);
         row.replans = agent.replans;
         row.unstick = agent.unstickAttempts;
+        row.breachHits = agent.breachHits;
       }
     }
     const theft = ls.game.carTheft?.() || null;
@@ -73,7 +76,7 @@ for (let run = 0; run < runs; run++) {
         worstStall: +row.worstStall.toFixed(2),
         reached: +row.start.distanceTo(
           enemies.agents.find((agent) => agent.root.name === name).root.position).toFixed(1),
-        replans: row.replans, unstick: row.unstick,
+        replans: row.replans, unstick: row.unstick, breachHits: row.breachHits,
       })),
     };
   });
@@ -94,7 +97,7 @@ for (const [index, run] of all.entries()) {
     console.log(`  run ${index + 1} ${agent.name.padEnd(17)} ${agent.plan.padEnd(11)} `
       + `walked ${String(agent.travelled).padStart(6)} m, ${agent.reached} m from where it started, `
       + `worst stall ${agent.worstStall.toFixed(2)} s, ${agent.replans} replans, `
-      + `${agent.unstick} break-outs`);
+      + `${agent.unstick} break-outs, ${agent.breachHits} strikes`);
     console.log(`      states: ${agent.states.join(' -> ')}`);
   }
 }
