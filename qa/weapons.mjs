@@ -198,11 +198,15 @@ const results = await page.evaluate(async ({ keys, catalogue }) => {
   let airborne = 0;
   // Stay on them: the gallery empties after the first shot, so re-close the
   // range and re-aim each time rather than firing at where they used to be.
-  for (let shot = 0; shot < 6 && victim.userData.alive !== false; shot++) {
+  // Aim in the frame the shot is fired in. There used to be two simulated
+  // frames between the aim and the trigger, and a panicking resident moves in
+  // them, so the cartridge went where he had been standing - which made this
+  // check fail about one run in three for a reason that had nothing to do with
+  // whether a shotgun kills a man.
+  for (let shot = 0; shot < 8 && victim.userData.alive !== false; shot++) {
     ls.body.teleport(victim.position.x + 2.2, victim.position.y, victim.position.z);
     ls.simulate(2);
     ls.aimAt({ x: victim.position.x, y: victim.position.y + 1.1, z: victim.position.z });
-    ls.simulate(2);
     ls.fire();
     ls.simulate(2);
     airborne = Math.max(airborne, (ls.particles?.() ?? 0) - goreBefore.particles);
