@@ -764,10 +764,15 @@ export function createGameWorld(assets, options = {}) {
   const vehicles = [];
   const gateCar = createVehicle({
     scene: outside, colliders: colliders.outside, assets, place, addInteraction,
-    // Directly in the player's first outdoor sightline. The central route is
-    // still clear, but the supplied Escort is now only a few steps in front
-    // and to the right of the silo exit instead of disappearing into the yard.
-    position: [4.8, 0, -8.8], heading: Math.PI,
+    // Four and a half metres from the silo exit, on the right, in a bay it can
+    // actually be driven out of with both doors reachable on foot.
+    //
+    // It used to sit at [4.8, -8.8], which is between two lines of road
+    // barrier: two metres of clear width for a car that needs three and a
+    // quarter, and its passenger door inside the barrier itself. That last
+    // part is why the theft appeared to hang - the second man was walking to
+    // a door he could never stand at, and the getaway waits for him.
+    position: [4.4, 0, -10.6], heading: Math.PI,
     name: 'Ford_Escort_RS_Turbo', label: 'FORD ESCORT RS TURBO',
   });
   if (gateCar) vehicles.push(gateCar);
@@ -995,12 +1000,25 @@ export function createGameWorld(assets, options = {}) {
     }
     return best || fallback;
   }
-  const blackAt = enemySpawn(concealedApproachSpawn(ruinedHouse, ruinCover, ruinCover[0])
-    || [roadPoint(470, 5)[0], roadPoint(470, 5)[2]]);
-  const redAt = enemySpawn(concealedApproachSpawn(clinic, clinicCover, clinicCover[2])
-    || [roadPoint(492, -5)[0], roadPoint(492, -5)[2]]);
+  // Where they are standing when the game starts.
+  //
+  // They used to be put down in cover beside the two buildings at the far end
+  // of the road - which reads well and cost forty-five seconds of running to
+  // nowhere, because the assault route's first waypoint is on the road and
+  // they had three hundred metres to cover before they even reached it. They
+  // start on the road now, at the head of their own route, a long way off and
+  // already walking. The cover spawn is kept for the patrol behaviour, which
+  // is what it was written for.
+  const blackAt = enemySpawn([roadPoint(196, 6)[0], roadPoint(196, 6)[2]]);
+  const redAt = enemySpawn([roadPoint(208, -6)[0], roadPoint(208, -6)[2]]);
   const xz = ([x, , z]) => [x, z];
-  const assaultRoad = (lane) => [430, 395, 355, 315, 275, 235, 195, 155, 118, 82, 50, 24, 8]
+  // Where the walk in starts. It used to begin at 430 m, and half a kilometre
+  // of road at a run is a hundred seconds before anything happens even when
+  // both men take the quickest plan - two hundred when they draw the cautious
+  // ones. They still come from the town end; they are just already on their
+  // way when you first step outside, which is the difference between a siege
+  // and a wait.
+  const assaultRoad = (lane) => [165, 142, 120, 100, 80, 62, 45, 30, 17, 7]
     .map((distance) => xz(roadPoint(distance, lane)))
     .concat([[lane * .55, 19.35]]);
   // The centre of the apron is deliberately blocked by the visible barrier
