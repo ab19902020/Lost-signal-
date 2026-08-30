@@ -1885,6 +1885,10 @@ function resolvePersonHit(target, point, damage, direction = ray.ray.direction) 
   if (!fatal) {
     flash(`${name} HIT`, 900);
     alarmBystanders(1);
+    // A man who is shot and lives should behave like one. Until now the two
+    // attackers took a round in silence and carried on walking to the car.
+    game.townEnemies?.agentFor?.(target)
+      ?.takeFire?.(game.player.position.x, game.player.position.z, true);
     return;
   }
 

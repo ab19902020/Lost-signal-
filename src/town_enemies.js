@@ -68,6 +68,11 @@ const ASSAULT_PLANS = Object.freeze([
 // How long the first man at the fence waits for the second before going in
 // on his own.
 const RALLY_PATIENCE = 14;
+// How long a round keeps a man behind something, and how long a shout from
+// his mate keeps him looking over his shoulder.
+const SUPPRESSED_HIT = 3.6;
+const SUPPRESSED_NEAR = 2.1;
+const WARY_SECONDS = 12;
 const BOUND_RUN = 2.6;
 const BOUND_LOOK = 0.7;
 // Travelled less than this in this long, while it had somewhere to be? Stuck.
@@ -374,6 +379,7 @@ const _legUp = new THREE.Vector3(0, 1, 0);
 const _seatPoint = new THREE.Vector3();
 const _fitPoint = new THREE.Vector3();
 const _crownPoint = new THREE.Vector3();
+const _firePoint = new THREE.Vector3();
 const _hingeFrom = new THREE.Vector3();
 const _hingeTo = new THREE.Vector3();
 const _hingeAxis = new THREE.Vector3();
@@ -489,6 +495,12 @@ class TownEnemy {
     // Seconds left flat on the deck after a car hit him.
     this.downed = 0;
     this.rallyTimer = 0;
+    // Seconds of keeping his head down, seconds of being jumpy, and whether
+    // he is the last one left.
+    this.suppressed = 0;
+    this.wary = 0;
+    this.soloed = false;
+    this.hurried = false;
     this.assaulting = this.assaultRoute.length > 0;
     this.assaultIndex = 0;
     this.yardIndex = 0;
@@ -944,6 +956,7 @@ class TownEnemy {
   }
 
   updateAssault(dt, playerPosition, active, distance) {
+    this.wary = Math.max(0, this.wary - dt);
     // Flat on his back after a car went over him. Nothing else runs until he
     // is up again, and while he is down he is not wedged, he is winded.
     if (this.downed > 0) {
@@ -1024,6 +1037,28 @@ class TownEnemy {
     }
 
     const visible = this.model.visible;
+
+    // Under fire, and not yet in the car. He is behind something until it
+    // stops, and then he goes on with what he came for - which is the whole
+    // difference between an attacker and a man walking to a car who happens to
+    // be being shot at.
+    if (this.suppressed > 0 && this.downed <= 0
+      && this.state !== 'boarding' && this.state !== 'riding') {
+      this.suppressed -= dt;
+      this.holding = 'suppressed';
+      const cover = this.target || this.destination;
+      if (cover && this.root.position.distanceTo(cover) > 0.9) {
+        const speed = 4.4 * this.personality.pace;
+        if (visible) this.playTravel('run', speed, 1.06, .1);
+        this.faceAndMove(cover, speed, dt);
+      } else {
+        this.play('stand', 1, .16);
+        this.face(this.lastSeen, dt, 3.4);
+      }
+      if (this.suppressed <= 0) { this.target = null; this.destination = null; }
+      return;
+    }
+
     const roadSpeed = (visible ? ASSAULT_RUN_SPEED : STRATEGIC_RUN_SPEED)
       * this.personality.pace * this.plan.pace;
 
@@ -1472,7 +1507,7 @@ class TownEnemy {
 
   // Is everybody who is still coming actually here?
   squadRallied() {
-    if (!this.squad?.rallied) return true;
+    if (this.soloed || !this.squad?.rallied) return true;
     const others = this.squad.members || [];
     return others.every((agent) => agent === this || agent.dead
       || agent.state === 'assault_rally' || agent.state === 'breach_gate'
@@ -1680,6 +1715,62 @@ class TownEnemy {
     this.mixer.update(dt);
   }
 
+  // Shot at.
+  //
+  // Until now a round that did not kill one of them did nothing at all: he
+  // took it in silence and carried on walking to the car, which is the single
+  // most obviously wrong thing an attacker can do and the reason they read as
+  // having no brain. Now it costs him. He flinches, he breaks for whatever
+  // cover is away from where the shot came from, and he tells the other one -
+  // who has no way of knowing otherwise, because he is looking at the car.
+  takeFire(fromX, fromZ, hit) {
+    if (this.dead || this.state === 'riding') return false;
+    this.alerted = true;
+    this.memoryTimer = MEMORY_SECONDS;
+    _firePoint.set(fromX, this.root.position.y, fromZ);
+    this.lastSeen.copy(_firePoint);
+    // A man who is already in the car door does not throw himself flat; he
+    // gets in, which is what he came for and now urgently.
+    if (this.state === 'boarding' || this.state === 'to_car') {
+      this.hurried = true;
+      return true;
+    }
+    this.suppressed = Math.max(this.suppressed, hit ? SUPPRESSED_HIT : SUPPRESSED_NEAR);
+    this.destination = this.chooseCover(_firePoint, true);
+    this.route = this.destination ? this.planRoute(this.destination) : [];
+    this.target = this.route.shift() || this.destination;
+    if (this.squad) {
+      this.squad.contact = { x: fromX, z: fromZ, at: this.squad.clock || 0 };
+      for (const other of this.squad.members || []) {
+        if (other === this || other.dead) continue;
+        other.warned(fromX, fromZ);
+      }
+    }
+    return true;
+  }
+
+  // Told by the other one that somebody is shooting.
+  warned(fromX, fromZ) {
+    if (this.dead || this.state === 'riding') return;
+    this.alerted = true;
+    this.memoryTimer = MEMORY_SECONDS;
+    this.lastSeen.set(fromX, this.root.position.y, fromZ);
+    // He does not go to ground on hearsay, but he stops strolling.
+    this.wary = Math.max(this.wary, WARY_SECONDS);
+  }
+
+  // His mate is down. There is nobody to rally with and nobody to wait for.
+  partnerDown() {
+    if (this.dead) return;
+    this.soloed = true;
+    this.wary = Math.max(this.wary, WARY_SECONDS);
+    if (this.state === 'assault_rally') {
+      this.state = 'breach_gate';
+      this.target = null;
+      this.destination = null;
+    }
+  }
+
   // Hit by a car. Fast enough and he is dead where he lands; slower and he is
   // knocked off his feet and gets up angry. Either way he goes over the bonnet
   // rather than standing there taking it.
@@ -1716,6 +1807,9 @@ class TownEnemy {
     }
     this.root.userData.alive = false;
     this.collider.enabled = false;
+    for (const other of this.squad?.members || []) {
+      if (other !== this) other.partnerDown();
+    }
     for (const volume of this.hitVolumes) {
       volume.visible = false;
       volume.removeFromParent();
@@ -1775,6 +1869,12 @@ export function createTownEnemies({ scene, colliders, assets, entries,
       for (const agent of agents) agent.update(dt, playerPosition, active, viewer);
     },
     down(root) { return root?.userData?.enemyAgent?.kill?.() ?? false; },
+    // So the shooting code can tell the man it just hit.
+    agentFor(root) {
+      let node = root;
+      while (node && !node.userData?.enemyAgent) node = node.parent;
+      return node?.userData?.enemyAgent || null;
+    },
     animationSummary() {
       return agents.map((agent) => ({
         name: agent.root.name, style: agent.style,
