@@ -45,10 +45,16 @@ const check = (name, condition, detail) => {
   if (!condition) failures.push(`${name}: ${detail}`);
 };
 
-// The car exists as a vehicle, not a prop.
+// Hold the attack. Every check below measures a mechanism - a gate, a door, a
+// set of pedals - and this suite runs several thousand simulation steps, which
+// is long enough for the two men to walk in, take the car and drive it away
+// underneath it. Half the run was failing on a car that had been stolen and a
+// gate that had been driven through, and reporting it as a fault in the
+// steering.
 step('parked');
 results.parked = await page.evaluate(() => {
   const ls = globalThis.__ls;
+  ls.peace(true);
   ls.world('outside');
   ls.simulate(20);
   return ls.vehicles();
@@ -147,10 +153,66 @@ check('front wheels follow the turn',
   results.steering.right.wheel < 0 && results.steering.left.wheel > 0,
   `wheels at ${results.steering.right.wheel} / ${results.steering.left.wheel} rad`);
 
+// The car does not run its own driver over.
+//
+// It did. A driver's body rides at the centre of the car so that stepping out,
+// saving and every distance test in the game keeps working on one position -
+// and the run-over test, which was written to let a car hit people, found him
+// there. Every eight tenths of a second the Escort ran over the man driving
+// it: a length of the yard cost seventy per cent of his health, and a second
+// one knocked him out at the wheel and woke him in the shelter with the car
+// still marked occupied, so nobody could get back into it.
+step('driver');
+results.driver = await page.evaluate(() => {
+  const ls = globalThis.__ls;
+  const car = ls.game.vehicles[0];
+  ls.surface();
+  ls.drive(0);
+  car.state.x = -2;
+  car.state.z = 0;
+  car.state.heading = -Math.PI / 2;
+  car.state.speed = 0;
+  ls.simulate(4);
+  const before = ls.debug().health;
+  // Up the yard, back down it, and up it again: three lengths at speed, which
+  // is more driving than most journeys in this game and cost three lives.
+  for (let leg = 0; leg < 3; leg++) {
+    car.state.x = -2;
+    car.state.z = 0;
+    car.state.heading = -Math.PI / 2;
+    car.state.speed = 0;
+    ls.pedals(1, 0);
+    ls.simulate(100);
+    ls.pedals(0, 0);
+    ls.simulate(10);
+  }
+  return { before, after: ls.debug().health, world: ls.debug().world, driving: !!ls.driving() };
+});
+check('driving does not hurt the driver',
+  results.driver.after >= results.driver.before,
+  `three lengths of the yard took the driver from ${results.driver.before} to `
+  + `${results.driver.after} health`);
+check('the driver stays at the wheel', results.driver.driving === true,
+  'the player was no longer driving after three lengths of the yard');
+check('the driver stays on the surface', results.driver.world === 'outside',
+  `the player ended up in the ${results.driver.world}`);
+
 // Braking, then reverse.
 step('braking');
 results.braking = await page.evaluate(() => {
   const ls = globalThis.__ls;
+  // From a known place, like the tests above it. This step used to start
+  // wherever the steering test happened to leave the car - which was against
+  // something, some runs, so it reversed into it and the numbers described a
+  // collision rather than a brake pedal.
+  const car = ls.game.vehicles[0];
+  car.state.x = -2;
+  car.state.z = 0;
+  car.state.heading = -Math.PI / 2;
+  car.state.speed = 0;
+  ls.simulate(4);
+  ls.pedals(1, 0);
+  ls.simulate(90);
   ls.pedals(0, 0, true);
   ls.simulate(180);
   const stopped = ls.driving().speed;
@@ -159,14 +221,23 @@ results.braking = await page.evaluate(() => {
   const reversing = ls.driving().speed;
   ls.pedals(0, 0);
   ls.simulate(120);
-  return { stopped, reversing, coasted: ls.driving().speed };
+  const coasted = ls.driving().speed;
+  ls.simulate(600);
+  return { stopped, reversing, coasted, rested: ls.driving().speed };
 });
 check('handbrake stops it', Math.abs(results.braking.stopped) < 0.05,
   `still doing ${results.braking.stopped} m/s on the handbrake`);
 check('reverses', results.braking.reversing < -1,
   `reverse reached ${results.braking.reversing} m/s`);
-check('coasts to a stop', Math.abs(results.braking.coasted) < 0.8,
-  `still doing ${results.braking.coasted} m/s after two seconds off the pedals`);
+// Rolling resistance is 0.82 m/s^2 - a coasting car takes its time, and it
+// should. What matters is that it is slowing the whole way and that it does
+// come to rest rather than idling along for ever.
+check('slows off the pedals',
+  Math.abs(results.braking.coasted) < Math.abs(results.braking.reversing) - 1.5,
+  `went from ${results.braking.reversing} to ${results.braking.coasted} m/s in two seconds `
+  + 'with nothing pressed');
+check('coasts to a stop', Math.abs(results.braking.rested) < 0.05,
+  `still doing ${results.braking.rested} m/s after twelve seconds off the pedals`);
 
 // The fence is solid to a car. Aim it at the perimeter and hold the throttle
 // down for long enough to be well past it, then check it is still inside.
@@ -193,6 +264,15 @@ check('the fence stops a car', results.fence.x > 12 && results.fence.x < 20,
 step('gate');
 results.gate = await page.evaluate(async () => {
   const ls = globalThis.__ls;
+  // Back on the surface and back in the car. The fence test drives into a
+  // steel fence at seventy for ten seconds, which is enough repeated impact to
+  // knock the driver out - and waking up in the shelter stops the surface
+  // updating, so a gate test run from there measures a gate that is not
+  // running. That is the game behaving correctly and the harness having
+  // crashed the car once too often.
+  ls.surface();
+  ls.drive(0);
+  ls.simulate(4);
   const car = ls.game.vehicles[0];
   const park = (z, frames = 420) => {
     car.state.x = 0;
@@ -254,6 +334,7 @@ check('it closes behind you', results.gate.behind < 0.02,
 step('gate on foot');
 results.gateWalk = await page.evaluate(async () => {
   const ls = globalThis.__ls;
+  ls.surface();
   const car = ls.game.vehicles[0];
   ls.park();
   ls.simulate(4);

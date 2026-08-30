@@ -623,11 +623,44 @@ export function createGameWorld(assets, options = {}) {
     return Math.abs(along) < trip;
   }
 
+  // The rest of the loop. The tracked-position reading above belongs to the
+  // player, because only the player's approach needs a lead time - forty miles
+  // an hour crosses the whole sensing range in less time than the leaves take
+  // to run back. Everything else on the drive is read plainly.
+  //
+  // It has to be read at all, though, and it was not. The loop saw the player
+  // and nothing else, so the two men who come for the car arrived at a gate
+  // that would never open for them and did the only thing left: broke it. That
+  // happened in every game, about ninety seconds in, and a breached gate can
+  // never be shut again - so the compound's one defence was gone before the
+  // player had done anything, and the lock control on the gatepost had nothing
+  // to protect. Now the gate opens for them, and locking it is the thing that
+  // makes them break it.
+  function gateCrowd() {
+    for (const enemy of townEnemies?.agents || []) {
+      if (enemy.dead) continue;
+      const at = enemy.root.position;
+      if (Math.abs(at.x) < GATE_LANE && Math.abs(at.z - GATE_Z) < GATE_SENSE) return true;
+    }
+    // A parked lorry is not on the loop. A real induction loop reads metal
+    // crossing it, not metal standing near it, and both army trucks are parked
+    // within sensing range of the gate - so a proximity test alone would prop
+    // it open for good.
+    for (const vehicle of vehicles) {
+      const speed = Math.abs(vehicle.state?.speed || 0);
+      if (speed < 1) continue;
+      const trip = GATE_SENSE + Math.min(speed, 26) * GATE_LEAD;
+      if (Math.abs(vehicle.state.x) < GATE_LANE
+        && Math.abs(vehicle.state.z - GATE_Z) < trip) return true;
+    }
+    return false;
+  }
+
   function updateGate(dt, subject) {
     if (!gateLeaves.length) return;
     // Read the loop even when the gate is locked, so the tracked position
     // stays current and unlocking it does not register a phantom sprint.
-    const sensed = gateSenses(dt, subject);
+    const sensed = gateSenses(dt, subject) || gateCrowd();
     const near = gateMode !== 'lock' && sensed;
     // Hold it open for a beat after the drive clears, so it does not start
     // shutting on the back bumper of a car that is still in the throat.
@@ -2254,20 +2287,21 @@ export function createGameWorld(assets, options = {}) {
   // Which car, if any, the player is sitting in. Not the same question as
   // which car is occupied: the one the two men stole is occupied as well, and
   // it is the one most likely to run him down.
+  //
+  // This used to be inferred - listen for the request that comes off a door
+  // handle, then watch that car's occupied flag to work out when he got out
+  // again. It was wrong in both directions. Getting in by any other route left
+  // the world believing he was on foot, and since a driver's body rides at the
+  // centre of his own car, his own bumper then ran him over once every eight
+  // tenths of a second: a drive across the yard cost seventy per cent of his
+  // health and a second one knocked him out at the wheel. Now the game says
+  // who is driving what, and this listens.
   let playerDriving = null;
-  let playerSeatedIn = false;
-  window.addEventListener('lostsignal:drive', (event) => {
+  window.addEventListener('lostsignal:driving', (event) => {
     playerDriving = event.detail?.vehicle || null;
-    playerSeatedIn = false;
   });
 
   function bystandersFor(vehicle) {
-    if (playerDriving) {
-      // The event fires on the door handle, a frame before the seat is taken,
-      // so wait to see him in it before believing he has got out of it.
-      if (playerDriving.state.occupied) playerSeatedIn = true;
-      else if (playerSeatedIn) { playerDriving = null; playerSeatedIn = false; }
-    }
     const out = [];
     // Every car except the one he is driving. Inside it is the one place a car
     // cannot run you over.
@@ -2348,10 +2382,11 @@ export function createGameWorld(assets, options = {}) {
     sky.update(dt, outsideLive ? outsideViewer : null);
     creatures.update(dt, world, playerPosition);
     residents?.update(dt, world, playerPosition);
-    // The attackers keep going, and stay drawn, for whoever is watching -
-    // which on the camera desk is a lens on a pole three hundred metres from
-    // the player's body.
-    townEnemies.update(dt, playerPosition, outsideLive, outsideViewer);
+    // Kept going and kept drawn for whoever is watching - which on the camera
+    // desk is a lens on a pole three hundred metres from the player's body -
+    // but only treated as having the player in front of them when the player
+    // is actually standing on the surface.
+    townEnemies.update(dt, playerPosition, outsideLive, outsideViewer, world === 'outside');
     if (outsideLive) {
       for (const building of townBuildings) {
         const reach = building.userData.renderDistance || 900;

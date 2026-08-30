@@ -68,6 +68,17 @@ const ASSAULT_PLANS = Object.freeze([
 // How long the first man at the fence waits for the second before going in
 // on his own.
 const RALLY_PATIENCE = 14;
+// How long a man goes on waiting once his partner is visibly still closing on
+// him, and the ceiling on the whole wait. A fixed patience is the wrong shape:
+// it has to be short enough that a dead partner does not strand the attack and
+// long enough that a slow one is not abandoned, and no single number is both.
+// Fourteen seconds was fine while the gate had to be broken down, because
+// breaking it took long enough for the second man to catch up regardless. Once
+// the gate started opening for them that free rendezvous went away, and the
+// slowest pairing in the game - a bounding advance behind a creep - boarded
+// nineteen seconds apart again.
+const RALLY_HOLD = 7;
+const RALLY_LIMIT = 48;
 // How long a round keeps a man behind something, and how long a shout from
 // his mate keeps him looking over his shoulder.
 const SUPPRESSED_HIT = 3.6;
@@ -495,6 +506,8 @@ class TownEnemy {
     // Seconds left flat on the deck after a car hit him.
     this.downed = 0;
     this.rallyTimer = 0;
+    this.rallyWaited = 0;
+    this.rallyGap = Infinity;
     // Seconds of keeping his head down, seconds of being jumpy, and whether
     // he is the last one left.
     this.suppressed = 0;
@@ -1101,6 +1114,8 @@ class TownEnemy {
       if (this.followAssaultLegs(this.assaultRoute, 'assaultIndex', roadSpeed, dt)) {
         this.state = 'assault_rally';
         this.rallyTimer = RALLY_PATIENCE;
+        this.rallyWaited = 0;
+        this.rallyGap = Infinity;
         this.target = null;
         this.destination = null;
       }
@@ -1119,6 +1134,14 @@ class TownEnemy {
       // the end of the world is not a plan.
       this.holding = 'rally';
       this.rallyTimer -= dt;
+      this.rallyWaited += dt;
+      // A partner who is still getting closer is worth waiting for. The
+      // patience is for one who has stopped coming - dead, gone to ground,
+      // stuck on something - and a man who is merely slow should not be
+      // abandoned at the fence for being slow.
+      if (this.rallyClosing() && this.rallyWaited < RALLY_LIMIT) {
+        this.rallyTimer = Math.max(this.rallyTimer, RALLY_HOLD);
+      }
       if (this.squad) this.squad.rallied?.add(this.root.name);
       this.play('stand', 1, .16);
       if (this.mission.gateTarget) this.face(this.mission.gateTarget, dt, 2.6);
@@ -1505,6 +1528,22 @@ class TownEnemy {
     }
   }
 
+  // Is the man I am waiting for still getting nearer? Measured against the
+  // closest he has ever been, so a partner who stalls, doubles back or starts
+  // walking in circles stops counting as on his way.
+  rallyClosing() {
+    const others = (this.squad?.members || []).filter((agent) => agent !== this
+      && !agent.dead && !this.squad.rallied?.has(agent.root.name));
+    if (!others.length) return false;
+    let gap = Infinity;
+    for (const other of others) {
+      gap = Math.min(gap, this.root.position.distanceTo(other.root.position));
+    }
+    const closing = gap < (this.rallyGap ?? Infinity) - 0.05;
+    this.rallyGap = Math.min(gap, this.rallyGap ?? Infinity);
+    return closing;
+  }
+
   // Is everybody who is still coming actually here?
   squadRallied() {
     if (this.soloed || !this.squad?.rallied) return true;
@@ -1542,7 +1581,17 @@ class TownEnemy {
   // eyes normally, a CCTV camera when he is watching one from the bunker.
   // Only drawing and dormancy key off it; every decision still keys off the
   // real player, because that is who they are actually reacting to.
-  update(dt, playerPosition, active, viewer = playerPosition) {
+  // `active` means the surface is being simulated and drawn - which, since the
+  // cameras started keeping it awake, is true while the player is sitting at a
+  // desk underground. `present` is the different question of whether the
+  // player is actually out here to be attacked. They used to be the same flag,
+  // and the surface then ran with a player who was two floors down: the two of
+  // them stood in the yard swinging at empty air, because the shelter is
+  // directly beneath the compound and a man at the camera desk is four metres
+  // from the drive in plain coordinates. It stopped the theft dead - the
+  // driver never reached his own car - and the only way to see it was to watch
+  // the cameras, which is the one thing that caused it.
+  update(dt, playerPosition, active, viewer = playerPosition, present = active) {
     dt = Math.min(dt, 0.05);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.stateTimer = Math.max(0, this.stateTimer - dt);
@@ -1561,9 +1610,8 @@ class TownEnemy {
       return;
     }
 
-    const distance = this.root.position.distanceTo(playerPosition);
-    const viewDistance = viewer === playerPosition
-      ? distance : this.root.position.distanceTo(viewer);
+    const distance = present ? this.root.position.distanceTo(playerPosition) : Infinity;
+    const viewDistance = this.root.position.distanceTo(viewer);
     if (this.assaulting) {
       // Inside the car they are not standing in the yard. The body still
       // exists and still moves with the car, so it can still be shot at.
@@ -1860,14 +1908,25 @@ export function createTownEnemies({ scene, colliders, assets, entries,
     agents.push(agent);
     squad.members.push(agent);
   }
+  let held = false;
   return {
     agents,
     navigator,
     plans: () => agents.map((agent) => ({ name: agent.root.name, plan: agent.plan.key })),
     roots: agents.map((agent) => agent.root),
-    update(dt, playerPosition, active = true, viewer = playerPosition) {
-      for (const agent of agents) agent.update(dt, playerPosition, active, viewer);
+    update(dt, playerPosition, active = true, viewer = playerPosition, present = active) {
+      if (held) return;
+      for (const agent of agents) {
+        agent.update(dt, playerPosition, active, viewer, present);
+      }
     },
+    // Stop the clock on the attack. A harness measuring a gate, a car door or
+    // a set of pedals is measuring a mechanism, and a mechanism cannot be
+    // measured in a compound that is being overrun around it: half the driving
+    // suite was failing because by the time it reached the parked car, the
+    // parked car had been stolen and the gate it was checking had been driven
+    // through.
+    hold(on = true) { held = !!on; return held; },
     down(root) { return root?.userData?.enemyAgent?.kill?.() ?? false; },
     // So the shooting code can tell the man it just hit.
     agentFor(root) {
