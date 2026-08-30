@@ -336,16 +336,68 @@ function prepare(root, options = {}) {
   return root;
 }
 
-async function loadModel(url, options = {}) {
-  const gltf = await loader.loadAsync(url);
-  gltf.scene = options.legacyOrientation === false ? gltf.scene : orientToYUp(gltf.scene);
-  prepare(gltf.scene, options);
-  return gltf;
+// Ninety-odd files have to arrive over somebody's network before the shelter
+// can open, and one of them not arriving used to be the end of it: SHELTER
+// STARTUP FAILED, and the reason given was a 503 on an aeroplane parked four
+// hundred metres from anything the player was about to do.
+//
+// A 503 is Service Unavailable - a content delivery network saying "not right
+// now", which is the most transient answer there is. So ask again. Three more
+// times, backing off, with a cache-buster on the retries so an intermediate
+// cache cannot keep handing back the same refusal it just made up.
+const RETRIES = 3;
+const RETRY_WAIT = 400;
+
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+async function fetchModel(url, attempt) {
+  // Only the retries carry the parameter: the first, and almost always only,
+  // request stays a plain URL that the CDN can serve from its edge cache.
+  return loader.loadAsync(attempt ? `${url}?attempt=${attempt}` : url);
 }
+
+async function loadModel(url, options = {}) {
+  let last = null;
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    try {
+      const gltf = await fetchModel(url, attempt);
+      if (attempt) console.warn(`Asset ${url} arrived on attempt ${attempt + 1}.`);
+      gltf.scene = options.legacyOrientation === false ? gltf.scene : orientToYUp(gltf.scene);
+      prepare(gltf.scene, options);
+      return gltf;
+    } catch (error) {
+      last = error;
+      if (attempt === RETRIES) break;
+      await pause(RETRY_WAIT * (3 ** attempt));
+    }
+  }
+  throw last;
+}
+
+// What the world has been proved to run without.
+//
+// The rest of the compound is dressing, and the countryside is dressing by the
+// hundred: a hedge that did not download is a gap in a hedge, not a reason the
+// player cannot open the blast door. Every key here is checked by
+// qa/asset-outage.mjs, which boots the real game with that file answering 503
+// and asserts the shelter opens anyway - so this list is a record of what has
+// been tested, not a list of what somebody assumed would be fine.
+export const TOLERATED_ASSETS = new Set([
+  'rafAircraft', 'lightAircraft', 'airstrip',
+  'townBuildingRuin', 'townBuildingClinic', 'adventurer',
+  'deadTree', 'hedgerow', 'hedgerowFar', 'hedgeGap', 'scrub', 'grassTuft',
+  'fallenTree', 'spoilHeap', 'telegraphPole', 'farmWreck', 'fieldDebris',
+  'debrisField', 'rubble', 'remainsCovered', 'remainsSlumped', 'wreckCar',
+]);
 
 async function loadSet(entries, assets, onItem, options = {}) {
   await Promise.all(entries.map(async ([key, url]) => {
-    assets[key] = await loadModel(url, options);
+    try {
+      assets[key] = await loadModel(url, options);
+    } catch (error) {
+      if (!TOLERATED_ASSETS.has(key)) throw error;
+      console.warn(`Asset ${key} did not download; the world goes up without it.`, error);
+    }
     onItem(key);
   }));
 }
