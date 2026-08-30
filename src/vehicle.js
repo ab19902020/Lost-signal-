@@ -245,52 +245,208 @@ export const ESCORT_SPEC = Object.freeze({
 
 // The Bedford in the compound. Long, wide, tall, slow and geared like a lorry:
 // it will not out-run anything, but nothing it hits is going to stop it.
+//
+// Every dimension here is read off the rigged model rather than off a
+// specification sheet, because what the controller has to agree with is the
+// thing on the screen. The first pass at this inherited the Escort's numbers
+// wholesale and got two of them badly wrong: a wheelbase 17 cm shorter than
+// the truck's, which made the steering geometry scrub, and a driver's seat on
+// the right - the Bedford is left-hand drive, so the player sat in the
+// passenger seat looking at a steering wheel a metre away, and both men who
+// stole it queued at the wrong door.
+//
+// The rear pair is a bogie, so the wheelbase that matters for steering is from
+// the front axle to the middle of the two behind it, not to the last one.
 export const TRUCK_SPEC = Object.freeze({
   ...ESCORT_SPEC,
-  halfLength: 3.55, halfWidth: 1.32,
+  halfLength: 3.55, halfWidth: 1.31,
   probeZ: Object.freeze([-2.40, -0.8, 0.8, 2.40]), probeRadius: 1.26,
-  wheelbase: 4.05, track: 2.05, wheelRadius: 0.54,
+  wheelbase: 4.22, track: 2.06, wheelRadius: 0.531,
   topSpeed: 24.0, reverseSpeed: 6.0, engine: 3.4, brake: 8.5,
   drag: 0.0030, roll: 1.35,
   gearLimits: Object.freeze([5.0, 9.0, 14.0, 19.0, 24.0]),
   gearTorque: Object.freeze([1.30, 1.05, 0.82, 0.62, 0.46]),
   maxSteer: 0.52, gripSpeed: 6.0,
-  eye: Object.freeze([0.62, 2.00, -0.55]), door: Object.freeze([1.95, 0, -0.55]),
-  hullMinY: 0.20, hullMaxY: 2.95,
+  // Behind and above the wheel, which sits at (-0.37, 1.81, -1.58): high in a
+  // cab whose roof rail is at 2.30, and on the left, where the wheel is.
+  eye: Object.freeze([-0.42, 2.12, -1.16]), door: Object.freeze([-1.95, 0, -1.16]),
+  hullMinY: 0.20, hullMaxY: 2.99,
   glass: false, cabin: false, lamps: false,
 });
 
 // --- Rigging the supplied truck --------------------------------------------
 //
-// The Bedford is a good model with sensible parts in it - a steering wheel, a
-// cab, and eight cylinders that are four wheels and their hubs - but nothing
-// is named the way the vehicle controller expects, and its length runs along X
-// while everything that drives in this game drives down -Z.
+// The Bedford is in some ways a better model than the Escort: six wheels in
+// named groups that say front, middle and back, a steering linkage, a steering
+// wheel in the cab. What it does not share is the convention. It is authored
+// nose-down-X, and everything that drives in this game drives down -Z.
 //
-// So: turn it, size it, and find the wheels. The wheels are found by shape
-// rather than by name, because the names it does have are Cylinder002 and
-// Cylinder008 and there is nothing in those to trust. A road wheel is a disc -
-// thin across the vehicle, round in the other two axes - sitting away from the
-// centreline and away from the middle of the wheelbase, and nothing else on a
-// lorry is shaped remotely like that.
+// The first version of this turned it by shape alone - longest horizontal axis
+// is the chassis, so give it a quarter turn - and that is half an answer. The
+// long axis says which way a lorry lies. It says nothing whatever about which
+// end of it is the front, and the quarter turn it picked put the nose at +Z.
+// The result was a four-tonne truck of exactly the right shape, the right size
+// and the right way up, which drove away tail-first with its steering on the
+// back axle. Nothing in the code read as wrong. You had to sit in it.
+//
+// So the nose is found rather than assumed, and found twice over: the model
+// names its own axles, and failing names, the front axle is the one with the
+// shorter overhang beyond it, which is how every lorry ever built is laid out.
 const _rigBox = new THREE.Box3();
 const _rigSize = new THREE.Vector3();
 const _rigCentre = new THREE.Vector3();
+const _rigVertex = new THREE.Vector3();
+const _rigDir = new THREE.Vector3();
+const _rigTurn = new THREE.Quaternion();
+
+const WHEEL_WORD = /wheel/i;
+const SIDE_WORD = /left|right/i;
+// Front first: the order is the order they sit on the chassis.
+const AXLE_WORDS = [/front/i, /middle|mid\b/i, /back|rear/i];
+
+// Every road wheel is the same shape wherever it is bolted: a disc, thin
+// across the vehicle and round in the other two axes, low down, and out at the
+// edge of the body. Each of those is doing work here. A steering linkage is
+// thin and low and outboard but not round; a cab bulkhead is round and thin
+// but neither low nor outboard. Take any one test away and something that is
+// not a wheel gets spun.
+function roadWheels(root) {
+  _rigBox.setFromObject(root);
+  const floor = _rigBox.min.y;
+  const height = Math.max(0.5, _rigBox.max.y - _rigBox.min.y);
+  const body = _rigBox.getCenter(new THREE.Vector3());
+  const span = _rigBox.getSize(new THREE.Vector3());
+  const found = [];
+  root.traverse((part) => {
+    if (!part.isMesh) return;
+    // A wheel and its hub are two meshes and they have to turn together, so
+    // what is collected is the outermost node that is only ever this wheel.
+    let node = part;
+    while (node.parent && node.parent !== root
+      && WHEEL_WORD.test(node.parent.name || '')) node = node.parent;
+    if (found.some((disc) => disc.node === node)) return;
+    _rigBox.setFromObject(node);
+    _rigBox.getSize(_rigSize);
+    _rigBox.getCenter(_rigCentre);
+    const thinX = _rigSize.x < Math.min(_rigSize.y, _rigSize.z) * 0.75;
+    const thinZ = _rigSize.z < Math.min(_rigSize.x, _rigSize.y) * 0.75;
+    if (thinX === thinZ) return;
+    const axis = thinX ? 'x' : 'z';
+    const across = thinX ? _rigSize.z : _rigSize.x;
+    if (Math.abs(_rigSize.y - across) > Math.max(_rigSize.y, across) * 0.35) return;
+    if (_rigSize.y < height * 0.20) return;
+    if (_rigCentre.y - floor > height * 0.40) return;
+    if (Math.abs(_rigCentre[axis] - body[axis]) < span[axis] * 0.20) return;
+    found.push({ node, axis, x: _rigCentre.x, z: _rigCentre.z });
+  });
+  return found;
+}
+
+/** Which axle a node says it is on, walking up for an ancestor that says so. */
+function axleIndex(node, root) {
+  for (let up = node; up && up !== root; up = up.parent) {
+    const name = up.name || '';
+    if (!WHEEL_WORD.test(name) || !SIDE_WORD.test(name)) continue;
+    const at = AXLE_WORDS.findIndex((word) => word.test(name));
+    if (at >= 0) return at;
+  }
+  return -1;
+}
+
+// Wrap a disc in a group whose local Z is the disc's own axis, so the thing
+// can be spun about it. The controller turns a steering wheel with
+// rotation.z, which is true of the Escort's because the Escort's was built
+// here; this is what makes it true of a wheel nobody in this codebase
+// modelled, on a column raked at whatever angle its author liked.
+function alignSpinner(disc, root, name) {
+  const position = disc.geometry?.attributes?.position;
+  const parent = disc.parent;
+  if (!position || !parent) return null;
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(disc.matrixWorld);
+  // The axis of a disc is the direction its points are least spread along.
+  // Sampling the sphere beats reaching for an eigen solver for one hoop.
+  const SAMPLES = 128;
+  let best = null;
+  for (let i = 0; i < SAMPLES; i++) {
+    const y = 1 - (i / (SAMPLES - 1)) * 2;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const turn = i * Math.PI * (3 - Math.sqrt(5));
+    _rigDir.set(Math.cos(turn) * ring, y, Math.sin(turn) * ring);
+    let low = Infinity;
+    let high = -Infinity;
+    for (let at = 0; at < position.count; at++) {
+      const reach = _rigVertex.fromBufferAttribute(position, at).applyMatrix4(toRoot).dot(_rigDir);
+      if (reach < low) low = reach;
+      if (reach > high) high = reach;
+    }
+    if (!best || high - low < best.spread) best = { spread: high - low, axis: _rigDir.clone() };
+  }
+  if (!best) return null;
+  // Point it at the driver, which is the way the Escort's own wheel faces, so
+  // that one expression turns both of them the same way round.
+  if (best.axis.z < 0) best.axis.negate();
+  // The axis was measured in the vehicle's frame; the group lives in the
+  // wheel's parent, which on a supplied model is some group of the author's.
+  const intoParent = parent.getWorldQuaternion(new THREE.Quaternion()).invert()
+    .multiply(root.getWorldQuaternion(_rigTurn));
+  const spinner = new THREE.Group();
+  spinner.name = name;
+  spinner.position.copy(disc.position);
+  spinner.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1),
+    best.axis.applyQuaternion(intoParent).normalize());
+  parent.add(spinner);
+  spinner.add(disc);
+  disc.position.set(0, 0, 0);
+  disc.quaternion.premultiply(spinner.quaternion.clone().invert());
+  return spinner;
+}
 
 export function rigSuppliedTruck(root, spec) {
   root.updateMatrixWorld(true);
-  _rigBox.setFromObject(root);
-  _rigBox.getSize(_rigSize);
-  // Longest horizontal axis is the chassis; a lorry is not wider than it is
-  // long, so here that reading is safe.
-  const alongX = _rigSize.x >= _rigSize.z;
 
   const visual = new THREE.Group();
   visual.name = 'Truck_Visual';
   for (const child of [...root.children]) visual.add(child);
   root.add(visual);
-  if (alongX) visual.rotation.y = Math.PI / 2;
   root.updateMatrixWorld(true);
+
+  const discs = roadWheels(visual);
+  if (discs.length < 4) return null;
+
+  // The axle line is the direction the hubs are strung out along, not the
+  // bounding box - whose long axis on a lorry is the load bed, and on some
+  // models the wing mirrors. Every wheel is thin across the vehicle, so the
+  // wheels themselves say which way is along.
+  const sideways = discs.filter((disc) => disc.axis === 'x').length > discs.length / 2 ? 'x' : 'z';
+  const along = sideways === 'x' ? 'z' : 'x';
+  const lengthwise = (disc) => disc[along];
+
+  // Which end is the nose. Named axles answer it outright. Otherwise it is the
+  // end whose outermost axle sits nearest the end of the bodywork, because a
+  // lorry's front overhang is short and its rear overhang is not.
+  const named = discs.map((disc) => axleIndex(disc.node, visual));
+  const namedAll = named.every((at) => at >= 0) && Math.max(...named) > Math.min(...named);
+  let noseSign;
+  if (namedAll) {
+    const frontmost = Math.min(...named);
+    const mean = (want) => {
+      const on = discs.filter((_, at) => (named[at] === frontmost) === want);
+      return on.reduce((sum, disc) => sum + lengthwise(disc), 0) / Math.max(1, on.length);
+    };
+    noseSign = Math.sign(mean(true) - mean(false)) || -1;
+  } else {
+    _rigBox.setFromObject(visual);
+    const low = Math.min(...discs.map(lengthwise));
+    const high = Math.max(...discs.map(lengthwise));
+    noseSign = (low - _rigBox.min[along]) <= (_rigBox.max[along] - high) ? -1 : 1;
+  }
+
+  // Turn the nose onto -Z. Written as a heading, so a model that is not axis
+  // aligned to begin with lands square as well.
+  visual.rotation.y = Math.atan2(along === 'x' ? noseSign : 0, along === 'z' ? -noseSign : 0);
+  root.updateMatrixWorld(true);
+
   _rigBox.setFromObject(visual);
   _rigBox.getSize(_rigSize);
   visual.scale.setScalar((spec.halfLength * 2) / Math.max(0.5, _rigSize.z));
@@ -302,44 +458,49 @@ export function rigSuppliedTruck(root, spec) {
   visual.position.z -= _rigCentre.z - root.position.z;
   root.updateMatrixWorld(true);
 
-  // Find the discs.
-  const candidates = [];
-  visual.traverse((part) => {
-    if (!part.isMesh) return;
-    _rigBox.setFromObject(part);
-    _rigBox.getSize(_rigSize);
+  // Name the wheels for where they have ended up rather than for what the
+  // author called them: the front axle is at -Z because the nose is, and the
+  // driver's right is +X, because that is what +X is when you face -Z.
+  const placed = discs.map((disc) => {
+    _rigBox.setFromObject(disc.node);
     _rigBox.getCenter(_rigCentre);
-    const thin = _rigSize.x < _rigSize.y * 0.75 && _rigSize.x < _rigSize.z * 0.75;
-    const round = Math.abs(_rigSize.y - _rigSize.z) < Math.max(_rigSize.y, _rigSize.z) * 0.35;
-    const outboard = Math.abs(_rigCentre.x - root.position.x) > spec.track * 0.25;
-    const fore = Math.abs(_rigCentre.z - root.position.z) > spec.wheelbase * 0.20;
-    if (thin && round && outboard && fore && _rigSize.y > spec.wheelRadius) {
-      candidates.push({ part, x: _rigCentre.x, z: _rigCentre.z, y: _rigCentre.y,
-        radius: Math.max(_rigSize.y, _rigSize.z) * 0.5 });
+    return {
+      node: disc.node,
+      x: _rigCentre.x - root.position.x,
+      z: _rigCentre.z - root.position.z,
+      radius: (_rigBox.max.y - _rigBox.min.y) * 0.5,
+    };
+  }).sort((a, b) => a.z - b.z);
+  // An axle is a pair at the same station down the chassis: anything within a
+  // wheel's radius of the last one is on it.
+  const axles = [];
+  for (const wheel of placed) {
+    const axle = axles[axles.length - 1];
+    if (axle && Math.abs(wheel.z - axle.z) < wheel.radius) { axle.wheels.push(wheel); continue; }
+    axles.push({ z: wheel.z, wheels: [wheel] });
+  }
+  const tags = axles.length > 2 ? ['F', 'M', 'R'] : ['F', 'R'];
+  axles.forEach((axle, at) => {
+    const tag = tags[Math.min(at, tags.length - 1)];
+    for (const wheel of axle.wheels) {
+      wheel.node.name = `Car_Wheel_${wheel.x < 0 ? 'L' : 'R'}${tag}`;
     }
   });
-  if (candidates.length < 4) return null;
-  // Four corners: nearest disc to each.
-  const corners = [['LF', -1, -1], ['RF', 1, -1], ['LR', -1, 1], ['RR', 1, 1]];
-  const taken = new Set();
-  for (const [tag, sideX, sideZ] of corners) {
-    let best = null;
-    for (const disc of candidates) {
-      if (taken.has(disc)) continue;
-      const score = -(Math.sign(disc.x - root.position.x) === sideX ? 1 : 0)
-        - (Math.sign(disc.z - root.position.z) === sideZ ? 1 : 0);
-      const distance = Math.hypot(disc.x - root.position.x - sideX * spec.track * 0.5,
-        disc.z - root.position.z - sideZ * spec.wheelbase * 0.5);
-      const total = score * 4 + distance;
-      if (!best || total < best.total) best = { disc, total };
-    }
-    if (!best) break;
-    taken.add(best.disc);
-    // Everything that shares the disc's parent moves with it: a wheel and its
-    // hub are two meshes and they have to turn together.
-    const group = best.disc.part.parent === visual ? best.disc.part : best.disc.part.parent;
-    group.name = `Car_Wheel_${tag}`;
-  }
+
+  const hoop = findNamed(visual, 'steering_wheel') || findNamed(visual, 'SteeringWheel');
+  if (hoop?.isMesh) alignSpinner(hoop, root, 'Car_SteeringWheel');
+
+  // What the rig believed, kept for the harness that checks it drove the right
+  // way out of the yard.
+  root.userData.rig = {
+    wheels: placed.length,
+    axles: axles.length,
+    wheelRadius: placed.reduce((sum, w) => sum + w.radius, 0) / placed.length,
+    wheelbase: axles.length ? Math.abs(axles[axles.length - 1].z - axles[0].z) : 0,
+    track: Math.max(...placed.map((w) => Math.abs(w.x))) * 2,
+    along, noseSign, named: namedAll,
+    steeringWheel: !!hoop,
+  };
   return visual;
 }
 
@@ -381,7 +542,10 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // on the way in: turned to face down -Z, scaled, and its wheels named.
   if (rig) rig(root, spec);
   const shell = findNamed(root, 'Car_Shell') || root;
-  const wheels = ['LF', 'RF', 'LR', 'RR']
+  // Four on a car, six on the Bedford. The first two are the steered pair and
+  // everything after them just rolls, so a middle axle costs one more entry
+  // here and nothing else anywhere.
+  const wheels = ['LF', 'RF', 'LM', 'RM', 'LR', 'RR']
     .map((tag) => findNamed(root, `Car_Wheel_${tag}`));
 
   // Each wheel gets two independent transform layers. The outer front layer

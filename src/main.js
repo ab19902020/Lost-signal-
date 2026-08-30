@@ -472,6 +472,27 @@ async function prepare() {
           for (const held of codes) keys[held] = false;
         },
         carry: () => game.playerCharacter?.carry?.() ?? null,
+        // Freeze the attack, for harnesses measuring a mechanism rather than a
+        // siege: a gate, a car door and a set of pedals all read differently
+        // in a compound that is being overrun around them.
+        peace: (on = true) => game.townEnemies?.hold?.(on) ?? null,
+        // Put the player back on the surface, on their feet, in one piece.
+        // Several harnesses crash the car deliberately, and enough of that
+        // knocks the driver out and wakes them in the shelter, which is right
+        // for the game and useless for a test that has not finished measuring
+        // the yard.
+        surface: () => {
+          leaveVehicle(false);
+          health = 100;
+          updateHealth();
+          if (currentWorld !== 'outside') {
+            currentWorld = 'outside';
+            const spawn = game.setWorld('outside');
+            body.teleport(spawn.x, spawn.y, spawn.z);
+            setShotSpace('outside');
+          }
+          return currentWorld;
+        },
         // Hold inputs down and let the game run its own loop, rather than
         // stepping it by hand. A sprint photographed between two synthetic
         // frames is not the sprint the player sees.
@@ -602,6 +623,55 @@ async function prepare() {
           speed: +v.state.speed.toFixed(3),
           occupied: v.state.occupied,
         })),
+        // What the rig actually built, measured in the body's own frame. The
+        // harness needs landmarks it can trust independently of the controller
+        // - where the cab is, where the steered wheels are - because the way a
+        // vehicle goes backwards is by agreeing with itself about the wrong
+        // direction.
+        vehicleRig: (index = 0) => {
+          const vehicle = (game.vehicles || [])[index];
+          if (!vehicle) return null;
+          const root = vehicle.root;
+          const spin = root.rotation.y;
+          root.rotation.y = 0;
+          root.updateMatrixWorld(true);
+          const local = (object) => {
+            if (!object) return null;
+            const box = new THREE.Box3().setFromObject(object);
+            const at = box.getCenter(new THREE.Vector3());
+            return [+(at.x - root.position.x).toFixed(3), +(at.y - root.position.y).toFixed(3),
+              +(at.z - root.position.z).toFixed(3), +((box.max.y - box.min.y) / 2).toFixed(3)];
+          };
+          const body = new THREE.Box3().setFromObject(root);
+          const out = {
+            name: root.name,
+            body: [+(body.max.x - body.min.x).toFixed(2), +(body.max.y - body.min.y).toFixed(2),
+              +(body.max.z - body.min.z).toFixed(2)],
+            eye: vehicle.spec.eye, door: vehicle.spec.door,
+            wheelbase: vehicle.spec.wheelbase, wheelRadius: vehicle.spec.wheelRadius,
+            steeringWheel: local(root.getObjectByName('Car_SteeringWheel')),
+            wheels: {},
+          };
+          for (const tag of ['LF', 'RF', 'LM', 'RM', 'LR', 'RR']) {
+            const node = root.getObjectByName(`Car_Wheel_${tag}`);
+            const wheel = local(node);
+            if (!wheel) continue;
+            // Whether this corner is steered is a fact about the rig, not
+            // about where the tyre happens to have rolled to: a polygonal
+            // wheel's bounding box moves as it spins, so measuring lock off
+            // positions reads every wheel as steered a little.
+            let steer = null;
+            for (let up = node; up && up !== root; up = up.parent) {
+              if (/_Steer$/.test(up.name || '')) { steer = +up.rotation.y.toFixed(4); break; }
+            }
+            out.wheels[tag] = wheel;
+            out.steer = out.steer || {};
+            out.steer[tag] = steer;
+          }
+          root.rotation.y = spin;
+          root.updateMatrixWorld(true);
+          return out;
+        },
         drive: (index = 0) => enterVehicle((game.vehicles || [])[index]),
         driving: () => (driving ? {
           name: driving.root.name,
@@ -734,7 +804,8 @@ async function prepare() {
           reloading, weaponKey, wheelOpen, touchSprint: touch.sprint, touchMode,
           cameraMode, effectiveCameraMode: effectiveCameraMode(), cameraBoom,
           helpOpen: helpOpen(), driving: !!driving, flying: !!flying, seated: !!seated,
-          keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed }),
+          keys: Object.keys(keys).filter(k => keys[k]), speed: body.horizontalSpeed,
+          world: currentWorld, health }),
         boxes: (world = currentWorld) => game.colliders[world].boxes.map(({ box, climbable }) => ({
           climbable,
           min: box.min.toArray().map(v => +v.toFixed(2)),
@@ -1182,6 +1253,10 @@ function enterWorld(name, facing, tilt) {
 // stands the player there.
 const _carPoint = new THREE.Vector3();
 
+function announceDriving(vehicle) {
+  window.dispatchEvent(new CustomEvent('lostsignal:driving', { detail: { vehicle } }));
+}
+
 function enterVehicle(vehicle) {
   if (!vehicle || driving || currentWorld !== 'outside') return false;
   // You cannot get into a car that is being driven away from you. Stop it
@@ -1208,6 +1283,14 @@ function enterVehicle(vehicle) {
   document.getElementById('sprintBtn').classList.remove('on');
   document.getElementById('crouchBtn').classList.remove('on');
   document.body.classList.add('driving');
+  // Say so, plainly. The surface used to work out who was driving what by
+  // watching the request that comes off the door handle and then watching the
+  // occupied flag to see when it stopped - which is fine until somebody gets
+  // into a car by any other route, at which point the world does not know the
+  // player is in it and the car runs him over. Repeatedly: the driver's body
+  // rides at the centre of his own car, so every eight tenths of a second his
+  // own bumper hit him, and a drive across the yard knocked him unconscious.
+  announceDriving(vehicle);
   // The chase camera starts behind the nose. The car's heading and the
   // player's yaw are the same number: both are measured off -Z.
   yaw = vehicle.heading;
@@ -1227,6 +1310,7 @@ function leaveVehicle(showMessage = true) {
   refreshWeaponView();
   vehicle.occupied = false;
   document.body.classList.remove('driving');
+  announceDriving(null);
   stopEngineAudio();
   body.teleport(step.x, step.y + 0.05, step.z);
   game.player.position.copy(body.position);
@@ -2156,6 +2240,14 @@ function collapse() {
   survival.food = Math.max(0, survival.food - 2);
   updateHealth();
   updateStats();
+  // Let go of whatever you were holding on to. Passing out at the wheel left
+  // the player in the shelter and still driving: the car stayed occupied, so
+  // nobody could get into it again, the pedals still worked from inside the
+  // bunker, and the surface stopped updating - no gate, no cameras, no two men
+  // walking up the road - because the game believed the player was underground
+  // and the surface only runs when somebody is on it.
+  leaveVehicle(false);
+  leaveSeat(false);
   currentWorld = 'bunker';
   const spawn = game.setWorld('bunker');
   body.teleport(spawn.x, spawn.y, spawn.z);
