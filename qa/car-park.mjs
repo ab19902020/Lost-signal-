@@ -42,8 +42,12 @@ const result = await page.evaluate(() => {
     const colliders = ls.game.colliders.outside;
     // The car's own test: a 0.82 m probe at ride height. Half a metre of grid
     // is finer than the gaps that matter.
+    // Each vehicle's own probe, not the Escort's. A four-tonne truck is half a
+    // metre wider on each side and a gap the car walks through is a gap the
+    // truck wedges in.
     const STEP = 0.5;
-    const free = (x, z) => !colliders.contains(x, z, 0.82, start.y + 0.30, start.y + 1.45);
+    const radius = vehicle.spec?.probeRadius ?? 0.82;
+    const free = (x, z) => !colliders.contains(x, z, radius, start.y + 0.30, start.y + 1.45);
     const key = (x, z) => `${Math.round(x / STEP)},${Math.round(z / STEP)}`;
     const seen = new Set();
     const queue = [[start.x, start.z]];
@@ -79,6 +83,7 @@ const result = await page.evaluate(() => {
     };
     out[vehicle.root.name] = {
       at: [+start.x.toFixed(1), +start.z.toFixed(1)],
+      probe: radius,
       parkedOnAWall: !free(start.x, start.z),
       doors,
       reachable: seen.size,

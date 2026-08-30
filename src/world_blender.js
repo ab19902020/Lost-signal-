@@ -7,7 +7,8 @@ import { buildArmory } from './armory.js';
 import { buildGarrison } from './garrison.js';
 import { createRange } from './range.js';
 import { createSky } from './sky.js';
-import { createVehicle, SEAT_HEIGHT, SEAT_X, SEAT_Z, CABIN_HEADROOM } from './vehicle.js';
+import { createVehicle, rigSuppliedTruck, TRUCK_SPEC, SEAT_HEIGHT, SEAT_X, SEAT_Z,
+  CABIN_HEADROOM } from './vehicle.js';
 import { createCarThief } from './car_thief.js';
 import { createAircraft } from './aircraft.js';
 import { createPlayerCharacter } from './player_character.js';
@@ -745,7 +746,7 @@ export function createGameWorld(assets, options = {}) {
   dress(assets.propPipes, [[-2.4, -20.8, 0], [-1.6, -21.4, 0]]);
 
   // Gate end: what came in and never went out again.
-  dress(assets.propTruck, [[6.8, 13.8, 3.02], [-6.8, 13.8, 3.02]]);
+  // The pair that used to stand here are vehicles now, built below.
   dress(assets.propPallet, [[10.6, 9.4, .2], [11.4, 10.1, 1.1]]);
   dress(assets.propPalletBroken, [[10.1, 11.0, 2.2]]);
   dress(assets.propWheels, [[12.4, 12.2, .3]]);
@@ -776,6 +777,22 @@ export function createGameWorld(assets, options = {}) {
     name: 'Ford_Escort_RS_Turbo', label: 'FORD ESCORT RS TURBO',
   });
   if (gateCar) vehicles.push(gateCar);
+
+  // The two army trucks in the compound. They were scenery; there is no reason
+  // for the only thing you can drive on a military site to be a hatchback.
+  // Both bays were chosen the same way the Escort's was: by asking the truck's
+  // own collision probe where a seven-metre lorry fits with room to pull out
+  // and both doors reachable. Parked where the scenery pair used to stand,
+  // their noses were in the perimeter fence and they could not move at all.
+  for (const [index, [x, z, heading]] of [[10.0, 6.0, 0], [-4.0, 6.0, 0]].entries()) {
+    const truck = createVehicle({
+      scene: outside, colliders: colliders.outside, assets, place, addInteraction,
+      position: [x, 0, z], heading,
+      name: `Army_Truck_${index + 1}`, label: 'BEDFORD MJ 4-TONNE',
+      asset: 'propTruck', spec: TRUCK_SPEC, rig: rigSuppliedTruck,
+    });
+    if (truck) vehicles.push(truck);
+  }
 
   // --- The airstrip -------------------------------------------------------
   // Four hundred metres of tarmac in the fields east of the compound, laid
