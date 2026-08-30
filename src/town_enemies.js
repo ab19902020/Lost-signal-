@@ -13,10 +13,10 @@ const ASSAULT_RENDER_DISTANCE = 230;
 // A man sitting in a car is smaller on screen than a man running at you, but
 // he is the one you are trying to shoot, so he is drawn a good way out.
 const RIDER_RENDER_DISTANCE = 190;
-const ASSAULT_RUN_SPEED = 3.35;
+const ASSAULT_RUN_SPEED = 4.2;
 const STRATEGIC_RUN_SPEED = 8.0;
 const PERSONALITY = Object.freeze({
-  black: Object.freeze({ courage: 0.24, patience: 1.25, pace: 0.92 }),
+  black: Object.freeze({ courage: 0.24, patience: 1.25, pace: 0.96 }),
   red: Object.freeze({ courage: 0.46, patience: 0.82, pace: 1.04 }),
 });
 
@@ -28,9 +28,17 @@ const PERSONALITY = Object.freeze({
 // A plan changes where they come from, how they move while they do it, and
 // what they do when the player turns up - so two playthroughs are not the same
 // afternoon twice.
+// How they come down the road differs; when they arrive does not.
+//
+// The paces used to run from 0.78 to 1.14, and over four hundred and seventy
+// metres of road that is the difference between arriving and arriving a good
+// half minute later. The variety is worth keeping - it is what makes two runs
+// feel different - but it belongs in the route and the manner, not in leaving
+// one man standing at the gate for twenty seconds waiting for his mate. The
+// spread is narrower now, and they rally before they go in.
 const ASSAULT_PLANS = Object.freeze([
   {
-    key: 'rush', lane: 0.0, pace: 1.14, bound: 0, standoff: 0,
+    key: 'rush', lane: 0.0, pace: 1.08, bound: 0, standoff: 0,
     contact: 'charge', label: 'straight up the middle at a run',
   },
   {
@@ -46,19 +54,27 @@ const ASSAULT_PLANS = Object.freeze([
     contact: 'cover', label: 'short rushes with a look between each',
   },
   {
-    key: 'patient', lane: 0.7, pace: 0.86, bound: 1, standoff: 26,
+    key: 'patient', lane: 0.7, pace: 0.94, bound: 1, standoff: 26,
     contact: 'cover', label: 'holds off and waits for the yard to go quiet',
   },
   {
-    key: 'creep', lane: -0.8, pace: 0.78, bound: 0, standoff: 0,
+    key: 'creep', lane: -0.8, pace: 0.92, bound: 0, standoff: 0,
     contact: 'cover', label: 'walks the whole way in and keeps to the edges',
   },
 ]);
 
 // Long enough that a plan is a plan rather than a twitch, short enough that a
 // bound reads as a decision.
+// How long the first man at the fence waits for the second before going in
+// on his own.
+const RALLY_PATIENCE = 14;
+// How long a round keeps a man behind something, and how long a shout from
+// his mate keeps him looking over his shoulder.
+const SUPPRESSED_HIT = 3.6;
+const SUPPRESSED_NEAR = 2.1;
+const WARY_SECONDS = 12;
 const BOUND_RUN = 2.6;
-const BOUND_LOOK = 1.1;
+const BOUND_LOOK = 0.7;
 // Travelled less than this in this long, while it had somewhere to be? Stuck.
 const STUCK_TRAVEL = 0.22;
 const STUCK_SECONDS = 0.9;
@@ -350,8 +366,20 @@ const SEAT_POSE = Object.freeze({
   restElbow: 0.95,
   adduct: 0.52,   // and both of them keep their elbows inside the car
 });
+// Where a seated man's joints belong, relative to each other: thighs level
+// with the hip, soles a shin's drop below the knee and on the floor pan.
+const SEAT_FIT = Object.freeze({ footBelowHip: 0.30 });
+// The thigh's direction, in the man's own frame: out along the seat and very
+// slightly up, which is what sitting in a car looks like.
+const SEAT_LEG = Object.freeze({ thighForward: 0.99, thighUp: 0.14 });
+const _legForward = new THREE.Vector3();
+const _legOut = new THREE.Vector3();
+const _legDown = new THREE.Vector3();
+const _legUp = new THREE.Vector3(0, 1, 0);
 const _seatPoint = new THREE.Vector3();
+const _fitPoint = new THREE.Vector3();
 const _crownPoint = new THREE.Vector3();
+const _firePoint = new THREE.Vector3();
 const _hingeFrom = new THREE.Vector3();
 const _hingeTo = new THREE.Vector3();
 const _hingeAxis = new THREE.Vector3();
@@ -380,6 +408,34 @@ function hinge(bone, child, want) {
   if (!best || best.moved < 1e-4) return null;
   return { bone, rest, axis: new THREE.Vector3(
     best.axis === 0 ? 1 : 0, best.axis === 1 ? 1 : 0, best.axis === 2 ? 1 : 0), sign: best.sign };
+}
+
+// Point a bone so that its child lies along a direction in the world.
+//
+// Rotating a joint by an angle off its rest pose only means anything if you
+// know what the rest pose is, and in an animated skeleton you do not: it is
+// whatever frame was playing. That is how one of the two men came to sit with
+// his thigh hanging straight down while the other sat correctly - not a
+// difference between the men, a difference between the moments they happened
+// to sit down in. Aiming is absolute, so it does not care.
+const _aimFrom = new THREE.Vector3();
+const _aimAt = new THREE.Vector3();
+const _aimParent = new THREE.Quaternion();
+const _aimDelta = new THREE.Quaternion();
+const _aimWorld = new THREE.Quaternion();
+function aimBone(bone, child, direction) {
+  if (!bone || !child) return;
+  bone.updateWorldMatrix(true, false);
+  child.getWorldPosition(_aimAt);
+  bone.getWorldPosition(_aimFrom);
+  _aimAt.sub(_aimFrom);
+  if (_aimAt.lengthSq() < 1e-8) return;
+  _aimDelta.setFromUnitVectors(_aimAt.normalize(), direction);
+  // The delta is a world rotation and the bone's own is in its parent's frame.
+  (bone.parent || bone).getWorldQuaternion(_aimParent);
+  _aimWorld.copy(_aimParent).invert().multiply(_aimDelta).multiply(_aimParent);
+  bone.quaternion.premultiply(_aimWorld);
+  bone.updateWorldMatrix(false, true);
 }
 
 class TownEnemy {
@@ -438,6 +494,13 @@ class TownEnemy {
     this.replans = 0;
     // Seconds left flat on the deck after a car hit him.
     this.downed = 0;
+    this.rallyTimer = 0;
+    // Seconds of keeping his head down, seconds of being jumpy, and whether
+    // he is the last one left.
+    this.suppressed = 0;
+    this.wary = 0;
+    this.soloed = false;
+    this.hurried = false;
     this.assaulting = this.assaultRoute.length > 0;
     this.assaultIndex = 0;
     this.yardIndex = 0;
@@ -893,6 +956,7 @@ class TownEnemy {
   }
 
   updateAssault(dt, playerPosition, active, distance) {
+    this.wary = Math.max(0, this.wary - dt);
     // Flat on his back after a car went over him. Nothing else runs until he
     // is up again, and while he is down he is not wedged, he is winded.
     if (this.downed > 0) {
@@ -973,6 +1037,28 @@ class TownEnemy {
     }
 
     const visible = this.model.visible;
+
+    // Under fire, and not yet in the car. He is behind something until it
+    // stops, and then he goes on with what he came for - which is the whole
+    // difference between an attacker and a man walking to a car who happens to
+    // be being shot at.
+    if (this.suppressed > 0 && this.downed <= 0
+      && this.state !== 'boarding' && this.state !== 'riding') {
+      this.suppressed -= dt;
+      this.holding = 'suppressed';
+      const cover = this.target || this.destination;
+      if (cover && this.root.position.distanceTo(cover) > 0.9) {
+        const speed = 4.4 * this.personality.pace;
+        if (visible) this.playTravel('run', speed, 1.06, .1);
+        this.faceAndMove(cover, speed, dt);
+      } else {
+        this.play('stand', 1, .16);
+        this.face(this.lastSeen, dt, 3.4);
+      }
+      if (this.suppressed <= 0) { this.target = null; this.destination = null; }
+      return;
+    }
+
     const roadSpeed = (visible ? ASSAULT_RUN_SPEED : STRATEGIC_RUN_SPEED)
       * this.personality.pace * this.plan.pace;
 
@@ -1013,6 +1099,30 @@ class TownEnemy {
     if (this.state === 'assault_road') {
       if (visible) this.playTravel('run', roadSpeed, 1, .12);
       if (this.followAssaultLegs(this.assaultRoute, 'assaultIndex', roadSpeed, dt)) {
+        this.state = 'assault_rally';
+        this.rallyTimer = RALLY_PATIENCE;
+        this.target = null;
+        this.destination = null;
+      }
+    } else if (this.state === 'assault_rally') {
+      // Short of the gate, waiting for the other one.
+      //
+      // Two men who leave together and take different routes do not arrive
+      // together, and the one who gets there first used to start on the gate
+      // alone while the other was still half a minute up the road. So the
+      // first man in holds at the fence, watching the yard, until his mate is
+      // up - and then they go through it together and it takes half as long,
+      // because there are two of them hitting it.
+      //
+      // He does not wait forever. A partner who is dead, or who has been shot
+      // at and gone to ground, is not coming, and standing at a fence until
+      // the end of the world is not a plan.
+      this.holding = 'rally';
+      this.rallyTimer -= dt;
+      if (this.squad) this.squad.rallied?.add(this.root.name);
+      this.play('stand', 1, .16);
+      if (this.mission.gateTarget) this.face(this.mission.gateTarget, dt, 2.6);
+      if (this.rallyTimer <= 0 || this.squadRallied()) {
         this.state = 'breach_gate';
         this.target = null;
         this.destination = null;
@@ -1031,7 +1141,9 @@ class TownEnemy {
         this.route = this.planRoute(this.destination);
         this.target = this.route.shift() || this.destination.clone();
       }
-      const speed = (visible ? 3.3 : 5.2) * this.personality.pace * this.plan.pace;
+      // Off screen they cover ground at a rate nobody has to believe, because
+      // nobody is watching; in sight they run at a speed a man can run at.
+      const speed = (visible ? 4.0 : 8.5) * this.personality.pace * this.plan.pace;
       if (visible) this.playTravel('run', speed, 1, .1);
       if (gap < 1.15 || this.followRoute(speed, dt)) {
         this.state = 'boarding';
@@ -1193,6 +1305,23 @@ class TownEnemy {
   // its rest pose is known would bake the nudge into the pose.
   calibrateSeat() {
     if (this.seatJoints) return this.seatJoints;
+    // Measure against a known pose, not against whatever frame of whatever
+    // clip happened to be playing when he first sat down. Each joint's "rest"
+    // is read straight off the skeleton, so calibrating mid-stride bakes that
+    // stride into the seated pose - and the two men came out sitting
+    // differently, one with a foot through the floor, depending on nothing
+    // more than when the first of them reached the car.
+    const restore = [];
+    for (const [key, action] of Object.entries(this.actions)) {
+      restore.push([action, action.enabled, action.weight, action.time]);
+      action.stop();
+      action.enabled = key === 'stand';
+      action.setEffectiveWeight(key === 'stand' ? 1 : 0);
+      if (key === 'stand') action.play();
+    }
+    this.mixer.setTime(0);
+    this.model.updateMatrixWorld(true);
+
     const bone = (name) => this.model.getObjectByName(name);
     // Every test below is made in world space, because that is the space the
     // bones report their children in, so "forward" has to be this man's
@@ -1206,8 +1335,10 @@ class TownEnemy {
       // knee and no rotation on earth will take it lower, which is why asking
       // for "down" here found no axis at all and left him standing up in his
       // seat with his legs through the floor.
-      hips: ['L', 'R'].map((side) => hinge(bone(`${side}_Thigh`), bone(`${side}_Calf`), forward)),
-      knees: ['L', 'R'].map((side) => hinge(bone(`${side}_Calf`), bone(`${side}_Foot`), back)),
+      // Legs are aimed, not rotated: see aimBone above.
+      legs: ['L', 'R'].map((side) => ({
+        thigh: bone(`${side}_Thigh`), knee: bone(`${side}_Calf`), foot: bone(`${side}_Foot`),
+      })),
       lean: hinge(bone('Spine01'), bone('Head'), back),
       // Flexion alone leaves both men sitting with their arms out sideways, in
       // the pose the model was uploaded in - the driver's right hand ended up
@@ -1229,6 +1360,8 @@ class TownEnemy {
       }),
       hipRise: HEIGHT * 0.53,
       crownRise: HEIGHT * 0.78,
+      // Starting guess; fitSeatedFold() solves it against this man.
+      shinForward: 0.45,
     };
 
     // Measure the pose we are about to use, not the standing one, and measure
@@ -1240,8 +1373,56 @@ class TownEnemy {
     this.model.updateMatrixWorld(true);
     const hip = bone('Hip');
     if (hip) this.seatJoints.hipRise = hip.getWorldPosition(_seatPoint).y - this.root.position.y;
+    this.fitSeatedFold();
     this.seatJoints.crownRise = this.measureCrown();
+
+    for (const [action, enabled, weight, time] of restore) {
+      action.stop();
+      action.enabled = enabled;
+      action.setEffectiveWeight(weight);
+      action.time = time;
+    }
+    if (this.currentAction) this.currentAction.play();
     return this.seatJoints;
+  }
+
+  // Fit the fold to the man rather than the man to the fold.
+  //
+  // One pair of angles cannot seat two different people. These two uploads do
+  // not share a rest stance - one stands with a leg forward - so identical hip
+  // and knee rotations put one man's soles on the floor pan and the other's
+  // through it, and which of them looked right depended on nothing more than
+  // which frame of which clip was playing when he first sat down.
+  //
+  // Only the knee is solved, and it is solved by bisection, because it is the
+  // one joint whose effect is monotone: from a leg held straight out, folding
+  // the knee swings the shin down and the sole with it, every time. Trying to
+  // fit the hip at the same time does not work - past horizontal, more hip
+  // flexion starts lowering the knee again, and a gradient step walks off in
+  // whichever direction it happened to be pointing.
+  fitSeatedFold() {
+    const joints = this.seatJoints;
+    const hip = this.model.getObjectByName('Hip');
+    const foot = this.model.getObjectByName('L_Foot');
+    if (!hip || !foot) return;
+    const dropAt = (lean) => {
+      joints.shinForward = lean;
+      this.applySeatedPose(this.role === 'driver');
+      this.model.updateMatrixWorld(true);
+      return hip.getWorldPosition(_seatPoint).y - foot.getWorldPosition(_fitPoint).y;
+    };
+    // How far forward the shin leans. Straight down drops the foot furthest;
+    // leaning it forward brings the sole up into the footwell. Monotone, so
+    // bisection finds it in sixteen passes whatever the man is shaped like.
+    let low = 0.0;
+    let high = 1.4;
+    if (dropAt(low) < SEAT_FIT.footBelowHip) { joints.shinForward = low; return; }
+    if (dropAt(high) > SEAT_FIT.footBelowHip) { joints.shinForward = high; return; }
+    for (let pass = 0; pass < 16; pass++) {
+      const middle = (low + high) * 0.5;
+      if (dropAt(middle) > SEAT_FIT.footBelowHip) low = middle; else high = middle;
+    }
+    joints.shinForward = (low + high) * 0.5;
   }
 
   // The highest skinned vertex on him, in the pose he is actually in.
@@ -1262,7 +1443,10 @@ class TownEnemy {
         for (let index = 0; index < position.count; index++) {
           if (position.getY(index) > highest) highest = position.getY(index);
         }
-        const band = highest - (position.count > 0 ? 0.08 / Math.max(this.model.scale.y, 1e-3) : 0);
+        // A generous band. Sampling only the very top of the standing model missed
+        // the true top of the seated one by nearly three centimetres, because
+        // what is highest changes when the neck tips and the shoulders come up.
+        const band = highest - 0.22 / Math.max(this.model.scale.y, 1e-3);
         const indices = [];
         for (let index = 0; index < position.count; index++) {
           if (position.getY(index) >= band) indices.push(index);
@@ -1292,8 +1476,18 @@ class TownEnemy {
       joint.bone.quaternion.copy(joint.rest);
       joint.bone.rotateOnAxis(joint.axis, joint.sign * angle);
     };
-    for (const joint of joints.hips) bend(joint, SEAT_POSE.hip);
-    for (const joint of joints.knees) bend(joint, SEAT_POSE.knee);
+    // Thighs out along the seat, shins down into the footwell. Both directions
+    // are in this man's own frame, so they are the same pose whichever way the
+    // car is pointing and whatever he was doing a moment ago.
+    _legForward.set(0, 0, -1).applyQuaternion(this.root.quaternion);
+    _legOut.copy(_legForward).multiplyScalar(SEAT_LEG.thighForward)
+      .addScaledVector(_legUp, SEAT_LEG.thighUp).normalize();
+    _legDown.copy(_legForward).multiplyScalar(joints.shinForward)
+      .addScaledVector(_legUp, -1).normalize();
+    for (const leg of joints.legs) {
+      aimBone(leg.thigh, leg.knee, _legOut);
+      aimBone(leg.knee, leg.foot, _legDown);
+    }
     bend(joints.lean, SEAT_POSE.lean);
     for (const arm of joints.arms) {
       // The shoulder takes two turns, so it is reset once and then rotated
@@ -1309,6 +1503,16 @@ class TownEnemy {
       }
       bend(arm.elbow, driving ? SEAT_POSE.elbow : SEAT_POSE.restElbow);
     }
+  }
+
+  // Is everybody who is still coming actually here?
+  squadRallied() {
+    if (this.soloed || !this.squad?.rallied) return true;
+    const others = this.squad.members || [];
+    return others.every((agent) => agent === this || agent.dead
+      || agent.state === 'assault_rally' || agent.state === 'breach_gate'
+      || agent.state === 'to_car' || agent.state === 'boarding'
+      || agent.state === 'riding' || agent.holding === 'downed');
   }
 
   seatRise() { return this.calibrateSeat().hipRise; }
@@ -1511,6 +1715,62 @@ class TownEnemy {
     this.mixer.update(dt);
   }
 
+  // Shot at.
+  //
+  // Until now a round that did not kill one of them did nothing at all: he
+  // took it in silence and carried on walking to the car, which is the single
+  // most obviously wrong thing an attacker can do and the reason they read as
+  // having no brain. Now it costs him. He flinches, he breaks for whatever
+  // cover is away from where the shot came from, and he tells the other one -
+  // who has no way of knowing otherwise, because he is looking at the car.
+  takeFire(fromX, fromZ, hit) {
+    if (this.dead || this.state === 'riding') return false;
+    this.alerted = true;
+    this.memoryTimer = MEMORY_SECONDS;
+    _firePoint.set(fromX, this.root.position.y, fromZ);
+    this.lastSeen.copy(_firePoint);
+    // A man who is already in the car door does not throw himself flat; he
+    // gets in, which is what he came for and now urgently.
+    if (this.state === 'boarding' || this.state === 'to_car') {
+      this.hurried = true;
+      return true;
+    }
+    this.suppressed = Math.max(this.suppressed, hit ? SUPPRESSED_HIT : SUPPRESSED_NEAR);
+    this.destination = this.chooseCover(_firePoint, true);
+    this.route = this.destination ? this.planRoute(this.destination) : [];
+    this.target = this.route.shift() || this.destination;
+    if (this.squad) {
+      this.squad.contact = { x: fromX, z: fromZ, at: this.squad.clock || 0 };
+      for (const other of this.squad.members || []) {
+        if (other === this || other.dead) continue;
+        other.warned(fromX, fromZ);
+      }
+    }
+    return true;
+  }
+
+  // Told by the other one that somebody is shooting.
+  warned(fromX, fromZ) {
+    if (this.dead || this.state === 'riding') return;
+    this.alerted = true;
+    this.memoryTimer = MEMORY_SECONDS;
+    this.lastSeen.set(fromX, this.root.position.y, fromZ);
+    // He does not go to ground on hearsay, but he stops strolling.
+    this.wary = Math.max(this.wary, WARY_SECONDS);
+  }
+
+  // His mate is down. There is nobody to rally with and nobody to wait for.
+  partnerDown() {
+    if (this.dead) return;
+    this.soloed = true;
+    this.wary = Math.max(this.wary, WARY_SECONDS);
+    if (this.state === 'assault_rally') {
+      this.state = 'breach_gate';
+      this.target = null;
+      this.destination = null;
+    }
+  }
+
   // Hit by a car. Fast enough and he is dead where he lands; slower and he is
   // knocked off his feet and gets up angry. Either way he goes over the bonnet
   // rather than standing there taking it.
@@ -1547,6 +1807,9 @@ class TownEnemy {
     }
     this.root.userData.alive = false;
     this.collider.enabled = false;
+    for (const other of this.squad?.members || []) {
+      if (other !== this) other.partnerDown();
+    }
     for (const volume of this.hitVolumes) {
       volume.visible = false;
       volume.removeFromParent();
@@ -1565,7 +1828,10 @@ export function createTownEnemies({ scene, colliders, assets, entries,
   const navigator = createNavigator({ colliders });
   // What the two of them know about each other. Two attackers who both charge
   // are one attacker twice; two who notice the other is busy are a pair.
-  const squad = { engaged: null, breached: false, lanes: new Set(), driver: null };
+  // The blackboard. `members` lets one man ask where the other one has got
+  // to, which is the whole of their coordination and all it needs to be.
+  const squad = { engaged: null, breached: false, lanes: new Set(), driver: null,
+    rallied: new Set(), members: [] };
 
   // A seed the caller can pin for a test and leave alone in the game, so the
   // siege is a different afternoon each time it is played and the same one
@@ -1592,6 +1858,7 @@ export function createTownEnemies({ scene, colliders, assets, entries,
     // is shot before he gets to it, the other one moves across.
     if (!squad.driver) { squad.driver = agent.root.name; agent.role = 'driver'; }
     agents.push(agent);
+    squad.members.push(agent);
   }
   return {
     agents,
@@ -1602,6 +1869,12 @@ export function createTownEnemies({ scene, colliders, assets, entries,
       for (const agent of agents) agent.update(dt, playerPosition, active, viewer);
     },
     down(root) { return root?.userData?.enemyAgent?.kill?.() ?? false; },
+    // So the shooting code can tell the man it just hit.
+    agentFor(root) {
+      let node = root;
+      while (node && !node.userData?.enemyAgent) node = node.parent;
+      return node?.userData?.enemyAgent || null;
+    },
     animationSummary() {
       return agents.map((agent) => ({
         name: agent.root.name, style: agent.style,

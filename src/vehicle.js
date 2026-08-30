@@ -24,8 +24,6 @@ const HALF_WIDTH = 0.86;
 const PROBE_Z = [-1.40, 0, 1.40];
 const PROBE_RADIUS = 0.82;
 
-const EYE = new THREE.Vector3(0.40, 1.30, -0.28);    // right-hand drive
-const DOOR = new THREE.Vector3(1.62, 0, -0.20);      // out of the driver's side
 const _boardingLocal = new THREE.Vector3();
 
 // Mk III RS Turbo character: a light, quick front-driver with five close gears
@@ -225,10 +223,149 @@ function buildCabin(parent) {
   return cabin;
 }
 
+// What makes one vehicle different from another.
+//
+// The controller is the same for anything with four wheels and a steering
+// rack; the numbers are not. An eight-tonne army truck is three metres longer
+// than the Escort, twice as wide across the probes, geared to a third of the
+// speed and does not have a glasshouse worth cutting open. Everything the code
+// used to take from a module constant now comes from here, and the Escort's
+// own values are the defaults, so nothing about it changes.
+export const ESCORT_SPEC = Object.freeze({
+  halfLength: 2.10, halfWidth: 0.86,
+  probeZ: Object.freeze([-1.40, 0, 1.40]), probeRadius: 0.82,
+  wheelbase: 2.48, track: 1.44, wheelRadius: 0.281,
+  topSpeed: TOP_SPEED, reverseSpeed: REVERSE_SPEED, engine: ENGINE, brake: BRAKE,
+  drag: DRAG, roll: ROLL, gearLimits: GEAR_LIMITS, gearTorque: GEAR_TORQUE,
+  maxSteer: MAX_STEER, gripSpeed: GRIP_SPEED,
+  eye: Object.freeze([0.40, 1.30, -0.28]), door: Object.freeze([1.62, 0, -0.20]),
+  hullMinY: 0.18, hullMaxY: 1.62,
+  glass: true, cabin: true, lamps: true,
+});
+
+// The Bedford in the compound. Long, wide, tall, slow and geared like a lorry:
+// it will not out-run anything, but nothing it hits is going to stop it.
+export const TRUCK_SPEC = Object.freeze({
+  ...ESCORT_SPEC,
+  halfLength: 3.55, halfWidth: 1.32,
+  probeZ: Object.freeze([-2.40, -0.8, 0.8, 2.40]), probeRadius: 1.26,
+  wheelbase: 4.05, track: 2.05, wheelRadius: 0.54,
+  topSpeed: 24.0, reverseSpeed: 6.0, engine: 3.4, brake: 8.5,
+  drag: 0.0030, roll: 1.35,
+  gearLimits: Object.freeze([5.0, 9.0, 14.0, 19.0, 24.0]),
+  gearTorque: Object.freeze([1.30, 1.05, 0.82, 0.62, 0.46]),
+  maxSteer: 0.52, gripSpeed: 6.0,
+  eye: Object.freeze([0.62, 2.00, -0.55]), door: Object.freeze([1.95, 0, -0.55]),
+  hullMinY: 0.20, hullMaxY: 2.95,
+  glass: false, cabin: false, lamps: false,
+});
+
+// --- Rigging the supplied truck --------------------------------------------
+//
+// The Bedford is a good model with sensible parts in it - a steering wheel, a
+// cab, and eight cylinders that are four wheels and their hubs - but nothing
+// is named the way the vehicle controller expects, and its length runs along X
+// while everything that drives in this game drives down -Z.
+//
+// So: turn it, size it, and find the wheels. The wheels are found by shape
+// rather than by name, because the names it does have are Cylinder002 and
+// Cylinder008 and there is nothing in those to trust. A road wheel is a disc -
+// thin across the vehicle, round in the other two axes - sitting away from the
+// centreline and away from the middle of the wheelbase, and nothing else on a
+// lorry is shaped remotely like that.
+const _rigBox = new THREE.Box3();
+const _rigSize = new THREE.Vector3();
+const _rigCentre = new THREE.Vector3();
+
+export function rigSuppliedTruck(root, spec) {
+  root.updateMatrixWorld(true);
+  _rigBox.setFromObject(root);
+  _rigBox.getSize(_rigSize);
+  // Longest horizontal axis is the chassis; a lorry is not wider than it is
+  // long, so here that reading is safe.
+  const alongX = _rigSize.x >= _rigSize.z;
+
+  const visual = new THREE.Group();
+  visual.name = 'Truck_Visual';
+  for (const child of [...root.children]) visual.add(child);
+  root.add(visual);
+  if (alongX) visual.rotation.y = Math.PI / 2;
+  root.updateMatrixWorld(true);
+  _rigBox.setFromObject(visual);
+  _rigBox.getSize(_rigSize);
+  visual.scale.setScalar((spec.halfLength * 2) / Math.max(0.5, _rigSize.z));
+  root.updateMatrixWorld(true);
+  _rigBox.setFromObject(visual);
+  visual.position.y -= _rigBox.min.y - root.position.y;
+  _rigBox.getCenter(_rigCentre);
+  visual.position.x -= _rigCentre.x - root.position.x;
+  visual.position.z -= _rigCentre.z - root.position.z;
+  root.updateMatrixWorld(true);
+
+  // Find the discs.
+  const candidates = [];
+  visual.traverse((part) => {
+    if (!part.isMesh) return;
+    _rigBox.setFromObject(part);
+    _rigBox.getSize(_rigSize);
+    _rigBox.getCenter(_rigCentre);
+    const thin = _rigSize.x < _rigSize.y * 0.75 && _rigSize.x < _rigSize.z * 0.75;
+    const round = Math.abs(_rigSize.y - _rigSize.z) < Math.max(_rigSize.y, _rigSize.z) * 0.35;
+    const outboard = Math.abs(_rigCentre.x - root.position.x) > spec.track * 0.25;
+    const fore = Math.abs(_rigCentre.z - root.position.z) > spec.wheelbase * 0.20;
+    if (thin && round && outboard && fore && _rigSize.y > spec.wheelRadius) {
+      candidates.push({ part, x: _rigCentre.x, z: _rigCentre.z, y: _rigCentre.y,
+        radius: Math.max(_rigSize.y, _rigSize.z) * 0.5 });
+    }
+  });
+  if (candidates.length < 4) return null;
+  // Four corners: nearest disc to each.
+  const corners = [['LF', -1, -1], ['RF', 1, -1], ['LR', -1, 1], ['RR', 1, 1]];
+  const taken = new Set();
+  for (const [tag, sideX, sideZ] of corners) {
+    let best = null;
+    for (const disc of candidates) {
+      if (taken.has(disc)) continue;
+      const score = -(Math.sign(disc.x - root.position.x) === sideX ? 1 : 0)
+        - (Math.sign(disc.z - root.position.z) === sideZ ? 1 : 0);
+      const distance = Math.hypot(disc.x - root.position.x - sideX * spec.track * 0.5,
+        disc.z - root.position.z - sideZ * spec.wheelbase * 0.5);
+      const total = score * 4 + distance;
+      if (!best || total < best.total) best = { disc, total };
+    }
+    if (!best) break;
+    taken.add(best.disc);
+    // Everything that shares the disc's parent moves with it: a wheel and its
+    // hub are two meshes and they have to turn together.
+    const group = best.disc.part.parent === visual ? best.disc.part : best.disc.part.parent;
+    group.name = `Car_Wheel_${tag}`;
+  }
+  return visual;
+}
+
 export function createVehicle({ scene, colliders, assets, place, addInteraction,
-  position = [0, 0, 0], heading = 0, name = 'Car', label = 'FORD ESCORT RS TURBO' }) {
-  const source = assets.carDrivable || assets.estateCar;
+  position = [0, 0, 0], heading = 0, name = 'Car', label = 'FORD ESCORT RS TURBO',
+  spec = ESCORT_SPEC, asset = null, rig = null }) {
+  const source = asset ? assets[asset] : (assets.carDrivable || assets.estateCar);
   if (!source) return null;
+  const HALF_LENGTH = spec.halfLength;
+  const HALF_WIDTH = spec.halfWidth;
+  const PROBE_Z = spec.probeZ;
+  const PROBE_RADIUS = spec.probeRadius;
+  const WHEELBASE = spec.wheelbase;
+  const WHEEL_RADIUS = spec.wheelRadius;
+  const TOP_SPEED = spec.topSpeed;
+  const REVERSE_SPEED = spec.reverseSpeed;
+  const ENGINE = spec.engine;
+  const BRAKE = spec.brake;
+  const DRAG = spec.drag;
+  const ROLL = spec.roll;
+  const GEAR_LIMITS = spec.gearLimits;
+  const GEAR_TORQUE = spec.gearTorque;
+  const MAX_STEER = spec.maxSteer;
+  const GRIP_SPEED = spec.gripSpeed;
+  const EYE = new THREE.Vector3(...spec.eye);
+  const DOOR = new THREE.Vector3(...spec.door);
 
   const root = place(source, scene, position, [0, heading, 0], 1, { collide: false });
   root.name = name;
@@ -240,7 +377,10 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // Every moving part uses the same supplied material so the extracted pivots
   // remain visually continuous with the fused body.
 
-  const shell = findNamed(root, 'Car_Shell');
+  // Anything that is not already built to the Escort's part names gets rigged
+  // on the way in: turned to face down -Z, scaled, and its wheels named.
+  if (rig) rig(root, spec);
+  const shell = findNamed(root, 'Car_Shell') || root;
   const wheels = ['LF', 'RF', 'LR', 'RR']
     .map((tag) => findNamed(root, `Car_Wheel_${tag}`));
 
@@ -273,7 +413,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // The glasshouse, cut out of the scan by tools/split_escort_glass.py. The
   // upload had the windows painted onto a closed shell, so there was nothing
   // to see through and no way to see who was driving your car away.
-  const glass = findNamed(root, 'Car_Glass');
+  const glass = spec.glass ? findNamed(root, 'Car_Glass') : null;
   if (glass?.material) {
     glass.material = glass.material.clone();
     glass.material.name = 'Ford_Escort_Glass';
@@ -294,8 +434,8 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // Something to see when you look through it. The scan is a hollow skin, so
   // without this the cabin is a hole you can see the far door through, and two
   // men sitting in it would appear to float in mid-air.
-  const cabin = buildCabin(shell || root);
-  const headroom = measureHeadroom(shell);
+  const cabin = spec.cabin ? buildCabin(shell || root) : null;
+  const headroom = spec.cabin ? measureHeadroom(shell) : null;
   if (headroom) CABIN_HEADROOM = headroom;
   // The wheel comes from the cabin, so it has to be found after the cabin is
   // built. The scan has no interior of its own to take one from.
@@ -306,7 +446,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // at night has beams on the road instead of two painted white circles.
   const headLamps = [];
   const tailLamps = [];
-  root.traverse((part) => {
+  if (spec.lamps) root.traverse((part) => {
     if (!part.isMesh) return;
     if (/^Car_Headlamp_/.test(part.name)) headLamps.push(part);
     else if (/^Car_(Taillamp_|Backlight)/.test(part.name)) tailLamps.push(part);
@@ -327,7 +467,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     }
   }
   const beams = [];
-  for (const side of [-1, 1]) {
+  for (const side of spec.lamps ? [-1, 1] : []) {
     const beam = new THREE.SpotLight(0xfff0d2, 26, 46, 0.44, 0.52, 1.4);
     beam.position.set(side * 0.62, 0.72, -2.02);
     beam.target.position.set(side * 0.30, -0.55, -18);
@@ -366,7 +506,7 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // obstacle is the car you are sitting in.
   const hull = colliders.addOrientedBox({
     cx: state.x, cz: state.z, halfX: HALF_WIDTH, halfZ: HALF_LENGTH,
-    rotationY: heading, minY: 0.18, maxY: 1.62,
+    rotationY: heading, minY: spec.hullMinY, maxY: spec.hullMaxY,
   });
 
   const _probe = new THREE.Vector3();
@@ -661,6 +801,9 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     root, state, update, seat, doorstep, boardingPoint, takeImpact, setBystanders,
     // Measured off this car's own roof, over its own seats.
     headroom: headroom || CABIN_HEADROOM,
+    // What this vehicle is, so a harness can test it as itself rather than as
+    // an Escort with a different body on it.
+    spec,
     get speed() { return state.speed; },
     get heading() { return state.heading; },
     get occupied() { return state.occupied; },
