@@ -225,6 +225,12 @@ export function createGameWorld(assets, options = {}) {
   // Collision comes from the placed Blender geometry itself, so props can never
   // drift away from their hand-typed blocking rectangle again.
   function place(gltf, parent, pos, rot = [0,0,0], scale = 1, options = {}) {
+    // A prop that did not download leaves a gap. It used to throw from inside
+    // cloneGLTF instead, four frames down, which turned one missing decoration
+    // into an empty compound and SHELTER STARTUP FAILED. Callers that go on to
+    // use what they get back still fail, and should - but the many that place
+    // a thing and walk away now simply place nothing.
+    if (!gltf) return null;
     const root = cloneGLTF(gltf);
     // glTF roots arrive called "Scene" or "Root_Scene". Overwrite that with the
     // name of the asset, so what is in the world says what it is.
