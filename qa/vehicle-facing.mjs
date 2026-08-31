@@ -61,10 +61,32 @@ const result = await page.evaluate(() => {
     for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 1 });
     const steered = ls.vehicleRig(index).steer || {};
     for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
+
+    // The lamps. Off, on, and on the brakes - a vehicle with no brake lights
+    // is invisible to anything behind it the moment it slows down, and the
+    // Bedford had no lamps of any kind because the model has none in it and
+    // nothing built any.
+    const lampsNow = () => {
+      const read = ls.vehicleRig(index);
+      return { head: read.lamps.head, tail: read.lamps.tail, beams: read.beams };
+    };
+    vehicle.setLights(false);
+    for (let step = 0; step < 6; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
+    const dark = lampsNow();
+    vehicle.setLights(true);
+    for (let step = 0; step < 40; step++) vehicle.update(1 / 60, { throttle: 1, steer: 0 });
+    const lit = lampsNow();
+    for (let step = 0; step < 8; step++) {
+      vehicle.update(1 / 60, { throttle: 0, steer: 0, brake: true });
+    }
+    const stopping = lampsNow();
+    vehicle.setLights(false);
+    for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
     state.speed = 0;
     state.x = from.x; state.z = from.z; state.heading = from.heading;
     state.occupied = false;
-    rows.push({ ...rig, travel: { forward: +forward.toFixed(2), sideways: +sideways.toFixed(2) }, steered });
+    rows.push({ ...rig, travel: { forward: +forward.toFixed(2), sideways: +sideways.toFixed(2) },
+      steered, lamps: { dark, lit, stopping } });
   }
   return rows;
 });
@@ -134,6 +156,23 @@ for (const row of result) {
       `${row.name}'s ${tag} wheel is on a kingpin; only the front pair steers`);
   }
 
+  // Lamps. Every vehicle has them, they go out when they are off, and the
+  // brake lights are brighter than the sidelights.
+  const { dark, lit, stopping } = row.lamps;
+  assert.ok(lit.head.length >= 2 && lit.tail.length >= 2,
+    `${row.name} has ${lit.head.length} headlamp(s) and ${lit.tail.length} tail lamp(s)`);
+  assert.ok(dark.head.every((glow) => glow < 0.01) && dark.tail.every((glow) => glow < 0.01),
+    `${row.name}'s lamps are lit with the lights switched off`);
+  assert.ok(lit.head.every((glow) => glow > 1),
+    `${row.name}'s headlamps only reach ${lit.head} with the lights on`);
+  assert.equal(lit.beams.lit, lit.beams.total,
+    `${row.name} lights ${lit.beams.lit} of its ${lit.beams.total} beams`);
+  assert.equal(dark.beams.lit, 0,
+    `${row.name} leaves ${dark.beams.lit} beam(s) burning with the lights off`);
+  assert.ok(stopping.tail.every((glow) => glow > Math.max(...lit.tail) * 1.5),
+    `${row.name}'s brake lights reach ${stopping.tail} against sidelights at ${lit.tail}`);
+  assert.ok(row.shell, `${row.name} has no body to lean; it will roll on its wheels`);
+
   // The driver is in the driving seat, on the side the wheel is.
   const [ex, ey, ez] = row.eye;
   assert.ok(Math.abs(ex) < row.body[0] / 2 && ey < row.body[1] && ez < 0,
@@ -161,4 +200,5 @@ for (const row of result) {
     + `${(bogie - front).toFixed(2)} m`);
 }
 console.log(`Vehicle facing QA passed: ${result.length} vehicles, all of them nose-first, `
-  + 'steering at the front, driver at the wheel.');
+  + 'steering on the front axle, wheels rolling about their axles, lamps and brake '
+  + 'lights working, driver at the wheel.');

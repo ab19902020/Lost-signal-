@@ -241,6 +241,14 @@ export const ESCORT_SPEC = Object.freeze({
   eye: Object.freeze([0.40, 1.30, -0.28]), door: Object.freeze([1.62, 0, -0.20]),
   hullMinY: 0.18, hullMaxY: 1.62,
   glass: true, cabin: true, lamps: true,
+  // Where the lamps are and where they point. The beams used to be nailed to
+  // these numbers in the controller, which is why the only vehicle that could
+  // have headlights was this one.
+  lampRig: Object.freeze({
+    beam: Object.freeze([0.62, 0.72, -2.02]),
+    aim: Object.freeze([0.30, -0.55, -18]),
+    reach: 46, power: 26,
+  }),
   // What it sounds like.
   //
   // A four-stroke fires half its cylinders per revolution, so the note every
@@ -286,6 +294,22 @@ export const TRUCK_SPEC = Object.freeze({
   eye: Object.freeze([-0.42, 2.12, -1.16]), door: Object.freeze([-1.95, 0, -1.16]),
   hullMinY: 0.20, hullMaxY: 2.99,
   glass: false, cabin: false, lamps: true,
+  // The Bedford has no lamp meshes in it anywhere, so it had no lights of any
+  // kind - no headlights after dark and, worse, no brake lights in front of
+  // anybody following it. Four are built onto the shell at the measured
+  // corners of the bodywork, and the beams are set to a cab that sits a metre
+  // higher than a hatchback's and a nose that is a metre and a half further
+  // forward.
+  lampRig: Object.freeze({
+    beam: Object.freeze([0.88, 1.20, -3.34]),
+    aim: Object.freeze([0.44, -1.05, -24]),
+    reach: 58, power: 30,
+    build: Object.freeze({
+      head: Object.freeze([[-0.88, 1.16, -3.30], [0.88, 1.16, -3.30]]),
+      tail: Object.freeze([[-1.04, 1.14, 3.44], [1.04, 1.14, 3.44]]),
+      size: 0.18,
+    }),
+  }),
   // A six-cylinder indirect-injection diesel. It idles at a speed the Escort
   // would stall at, it is finished by two and a half thousand, and most of
   // what you hear is not combustion at all but the injectors knocking - which
@@ -517,6 +541,34 @@ export function rigSuppliedTruck(root, spec) {
   const hoop = findNamed(visual, 'steering_wheel') || findNamed(visual, 'SteeringWheel');
   if (hoop?.isMesh) alignSpinner(hoop, root, 'Car_SteeringWheel');
 
+  // Body and axles, told apart.
+  //
+  // A vehicle rolls out of a corner and squats under power, and the thing that
+  // does that is the body: the wheels stay flat on the road while it moves
+  // over them. The controller leans whatever it can find called Car_Shell, and
+  // on a supplied model with no such part it was leaning the root - so the
+  // lorry heeled over complete with its wheels, like a boat.
+  //
+  // The wheels come out into a group carrying the same transform the body has,
+  // so nothing about where they are changes and everything about what happens
+  // to them next does.
+  visual.name = 'Car_Shell';
+  const chassis = new THREE.Group();
+  chassis.name = 'Car_Axles';
+  chassis.position.copy(visual.position);
+  chassis.quaternion.copy(visual.quaternion);
+  chassis.scale.copy(visual.scale);
+  root.add(chassis);
+  root.updateMatrixWorld(true);
+  const intoChassis = new THREE.Matrix4();
+  for (const wheel of placed) {
+    wheel.node.updateMatrixWorld(true);
+    intoChassis.copy(chassis.matrixWorld).invert().multiply(wheel.node.matrixWorld);
+    chassis.add(wheel.node);
+    intoChassis.decompose(wheel.node.position, wheel.node.quaternion, wheel.node.scale);
+  }
+  root.updateMatrixWorld(true);
+
   // What the rig believed, kept for the harness that checks it drove the right
   // way out of the yard.
   root.userData.rig = {
@@ -659,7 +711,34 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // at night has beams on the road instead of two painted white circles.
   const headLamps = [];
   const tailLamps = [];
-  if (spec.lamps) root.traverse((part) => {
+  const lampRig = spec.lampRig || {};
+  // Lamps the model does not have. A scan of a hatchback comes with its lights
+  // modelled; a low-poly lorry comes with a smooth green nose, and no amount
+  // of searching it by name finds a headlamp on it.
+  if (spec.lamps && lampRig.build) {
+    const lens = lampRig.build.size ?? 0.16;
+    const glazing = (colour) => new THREE.MeshStandardMaterial({
+      color: colour, emissive: 0x000000, emissiveIntensity: 0,
+      roughness: 0.32, metalness: 0.1,
+    });
+    const fit = (at, name, colour, tilt) => {
+      const lamp = new THREE.Mesh(
+        new THREE.CylinderGeometry(lens * 0.5, lens * 0.5, 0.05, 12), glazing(colour));
+      lamp.name = name;
+      lamp.rotation.x = tilt;
+      lamp.position.set(...at);
+      lamp.userData.skipBallistics = true;
+      lamp.castShadow = false;
+      (shell || root).add(lamp);
+      return lamp;
+    };
+    (lampRig.build.head || []).forEach((at, side) => {
+      headLamps.push(fit(at, `Car_Headlamp_${side ? 'R' : 'L'}`, 0xf6efd8, Math.PI / 2));
+    });
+    (lampRig.build.tail || []).forEach((at, side) => {
+      tailLamps.push(fit(at, `Car_Taillamp_${side ? 'R' : 'L'}`, 0x7a1109, Math.PI / 2));
+    });
+  } else if (spec.lamps) root.traverse((part) => {
     if (!part.isMesh) return;
     if (/^Car_Headlamp_/.test(part.name)) headLamps.push(part);
     else if (/^Car_(Taillamp_|Backlight)/.test(part.name)) tailLamps.push(part);
@@ -680,10 +759,13 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     }
   }
   const beams = [];
+  const beamAt = lampRig.beam || [0.62, 0.72, -2.02];
+  const beamAim = lampRig.aim || [0.30, -0.55, -18];
   for (const side of spec.lamps ? [-1, 1] : []) {
-    const beam = new THREE.SpotLight(0xfff0d2, 26, 46, 0.44, 0.52, 1.4);
-    beam.position.set(side * 0.62, 0.72, -2.02);
-    beam.target.position.set(side * 0.30, -0.55, -18);
+    const beam = new THREE.SpotLight(0xfff0d2, lampRig.power ?? 26,
+      lampRig.reach ?? 46, 0.44, 0.52, 1.4);
+    beam.position.set(side * beamAt[0], beamAt[1], beamAt[2]);
+    beam.target.position.set(side * beamAim[0], beamAim[1], beamAim[2]);
     // An invisible light is not in the render's light list at all, so a car
     // with its lamps off costs the scene nothing.
     beam.visible = false;
@@ -786,6 +868,13 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
       // stopped, and the bang the player hears is a body rather than a fence.
       state.speed *= speed > STRIKE_LETHAL ? 0.86 : 0.62;
       state.impact = Math.max(state.impact, speed * 0.45);
+      // And the car feels it. Eighty kilos arriving on one corner of a bumper
+      // pitches the nose and pulls the steering towards the side it hit,
+      // which is the difference between running somebody over and driving
+      // through a puff of smoke that happens to scream.
+      state.strikePitch = Math.min(0.09, 0.02 + speed * 0.005);
+      state.heading += THREE.MathUtils.clamp(across / (HALF_WIDTH + radius), -1, 1)
+        * Math.min(0.055, speed * 0.004);
     }
   }
 
@@ -920,7 +1009,12 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
     // corner and squats under power.
     state.lean = THREE.MathUtils.damp(state.lean,
       -state.steer * (fast / TOP_SPEED) * 0.16 * (1 + state.slide * .5), 6, dt);
-    state.pitch = THREE.MathUtils.damp(state.pitch, THREE.MathUtils.clamp(-accel * 0.006, -0.05, 0.05), 5, dt);
+    // Weight transfer plus whatever the last thing it hit did to it. The kick
+    // decays on its own so one impact is one movement rather than a new
+    // resting attitude.
+    state.strikePitch = Math.max(0, (state.strikePitch || 0) - dt * 0.55);
+    state.pitch = THREE.MathUtils.damp(state.pitch,
+      THREE.MathUtils.clamp(-accel * 0.006, -0.05, 0.05), 5, dt) - state.strikePitch;
     if (shell) {
       shell.rotation.z = state.lean;
       shell.rotation.x = state.pitch;

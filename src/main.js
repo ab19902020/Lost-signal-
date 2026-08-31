@@ -650,6 +650,31 @@ async function prepare() {
             eye: vehicle.spec.eye, door: vehicle.spec.door,
             wheelbase: vehicle.spec.wheelbase, wheelRadius: vehicle.spec.wheelRadius,
             steeringWheel: local(root.getObjectByName('Car_SteeringWheel')),
+            // The lamps, and whether they are lit. A vehicle with no brake
+            // lights is invisible to anybody behind it the moment it slows.
+            lamps: (() => {
+              const found = { head: [], tail: [] };
+              root.traverse((part) => {
+                if (!part.isMesh || !part.material?.emissive) return;
+                if (/^Car_Headlamp_/.test(part.name)) {
+                  found.head.push(+part.material.emissiveIntensity.toFixed(2));
+                } else if (/^Car_(Taillamp_|Backlight)/.test(part.name)) {
+                  found.tail.push(+part.material.emissiveIntensity.toFixed(2));
+                }
+              });
+              return found;
+            })(),
+            beams: (() => {
+              let lit = 0;
+              let total = 0;
+              root.traverse((part) => {
+                if (!part.isSpotLight) return;
+                total++;
+                if (part.visible) lit++;
+              });
+              return { total, lit };
+            })(),
+            shell: !!root.getObjectByName('Car_Shell'),
             wheels: {},
           };
           for (const tag of ['LF', 'RF', 'LM', 'RM', 'LR', 'RR']) {
@@ -1130,8 +1155,35 @@ function wireGameEvents() {
     if (health <= 0) collapse();
   });
   addEventListener('lostsignal:runover', (event) => {
-    crashSound(Math.min(1, 0.35 + (event.detail?.speed ?? 0) / 20));
-    flash(event.detail?.lethal ? 'YOU RAN HIM DOWN' : 'YOU KNOCKED HIM OVER', 2200);
+    const speed = event.detail?.speed ?? 0;
+    const lethal = !!event.detail?.lethal;
+    bodyImpactSound(speed, lethal);
+    // Felt through the car as well as heard. A body is a good deal lighter
+    // than a fence, so this is a jolt rather than the crash response.
+    if (driving) {
+      driveShake = Math.min(1.6, driveShake + 0.5 + speed * 0.05);
+      pitch = THREE.MathUtils.clamp(pitch - 0.035 - speed * 0.004, -1.25, 1.15);
+      gamepad.rumble(Math.min(1, 0.3 + speed / 16), Math.min(1, 0.5 + speed / 13),
+        120 + speed * 10);
+    }
+    flash(lethal ? 'YOU RAN HIM DOWN' : 'YOU KNOCKED HIM OVER', 2200);
+  });
+  // Where the body actually comes to rest, which is not where the bumper met
+  // it: at speed it goes over the bonnet and lands well up the road.
+  addEventListener('lostsignal:bodylanded', (event) => {
+    const detail = event.detail || {};
+    bodyLandSound(detail.speed ?? 0);
+    if (!detail.dead) return;
+    _gorePoint.set(detail.x, detail.y + 0.02, detail.z);
+    for (let mark = 0; mark < 5; mark++) {
+      const spot = _gorePoint.clone();
+      spot.x += (Math.random() - 0.5) * 1.6;
+      spot.z += (Math.random() - 0.5) * 1.6;
+      const decal = decals.add(activeScene(), spot, _goreNormal.set(0, 1, 0), {
+        kind: 'blood', size: 0.45 + Math.random() * 0.8,
+      });
+      if (decal) decal.userData.isDecal = true;
+    }
   });
   addEventListener('lostsignal:carescaped', () => {
     flash('THE ESCORT IS GONE. THEY TOOK IT UP THE ROAD.', 5200);
@@ -4057,6 +4109,50 @@ function crashSound(strength = 1) {
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
   o.connect(g); g.connect(master);
   o.start(t); o.stop(t + 0.27);
+}
+
+/**
+ * A car hitting a person.
+ *
+ * Not the same noise as a car hitting a fence, which is what it used to be.
+ * A fence is a metallic ring; a body is a dead weight that does not ring at
+ * all. So: a heavy damped thump for the mass, one short slap of panel where
+ * the bumper actually is, and - only when it was hard enough to kill - the
+ * dry crack that goes with it. Nothing here rings, and everything is over in
+ * a quarter of a second, because that is how long it takes.
+ */
+function bodyImpactSound(speed = 6, lethal = false) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const level = THREE.MathUtils.clamp(0.25 + speed / 22, 0.25, 1);
+  // The weight. Low, wide and dead.
+  noiseBurst({ at: t, hz: 105, q: 0.55, decay: 0.17 * level, level: 0.30 * level,
+    type: 'lowpass' });
+  // The panel it landed on. Metal, but damped by what is against it.
+  noiseBurst({ at: t + 0.006, hz: 420, q: 2.6, decay: 0.09, level: 0.10 * level });
+  const thud = ac.createOscillator();
+  const thudGain = ac.createGain();
+  thud.type = 'sine';
+  thud.frequency.setValueAtTime(96 * level + 34, t);
+  thud.frequency.exponentialRampToValueAtTime(31, t + 0.16);
+  thudGain.gain.setValueAtTime(0.24 * level, t);
+  thudGain.gain.exponentialRampToValueAtTime(0.0008, t + 0.2);
+  thud.connect(thudGain); thudGain.connect(master);
+  thud.start(t); thud.stop(t + 0.21);
+  if (lethal) {
+    noiseBurst({ at: t + 0.012, hz: 1700, q: 3.4, decay: 0.045, level: 0.075 * level });
+    noiseBurst({ at: t + 0.03, hz: 3100, q: 4.2, decay: 0.03, level: 0.04 * level });
+  }
+}
+
+/** A body arriving on the road after the car threw it there. */
+function bodyLandSound(speed = 6) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  const level = THREE.MathUtils.clamp(0.2 + speed / 26, 0.2, 0.9);
+  noiseBurst({ at: t, hz: 130, q: 0.7, decay: 0.12 * level, level: 0.19 * level,
+    type: 'lowpass' });
+  noiseBurst({ at: t + 0.01, hz: 900, q: 1.1, decay: 0.07, level: 0.05 * level });
 }
 
 // The gate motor: a warning chirp, then the contactor thump and the long

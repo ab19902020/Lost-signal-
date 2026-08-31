@@ -505,6 +505,8 @@ class TownEnemy {
     this.replans = 0;
     // Seconds left flat on the deck after a car hit him.
     this.downed = 0;
+    // Set while he is in the air off a bumper, and nothing else while he is.
+    this.flung = null;
     this.rallyTimer = 0;
     this.rallyWaited = 0;
     this.rallyGap = Infinity;
@@ -1593,6 +1595,7 @@ class TownEnemy {
   // the cameras, which is the one thing that caused it.
   update(dt, playerPosition, active, viewer = playerPosition, present = active) {
     dt = Math.min(dt, 0.05);
+    if (this.flung) this.updateFlight(dt);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.stateTimer = Math.max(0, this.stateTimer - dt);
     this.thinkTimer = Math.max(0, this.thinkTimer - dt);
@@ -1612,6 +1615,15 @@ class TownEnemy {
 
     const distance = present ? this.root.position.distanceTo(playerPosition) : Infinity;
     const viewDistance = this.root.position.distanceTo(viewer);
+    // A man in the air is not deciding anything. Everything below this is a
+    // brain, and he has stopped using his for a moment.
+    if (this.flung) {
+      this.model.visible = active && viewDistance < ASSAULT_RENDER_DISTANCE;
+      this.holding = 'flung';
+      this.play('fall', 1.05, 0.05);
+      if (this.model.visible) this.mixer.update(dt);
+      return;
+    }
     if (this.assaulting) {
       // Inside the car they are not standing in the yard. The body still
       // exists and still moves with the car, so it can still be shot at.
@@ -1824,11 +1836,23 @@ class TownEnemy {
   // rather than standing there taking it.
   struck(speed, dirX, dirZ, lethal) {
     if (this.dead || this.state === 'riding' || this.state === 'boarding') return false;
-    const throwBy = Math.min(2.6, 0.5 + speed * 0.22);
-    this.root.position.x += dirX * throwBy;
-    this.root.position.z += dirZ * throwBy;
-    this.collider.cx = this.root.position.x;
-    this.collider.cz = this.root.position.z;
+    // Thrown, not moved.
+    //
+    // He used to jump two and a half metres down the road in one frame, which
+    // reads as a glitch rather than as an impact - the one moment in the game
+    // where something ought to be violent and it was a teleport. A bumper at
+    // knee height tips a man onto the bonnet and throws him: he goes up as
+    // well as away, and he comes down where the arc puts him.
+    const launch = Math.min(9.5, 1.4 + speed * 0.62);
+    this.flung = {
+      vx: dirX * launch,
+      vz: dirZ * launch,
+      vy: Math.min(5.2, 1.5 + speed * 0.26),
+      // Which way he turns as he goes over, so two men hit by the same car do
+      // not spin identically.
+      spin: (this.random() - 0.5) * 5.5,
+      speed,
+    };
     this.route = [];
     this.target = null;
     this.destination = null;
@@ -1843,6 +1867,54 @@ class TownEnemy {
     this.alerted = true;
     this.play('fall', 1.15, 0.06);
     return true;
+  }
+
+  /** A body in the air after a car hit it, until the ground stops it. */
+  updateFlight(dt) {
+    const flight = this.flung;
+    flight.vy -= 9.81 * dt;
+    const nextX = this.root.position.x + flight.vx * dt;
+    const nextZ = this.root.position.z + flight.vz * dt;
+    // Do not fly through the world. A wall behind him ends the flight against
+    // it rather than putting a body inside a fence.
+    this.collider.enabled = false;
+    const blocked = this.colliders.contains(nextX, nextZ, .31,
+      this.root.position.y + .12, this.root.position.y + 1.2);
+    this.collider.enabled = true;
+    if (blocked) {
+      flight.vx *= -0.15;
+      flight.vz *= -0.15;
+    } else {
+      this.root.position.x = nextX;
+      this.root.position.z = nextZ;
+    }
+    this.root.position.y += flight.vy * dt;
+    this.root.rotation.z += flight.spin * dt;
+    const ground = this.colliders.floorAt(this.root.position.x, this.root.position.z,
+      .28, this.root.position.y + 2.5);
+    if (this.root.position.y <= ground && flight.vy <= 0) {
+      this.root.position.y = ground;
+      // One short bounce off the road, then he stays there.
+      if (flight.vy < -3.4 && !flight.bounced) {
+        flight.bounced = true;
+        flight.vy *= -0.26;
+        flight.vx *= 0.42;
+        flight.vz *= 0.42;
+        flight.spin *= 0.4;
+      } else {
+        this.flung = null;
+        this.root.rotation.z = 0;
+        window.dispatchEvent(new CustomEvent('lostsignal:bodylanded', {
+          detail: { name: this.root.name, speed: +flight.speed.toFixed(1),
+            x: this.root.position.x, y: this.root.position.y, z: this.root.position.z,
+            dead: this.dead },
+        }));
+      }
+    }
+    this.collider.cx = this.root.position.x;
+    this.collider.cz = this.root.position.z;
+    this.collider.minY = this.root.position.y;
+    this.collider.maxY = this.root.position.y + HEIGHT;
   }
 
   kill() {

@@ -43,8 +43,31 @@ const result = await page.evaluate(() => {
   const before = { shotAt: +toGate(shot).toFixed(1), mateAt: +toGate(mate).toFixed(1),
     mateAlerted: !!mate.alerted, mateWary: +(mate.wary || 0).toFixed(1) };
 
-  // Two seconds of closing, unshot, as the baseline.
-  for (let frame = 0; frame < 120; frame++) ls.game.update(1 / 60, 'outside', player);
+  // How much ground he covers, unshot, as the baseline.
+  //
+  // This used to measure how much closer to the gate he got in two seconds,
+  // which is the wrong question twice over. Each man draws a plan at random,
+  // and a bounding advance spends part of every cycle standing still and
+  // looking, while a hook deliberately swings wide - so a perfectly healthy
+  // attacker could post two seconds of no progress, or of negative progress,
+  // and the check called it a man who was not attacking. What suppression
+  // actually changes is whether he is moving at all, so that is what is
+  // measured, over long enough to cover a whole bounding cycle.
+  const walked = (frames) => {
+    let covered = 0;
+    let last = shot.root.position.clone();
+    const from = toGate(shot);
+    for (let frame = 0; frame < frames; frame++) {
+      ls.game.update(1 / 60, 'outside', player);
+      covered += shot.root.position.distanceTo(last);
+      last = shot.root.position.clone();
+    }
+    const seconds = frames / 60;
+    return { ground: +(covered / seconds).toFixed(2),
+      closing: +((from - toGate(shot)) / seconds).toFixed(2) };
+  };
+  const unshot = walked(60 * 6);
+  const unshotRate = unshot.closing;
   const closedUnshot = +(before.shotAt - toGate(shot)).toFixed(2);
 
   // Now shoot him, from somewhere he can place.
@@ -53,7 +76,9 @@ const result = await page.evaluate(() => {
   const reacted = { suppressed: +(shot.suppressed || 0).toFixed(1),
     mateAlerted: !!mate.alerted, mateWary: +(mate.wary || 0).toFixed(1) };
   const wasAt = toGate(shot);
-  for (let frame = 0; frame < 120; frame++) ls.game.update(1 / 60, 'outside', player);
+  // Inside the suppression, which lasts three and a half seconds.
+  const suppressed = walked(180);
+  const shotRate = suppressed.closing;
   const closedShot = +(wasAt - toGate(shot)).toFixed(2);
   const held = shot.holding;
 
@@ -67,18 +92,30 @@ const result = await page.evaluate(() => {
   mate.kill();
   const soloedAfterDeath = !!survivor.soloed;
   const rallyIgnored = survivor.squadRallied();
-  return { before, closedUnshot, reacted, closedShot, held,
-    soloedAfterDeath, rallyIgnored };
+  return { before, closedUnshot, unshot, reacted, closedShot, suppressed, held,
+    unshotRate, shotRate, soloedAfterDeath, rallyIgnored };
 });
 await browser.close();
 console.log(JSON.stringify(result, null, 1));
 
-assert.ok(result.closedUnshot > 3,
-  `unshot he closed ${result.closedUnshot} m on the gate in two seconds; he is not attacking`);
+assert.ok(result.unshot.ground > 1.2,
+  `unshot he covered ${result.unshot.ground} m/s of ground; he is standing still`);
 assert.ok(result.reacted.suppressed > 1,
   'being shot did not put his head down at all');
-assert.ok(result.closedShot < result.closedUnshot * 0.5,
-  `shot, he still closed ${result.closedShot} m against ${result.closedUnshot} m unshot; `
+// He does not stop moving when a round goes past - he moves to cover, and does
+// it faster than he was advancing. What changes is the direction: he gives
+// ground instead of taking it.
+//
+// The obvious check - "he was closing on the gate before and is not now" -
+// tests the wrong half. Each man draws a plan at random, and a hook swings
+// deliberately wide, so a healthy attacker's progress towards the gate over
+// any given six seconds is anywhere from four metres a second to nothing at
+// all. What is not a lottery is what a round does to him.
+assert.ok(result.shotRate < -1,
+  `shot, he went on closing on the gate at ${result.shotRate} m/s; he should be `
+  + 'backing off it');
+assert.ok(result.shotRate < result.unshotRate - 2,
+  `shot, he closed at ${result.shotRate} m/s against ${result.unshotRate} m/s unshot; `
   + 'a round through him changes nothing');
 assert.equal(result.held, 'suppressed',
   `after a round he is doing "${result.held}" rather than keeping his head down`);

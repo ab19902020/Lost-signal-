@@ -44,6 +44,18 @@ const result = await page.evaluate(() => {
   const drive = (frames, throttle = 1) => {
     for (let frame = 0; frame < frames; frame++) car.update(1 / 60, { throttle, steer: 0 });
   };
+  // A body hit by a car is thrown, and being thrown takes time. The world's
+  // own loop is what carries it through the air, so the flight has to be
+  // stepped before anything asks where he landed - the car is occupied, so
+  // this does not drive it a second time.
+  const settle = (frames = 90, watch = null) => {
+    let peak = watch ? watch.root.position.y : 0;
+    for (let frame = 0; frame < frames; frame++) {
+      ls.simulate(1 / 60);
+      if (watch) peak = Math.max(peak, watch.root.position.y);
+    }
+    return +peak.toFixed(2);
+  };
   // Heading 0 puts the nose down -Z, so a target in front is at a lower z.
   const lay = (speed, across) => {
     car.state.x = -24.5; car.state.z = 60; car.state.heading = 0;
@@ -64,17 +76,32 @@ const result = await page.evaluate(() => {
   agents[0].downed = 0; agents[0].dead = false;
   const before = agents[0].root.position.clone();
   drive(90, 0.12);
+  const peak = settle(120, agents[0]);
   const clipped = {
     downed: +(agents[0].downed || 0).toFixed(2), dead: agents[0].dead,
     thrown: +agents[0].root.position.distanceTo(before).toFixed(2),
+    peak, landed: +agents[0].root.position.y.toFixed(2),
   };
 
   // 3. Straight at the other one at thirty miles an hour: he stays down.
+  // The first man is still lying where the last test left him, which is the
+  // same piece of road this one uses - and a body on the tarmac is a collider,
+  // so it stopped the second one's flight dead and made a hard hit look like a
+  // soft one. Move him out of the way first.
+  agents[0].root.position.set(-24.5, 0, 96);
+  agents[0].collider.cx = agents[0].root.position.x;
+  agents[0].collider.cz = agents[0].root.position.z;
   const fast = lay(14, 0);
   agents[1].root.position.set(fast.x, 0, fast.z);
   agents[1].dead = false; agents[1].downed = 0;
+  const hard = agents[1].root.position.clone();
   drive(70);
-  const flattened = { dead: agents[1].dead };
+  const fastPeak = settle(120, agents[1]);
+  const flattened = {
+    dead: agents[1].dead,
+    thrown: +agents[1].root.position.distanceTo(hard).toFixed(2),
+    peak: fastPeak,
+  };
 
   // 4. The other way round: the car is being driven, and not by him. This is
   // the getaway and the gloating passes - the whole point of which is that the
@@ -107,9 +134,23 @@ assert.ok(result.clipped.downed > 0,
   'the car drove through him at four metres a second and he stayed on his feet');
 assert.ok(result.clipped.thrown > 0.5,
   `he was moved ${result.clipped.thrown} m by being hit; he should go over the bonnet`);
+// Thrown, not teleported. He used to jump two and a half metres down the road
+// in a single frame, which reads as a glitch rather than as an impact.
+assert.ok(result.clipped.peak > 0.25,
+  `he never left the ground: the highest he got was ${result.clipped.peak} m`);
+assert.ok(result.clipped.landed < 0.25,
+  `he finished the flight ${result.clipped.landed} m in the air`);
 
 assert.equal(result.flattened.dead, true,
   'fourteen metres a second - over thirty miles an hour - left him standing');
+// Hit harder, thrown further. A car at thirty does not put somebody down where
+// it found them.
+assert.ok(result.flattened.thrown > result.clipped.thrown,
+  `thirty miles an hour threw him ${result.flattened.thrown} m and a walking shunt `
+  + `threw him ${result.clipped.thrown} m`);
+assert.ok(result.flattened.peak > result.clipped.peak,
+  `thirty miles an hour lifted him ${result.flattened.peak} m and a walking shunt `
+  + `lifted him ${result.clipped.peak} m`);
 
 assert.ok(result.player.health < result.player.wasHealth - 40,
   `the stolen car hit the player at speed and cost him ${
