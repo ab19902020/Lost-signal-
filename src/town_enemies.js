@@ -552,6 +552,8 @@ class TownEnemy {
     this.collider = colliders.addOrientedBox({
       cx: position[0], cz: position[2], halfX: .33, halfZ: .33,
       rotationY: heading, minY: position[1], maxY: position[1] + HEIGHT,
+      // A man is something you walk into, not something you drive into.
+      soft: true,
     });
     this.root.userData.kind = 'enemy';
     this.root.userData.alive = true;
@@ -980,6 +982,11 @@ class TownEnemy {
       if (this.downed <= 0) {
         this.play('stand', 1, 0.18);
         this.thinkTimer = 0;
+        // Back on his feet, back in the way - but only if he can stand up
+        // without standing inside something. A man knocked under a lorry gets
+        // himself clear first, or the vehicle above him is wedged the moment
+        // he becomes solid again.
+        this.standClear();
       }
       return;
     }
@@ -1624,6 +1631,14 @@ class TownEnemy {
       if (this.model.visible) this.mixer.update(dt);
       return;
     }
+    // The backstop for the collider that being hit by a car switches off. A
+    // man on his feet is in the way again, whichever route through the brain
+    // got him back onto them - the ones who are deliberately not in the set
+    // are the ones sitting in the car.
+    if (!this.collider.enabled && this.downed <= 0
+      && this.state !== 'boarding' && this.state !== 'riding') {
+      this.standClear();
+    }
     if (this.assaulting) {
       // Inside the car they are not standing in the yard. The body still
       // exists and still moves with the car, so it can still be shot at.
@@ -1843,6 +1858,10 @@ class TownEnemy {
     // where something ought to be violent and it was a teleport. A bumper at
     // knee height tips a man onto the bonnet and throws him: he goes up as
     // well as away, and he comes down where the arc puts him.
+    // Off the collision set until he is back on his feet. A man in the air is
+    // not in anybody's way, and a man flat on the road is something you drive
+    // over rather than something you park against.
+    this.collider.enabled = false;
     const launch = Math.min(9.5, 1.4 + speed * 0.62);
     this.flung = {
       vx: dirX * launch,
@@ -1869,6 +1888,46 @@ class TownEnemy {
     return true;
   }
 
+  /**
+   * Get up somewhere he fits.
+   *
+   * Being run over puts a man wherever the arc dropped him, and that can be
+   * under the vehicle that hit him. Standing back up there makes him solid
+   * inside it, and then neither of them can go anywhere. So the spot is
+   * checked first, and if it is occupied he crawls out to the nearest one
+   * that is not before his collider comes back on.
+   */
+  standClear() {
+    const step = 0.55;
+    const at = this.root.position;
+    this.collider.enabled = false;
+    const free = (x, z) => !this.colliders.contains(x, z, .33, at.y + .18, at.y + 1.62, false);
+    if (!free(at.x, at.z)) {
+      let moved = false;
+      for (let ring = 1; ring <= 6 && !moved; ring++) {
+        for (let turn = 0; turn < 12; turn++) {
+          const angle = (turn / 12) * Math.PI * 2 + ring * 0.26;
+          const x = at.x + Math.cos(angle) * step * ring;
+          const z = at.z + Math.sin(angle) * step * ring;
+          if (!free(x, z)) continue;
+          at.x = x;
+          at.z = z;
+          at.y = this.colliders.floorAt(x, z, .28, at.y + 2.5);
+          moved = true;
+          break;
+        }
+      }
+    }
+    this.collider.cx = at.x;
+    this.collider.cz = at.z;
+    this.collider.minY = at.y;
+    this.collider.maxY = at.y + HEIGHT;
+    this.collider.enabled = true;
+    this.route = [];
+    this.target = null;
+    this.destination = null;
+  }
+
   /** A body in the air after a car hit it, until the ground stops it. */
   updateFlight(dt) {
     const flight = this.flung;
@@ -1877,10 +1936,14 @@ class TownEnemy {
     const nextZ = this.root.position.z + flight.vz * dt;
     // Do not fly through the world. A wall behind him ends the flight against
     // it rather than putting a body inside a fence.
+    // His own collider comes off for the probe and goes back to whatever it
+    // was, which for a dead man is off. Forcing it true here switched a
+    // corpse's collider back on and left a solid box in the road.
+    const wasEnabled = this.collider.enabled;
     this.collider.enabled = false;
     const blocked = this.colliders.contains(nextX, nextZ, .31,
       this.root.position.y + .12, this.root.position.y + 1.2);
-    this.collider.enabled = true;
+    this.collider.enabled = wasEnabled;
     if (blocked) {
       flight.vx *= -0.15;
       flight.vz *= -0.15;

@@ -72,7 +72,14 @@ const result = await page.evaluate(async () => {
   for (let index = 0; index < ls.game.vehicles.length; index++) {
     const name = ls.engineFor(index);
     if (voices[name]) continue;
-    voices[name] = { idle: await at(0.01, 0, 0.02), top: await at(0.9, 1, 1.0) };
+    voices[name] = {
+      idle: await at(0.01, 0, 0.02),
+      top: await at(0.9, 1, 1.0),
+      // Same revs, different road speed: what follows the wheels and what
+      // follows the engine.
+      slowAtRevs: await at(0.08, 0.5, 0.5),
+      fastAtRevs: await at(0.90, 0.5, 0.5),
+    };
   }
   return { idle, idleSwing: +(Math.max(...idleFiring) - Math.min(...idleFiring)).toFixed(2),
     cruise, pulling, rolling, braking, stopped, sliding, voices };
@@ -127,6 +134,42 @@ assert.ok(Math.abs(diesel[1].top.clatter.hz - diesel[1].top.firing) < diesel[1].
   + `${diesel[1].top.firing} Hz; a knock happens on a stroke, not on a timer`);
 assert.ok(!diesel[1].top.turbo, `${diesel[0]} has a turbo whistle on a diesel lorry`);
 
+// Combustion, not oscillators.
+//
+// An engine built out of sawtooth and triangle waves is a synthesiser playing
+// a note: the pitch tracks the revs and nothing else ever changes. A real one
+// is a train of bangs, one per firing stroke, through a pipe that rings - so
+// the pulse train has to run at the firing frequency and not near it.
+for (const [name, rows] of heard) {
+  for (const [where, row] of Object.entries(rows)) {
+    assert.ok(row.pulse, `${name} has no combustion at ${where}; it is an oscillator`);
+    assert.ok(Math.abs(row.pulse.hz - row.firing) < Math.max(2, row.firing * 0.05),
+      `${name} fires at ${row.firing} Hz at ${where} and bangs at ${row.pulse.hz} Hz`);
+  }
+  assert.ok(rows.top.pulse.gain > rows.idle.pulse.gain * 3,
+    `${name}'s combustion is ${rows.top.pulse.gain} pulling and ${rows.idle.pulse.gain} `
+    + 'at idle; it is not working any harder');
+}
+// Two pipes, an octave apart. A lorry's silencer is the size of a bin.
+const pipes = heard.map(([, rows]) => rows.idle.pulse.pipe);
+assert.ok(Math.max(...pipes) > Math.min(...pipes) * 1.5,
+  `every exhaust resonates within a whisker of ${Math.min(...pipes)} Hz`);
+
+// Transmission whine belongs to the lorry, and follows the road rather than
+// the engine - which is why it stays put through a gear change.
+const singing = heard.filter(([, rows]) => rows.top.whine > 0.002);
+const quiet = heard.filter(([, rows]) => !(rows.top.whine > 0.002));
+assert.ok(singing.length >= 1, 'nothing has a transmission whine');
+assert.ok(quiet.length >= 1,
+  'every vehicle has a straight-cut gearbox singing in it, including the hatchback');
+assert.ok(singing.every(([, rows]) => rows.top.clatter),
+  'something with no injectors has a lorry gearbox in it');
+const [whiner, whineRows] = singing[0];
+assert.ok(whineRows.fastAtRevs.whine > whineRows.slowAtRevs.whine * 2,
+  `${whiner} whines at ${whineRows.slowAtRevs.whine} crawling and `
+  + `${whineRows.fastAtRevs.whine} at speed on the same revs; it is following the engine`);
+
 console.log('Engine voice QA passed: the orders track the revs and are voiced by the '
   + 'accelerator, the throttle opens the induction, overrun goes quiet, the idle hunts, '
-  + 'the brakes squeal only while slowing, and the lorry is a diesel.');
+  + 'the brakes squeal only while slowing, both engines run on combustion pulses at '
+  + 'their own firing frequency, and the lorry is a diesel with a gearbox that sings.');

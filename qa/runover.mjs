@@ -118,7 +118,59 @@ const result = await page.evaluate(() => {
     health: ls.state().health, wasHealth,
     thrown: +ls.body.position.distanceTo(stood).toFixed(2),
   };
-  return { missed, clipped, flattened, player, events };
+  // 5. And then can it move?
+  //
+  // This is what the whole thing is for. Running a man down used to leave the
+  // vehicle stuck on the spot: his body stayed in the collision set as a solid
+  // box in front of the bumper, and a car cannot drive through a wall. Every
+  // vehicle gets hit-then-drive-on, because the bug was found in the truck and
+  // fixed in the car.
+  const afterwards = [];
+  for (let index = 0; index < ls.game.vehicles.length; index++) {
+    const vehicle = ls.game.vehicles[index];
+    const victim = agents[index % agents.length];
+    victim.dead = false;
+    victim.downed = 0;
+    victim.flung = null;
+    victim.collider.enabled = true;
+    victim.root.userData.alive = true;
+    // Each vehicle gets its own lane. Run three of them down the same one and
+    // the second is blocked by the first, which is correct of it and nothing
+    // to do with the body.
+    const lane = -24.5 + index * 14;
+    vehicle.state.occupied = true;
+    vehicle.state.x = lane;
+    vehicle.state.z = 140;
+    vehicle.state.heading = 0;
+    vehicle.state.speed = 12;
+    vehicle.state.y = 0;
+    victim.root.position.set(lane, 0, 140 - 9);
+    victim.collider.cx = lane;
+    victim.collider.cz = 140 - 9;
+    const from = vehicle.state.z;
+    for (let frame = 0; frame < 60; frame++) {
+      vehicle.update(1 / 60, { throttle: 1, steer: 0 });
+    }
+    const struckAt = vehicle.state.z;
+    // Let the body land and settle wherever it is going to.
+    for (let frame = 0; frame < 150; frame++) ls.simulate(1 / 60);
+    // Then ask the vehicle to carry on, from a standing start, over the spot.
+    vehicle.state.speed = 0;
+    const restarted = vehicle.state.z;
+    for (let frame = 0; frame < 120; frame++) {
+      vehicle.update(1 / 60, { throttle: 1, steer: 0 });
+    }
+    afterwards.push({
+      name: vehicle.root.name,
+      hit: +(from - struckAt).toFixed(2),
+      drove: +(restarted - vehicle.state.z).toFixed(2),
+      speed: +vehicle.state.speed.toFixed(2),
+    });
+    vehicle.state.occupied = false;
+    vehicle.state.speed = 0;
+  }
+
+  return { missed, clipped, flattened, player, afterwards, events };
 });
 await browser.close();
 console.log(JSON.stringify(result, null, 1));
@@ -159,7 +211,20 @@ assert.ok(result.player.thrown > 0.6,
   `the player was moved ${result.player.thrown} m by a car at thirteen metres a second`);
 assert.ok(result.events.some((event) => event.kind === 'lostsignal:runover'),
   'nothing announced that a man had been run over');
+
+// Every vehicle can drive away from what it just hit.
+for (const row of result.afterwards) {
+  assert.ok(row.hit > 4,
+    `${row.name} only covered ${row.hit} m on its run at him; it never got there`);
+  assert.ok(row.drove > 6,
+    `${row.name} moved ${row.drove} m from a standing start after running a man over; `
+    + 'it is stuck on the body');
+  assert.ok(row.speed > 4,
+    `${row.name} was doing ${row.speed} m/s after running a man over and holding the `
+    + 'throttle for two seconds');
+}
 assert.ok(result.events.some((event) => event.kind === 'lostsignal:playerrunover'),
   'nothing announced that the player had been run over');
 console.log('Run-over QA passed: the car misses who it misses, knocks down who it clips, '
-  + 'kills who it hits at speed, and does the same to the player when they are driving.');
+  + 'kills who it hits at speed, does the same to the player when they are driving, '
+  + 'and drives away from every body it leaves.');
