@@ -73,12 +73,17 @@ export class ColliderSet {
   }
 
   /** A thin wall in arbitrary orientation, without an oversized world AABB. */
+  // `soft` marks a collider that is a person rather than a piece of the world.
+  // A person stops somebody walking into them and does not stop a car, because
+  // a car does not get stopped by people - it runs them over, and there is a
+  // whole system for that. Without the distinction a body lying in front of a
+  // bumper is a wall, and the vehicle that put it there cannot move again.
   addOrientedBox({ cx, cz, halfX, halfZ, rotationY = 0, minY, maxY,
-    climbable = false, enabled = true }) {
+    climbable = false, enabled = true, soft = false }) {
     const collider = {
       cx, cz, halfX: Math.abs(halfX), halfZ: Math.abs(halfZ),
       cos: Math.cos(rotationY), sin: Math.sin(rotationY),
-      minY, maxY, climbable, enabled,
+      minY, maxY, climbable, enabled, soft,
     };
     this.orientedBoxes.push(collider);
     return collider;
@@ -386,7 +391,7 @@ export class ColliderSet {
   }
 
   // Cheap point query kept for AI and for the legacy blocked() signature.
-  contains(x, z, radius = 0, feetY = 0.1, headY = 1.8) {
+  contains(x, z, radius = 0, feetY = 0.1, headY = 1.8, ignoreSoft = false) {
     if (this.bounds) {
       const b = this.bounds;
       if (x < b.minX + radius || x > b.maxX - radius) return true;
@@ -416,6 +421,7 @@ export class ColliderSet {
     }
     for (const obb of this.orientedBoxes) {
       if (!obb.enabled || obb.climbable) continue;
+      if (ignoreSoft && obb.soft) continue;
       if (obb.maxY <= feetY || obb.minY >= headY) continue;
       if (ColliderSet._overlapsOriented(obb, x, z, radius)) return true;
     }

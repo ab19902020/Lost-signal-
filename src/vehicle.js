@@ -262,6 +262,12 @@ export const ESCORT_SPEC = Object.freeze({
     exhaust: 0.5, block: 430, blockSweep: 1750,
     orders: Object.freeze([[2, 0.052], [3, 0.026], [4, 0.020]]),
     rumble: 1, level: 1, mechanical: 1,
+    // The bang and the pipe it goes down. A petrol four through a road
+    // silencer is a soft thump into a small resonant box.
+    hardness: 0.22,
+    pipe: Object.freeze([210, 700]), pipeRoof: 3400,
+    whine: 0,
+    starter: Object.freeze({ hz: 62, spin: 0.55, catch: 0.35 }),
   }),
 });
 
@@ -322,6 +328,14 @@ export const TRUCK_SPEC = Object.freeze({
     exhaust: 0.5, block: 240, blockSweep: 620,
     orders: Object.freeze([[2, 0.030], [3, 0.044], [4, 0.013]]),
     rumble: 2.2, level: 1.1, mechanical: 2.4,
+    // A diesel's combustion is a hammer blow rather than a thump, and it goes
+    // down a silencer the size of a bin: the whole thing sits an octave below
+    // the car. Straight-cut gears sing on the overrun, which is half of what
+    // says lorry before you have seen it.
+    hardness: 0.85,
+    pipe: Object.freeze([96, 320]), pipeRoof: 1900,
+    whine: 1,
+    starter: Object.freeze({ hz: 34, spin: 1.5, catch: 0.75 }),
   }),
 });
 
@@ -817,13 +831,22 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   const groundAt = (x, z) => colliders.floorAt(x, z, PROBE_RADIUS, state.y + 2.4);
 
   // Would the body be inside anything if it stood here on this heading?
+  //
+  // People are not part of that question. A car is not stopped by somebody
+  // standing in front of it, it runs them over - and strike() is the whole
+  // system for what happens next. Counting them as world made the thing worse
+  // than useless: run a man down and his body became a solid box in front of
+  // the bumper, so the vehicle that had just hit him could not move again,
+  // ever, and neither could anybody who got into it afterwards.
   function blocked(x, z, facing = state.heading) {
     const sin = Math.sin(facing);
     const cos = Math.cos(facing);
     for (const offset of PROBE_Z) {
       const px = x - sin * offset;
       const pz = z - cos * offset;
-      if (colliders.contains(px, pz, PROBE_RADIUS, state.y + 0.30, state.y + 1.45)) return true;
+      if (colliders.contains(px, pz, PROBE_RADIUS, state.y + 0.30, state.y + 1.45, true)) {
+        return true;
+      }
     }
     return false;
   }

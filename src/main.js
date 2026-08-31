@@ -795,6 +795,13 @@ async function prepare() {
             : null,
           squeal: engine.squealGain ? +engine.squealGain.gain.value.toFixed(5) : null,
           scrub: engine.scrubGain ? +engine.scrubGain.gain.value.toFixed(5) : null,
+          pulse: engine.pulses
+            ? { rate: +engine.pulses.playbackRate.value.toFixed(3),
+              hz: +(engine.pulses.playbackRate.value * 40).toFixed(1),
+              gain: +engine.pulseGain.gain.value.toFixed(5),
+              pipe: +engine.pipe.frequency.value.toFixed(0) }
+            : null,
+          whine: engine.whineGain ? +engine.whineGain.gain.value.toFixed(5) : null,
           orders: (engine.orders || []).map((order) => ({
             multiple: order.multiple,
             hz: +order.oscillator.frequency.value.toFixed(1),
@@ -1383,6 +1390,7 @@ function enterVehicle(vehicle) {
   yaw = vehicle.heading;
   pitch = CHASE_PITCH;
   startEngineAudio('car', vehicle.spec?.voice);
+  starterSound(vehicle.spec?.voice || DEFAULT_VOICE);
   flash(`${vehicle.label} — DRIVING · [ E ] TO GET OUT`, 3000);
   completeObjective('drive');
   return true;
@@ -3589,6 +3597,58 @@ function updateAmbience() {
 let engine = null;
 let lastGearShiftSound = -Infinity;
 
+/**
+ * One engine cycle's worth of combustion, as a loopable buffer.
+ *
+ * This is the thing that was missing. An engine built out of sawtooth and
+ * triangle oscillators is a synthesiser playing a note: the pitch tracks the
+ * revs and the timbre never changes, and no amount of filtering makes it sound
+ * like a machine with pistons in it. A real engine is a train of discrete
+ * events - one bang per firing stroke, through a pipe that rings.
+ *
+ * So the pulses are real. A buffer holds a run of them at a known rate, and
+ * the rate is changed by playing the buffer faster or slower, which is exactly
+ * what happens to an engine when it revs. Each pulse gets its own amplitude
+ * and its own small timing error, because cylinders are not identical and a
+ * perfectly even train is the other way to sound synthetic.
+ *
+ * `hardness` is how sharp the bang is: a petrol engine is a soft thump through
+ * a silencer, a diesel is a hammer blow.
+ */
+const PULSE_BASE_HZ = 40;
+const PULSE_COUNT = 32;
+
+function combustionBuffer(hardness = 0) {
+  const seconds = PULSE_COUNT / PULSE_BASE_HZ;
+  const buffer = ac.createBuffer(1, Math.ceil(ac.sampleRate * seconds), ac.sampleRate);
+  const data = buffer.getChannelData(0);
+  const spacing = data.length / PULSE_COUNT;
+  // A hard pulse decays fast and is mostly noise; a soft one rings lower and
+  // longer. Both are a few milliseconds - a firing stroke at idle is 25 ms
+  // apart and they must not run into each other.
+  const decay = (0.011 - hardness * 0.005) * ac.sampleRate;
+  const ring = (140 + hardness * 210) / ac.sampleRate * Math.PI * 2;
+  for (let pulse = 0; pulse < PULSE_COUNT; pulse++) {
+    // Cylinder to cylinder, and stroke to stroke.
+    const strength = 0.72 + Math.random() * 0.34;
+    const jitter = (Math.random() - 0.5) * spacing * 0.06;
+    const at = Math.round(pulse * spacing + jitter);
+    const length = Math.min(Math.round(decay * 4), data.length - at);
+    for (let i = 0; i < length; i++) {
+      const fade = Math.exp(-i / decay);
+      const body = Math.sin(i * ring);
+      const grit = (Math.random() * 2 - 1);
+      data[at + i] += fade * strength * (body * (1 - hardness * 0.55)
+        + grit * (0.18 + hardness * 0.5));
+    }
+  }
+  // Keep it off the rails; the tails of consecutive pulses add up.
+  let peak = 0;
+  for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]));
+  if (peak > 0) for (let i = 0; i < data.length; i++) data[i] /= peak;
+  return buffer;
+}
+
 // What an engine sounds like when nobody has said. It is the Escort's, because
 // the Escort is what this synthesiser was written around.
 const DEFAULT_VOICE = Object.freeze({
@@ -3597,7 +3657,53 @@ const DEFAULT_VOICE = Object.freeze({
   exhaust: 0.5, block: 430, blockSweep: 1750,
   orders: Object.freeze([[2, 0.052], [3, 0.026], [4, 0.020]]),
   rumble: 1, level: 1, mechanical: 1,
+  hardness: 0.22, pipe: Object.freeze([210, 700]), pipeRoof: 3400, whine: 0,
+  starter: Object.freeze({ hz: 62, spin: 0.55, catch: 0.35 }),
 });
+
+/**
+ * Turning the key.
+ *
+ * The engine used to fade up out of silence, which is the one thing that never
+ * happens: you press the button and a starter motor drags the engine round
+ * against compression until it catches. It is half a second and it is the
+ * difference between getting into a car and a car being switched on.
+ */
+function starterSound(voice) {
+  if (!ac || !voice?.starter) return;
+  const { hz, spin, catch: caught } = voice.starter;
+  const t = ac.currentTime;
+  // The motor: a whirr that sags as it takes up the load, with the engine
+  // being turned over underneath it.
+  const motor = ac.createOscillator();
+  const motorGain = ac.createGain();
+  const motorBand = ac.createBiquadFilter();
+  motor.type = 'sawtooth';
+  motor.frequency.setValueAtTime(hz * 8.5, t);
+  motor.frequency.linearRampToValueAtTime(hz * 7.2, t + spin);
+  motorBand.type = 'bandpass';
+  motorBand.frequency.value = hz * 17;
+  motorBand.Q.value = 2.6;
+  motorGain.gain.setValueAtTime(0, t);
+  motorGain.gain.linearRampToValueAtTime(0.055, t + 0.05);
+  motorGain.gain.setValueAtTime(0.055, t + spin * 0.85);
+  motorGain.gain.exponentialRampToValueAtTime(0.0006, t + spin + 0.14);
+  motor.connect(motorBand); motorBand.connect(motorGain); motorGain.connect(master);
+  motor.start(t); motor.stop(t + spin + 0.2);
+  // Compression: the engine being dragged over, one lump per stroke, slow and
+  // uneven until it fires.
+  const strokes = Math.max(3, Math.round(spin * 9));
+  for (let stroke = 0; stroke < strokes; stroke++) {
+    const at = t + (stroke / strokes) * spin * (1.06 - stroke / strokes * 0.12);
+    noiseBurst({ at, hz: hz * 2.4, q: 1.2, decay: 0.05,
+      level: 0.05 + stroke / strokes * 0.03, type: 'lowpass' });
+  }
+  // And it catches: a couple of ragged fires, then it settles into its idle.
+  noiseBurst({ at: t + spin, hz: hz * 3.1, q: 0.9, decay: 0.11, level: 0.10,
+    type: 'lowpass' });
+  noiseBurst({ at: t + spin + caught * 0.45, hz: hz * 2.2, q: 1.0, decay: 0.09,
+    level: 0.07, type: 'lowpass' });
+}
 
 function startEngineAudio(kind = 'car', spoken = null) {
   if (!ac || engine) return;
@@ -3617,6 +3723,41 @@ function startEngineAudio(kind = 'car', spoken = null) {
   filter.frequency.value = voice.block;
   filter.Q.value = .85;
   filter.connect(out);
+
+  // The pipe the combustion goes down.
+  //
+  // An exhaust is a resonant tube, not a tone control. Two peaks give it a
+  // vowel - the thing that makes one engine sound like a different engine to
+  // another at the same revs - and a lorry's is an octave below a car's
+  // because its silencer is the size of a bin.
+  let pipe = null;
+  let pipeTwo = null;
+  let pulses = null;
+  let pulseGain = null;
+  if (kind !== 'aircraft') {
+    pipe = ac.createBiquadFilter();
+    pipe.type = 'peaking';
+    pipe.frequency.value = voice.pipe?.[0] ?? 190;
+    pipe.Q.value = 1.5;
+    pipe.gain.value = 9;
+    pipeTwo = ac.createBiquadFilter();
+    pipeTwo.type = 'peaking';
+    pipeTwo.frequency.value = voice.pipe?.[1] ?? 620;
+    pipeTwo.Q.value = 2.2;
+    pipeTwo.gain.value = 5;
+    const roof = ac.createBiquadFilter();
+    roof.type = 'lowpass';
+    roof.frequency.value = voice.pipeRoof ?? 3200;
+    roof.Q.value = 0.7;
+    pulseGain = ac.createGain();
+    pulseGain.gain.value = 0;
+    pulses = ac.createBufferSource();
+    pulses.buffer = combustionBuffer(voice.hardness ?? 0.25);
+    pulses.loop = true;
+    pulses.connect(pipe); pipe.connect(pipeTwo); pipeTwo.connect(roof);
+    roof.connect(pulseGain); pulseGain.connect(out);
+    pulses.start();
+  }
 
   const block = [0, 1].map((i) => {
     const o = ac.createOscillator();
@@ -3846,15 +3987,41 @@ function startEngineAudio(kind = 'car', spoken = null) {
     scrub.start();
   }
 
+  // Transmission whine. A straight-cut gearbox and a hypoid back axle sing,
+  // and the note follows the road rather than the engine - which is why it
+  // stays where it is when the driver changes gear, and why it is one of the
+  // things that says lorry.
+  let whine = null;
+  let whineGain = null;
+  if (kind !== 'aircraft' && voice.whine) {
+    whine = ac.createOscillator();
+    whine.type = 'triangle';
+    whine.frequency.value = 300;
+    const whineBand = ac.createBiquadFilter();
+    whineBand.type = 'bandpass';
+    whineBand.frequency.value = 900;
+    whineBand.Q.value = 4.5;
+    whineGain = ac.createGain();
+    whineGain.gain.value = 0;
+    whine.connect(whineBand); whineBand.connect(whineGain); whineGain.connect(out);
+    whine.start();
+  }
+
   engine = { out, compressor, filter, block, orders, exhaust, induction, inductionFilter,
     inductionGain, mechanical, mechanicalFilter, mechanicalGain,
     rumble, rumbleFilter, rumbleGain, prop, propGain, turbo, turboGain,
     road, roadFilter, roadGain, wind, windFilter, windGain,
     clatter, clatterFilter, clatterGain, clatterOsc, clatterDepth,
     squeal, squealBand, squealGain, scrub, scrubFilter, scrubGain,
+    pulses, pulseGain, pipe, pipeTwo, whine, whineGain,
     voice,
     kind, revs: 0, throttle: 0, lastPop: -Infinity, lastDump: -Infinity, boost: 0,
-    lope: 0, lopePhase: 0, wasMoving: false };
+    lope: 0, lopePhase: 0, wasMoving: false,
+    // While the starter is turning it over, the engine is not running yet.
+    // The frame loop writes the output gain every frame, so the crank has to
+    // be honoured there rather than scheduled here - a scheduled ramp is
+    // overwritten sixty times a second.
+    startedAt: ac.currentTime, crank: (voice.starter?.spin ?? 0) * 0.82 };
   out.gain.setTargetAtTime(0.42, ac.currentTime, 0.35);
 }
 
@@ -3874,6 +4041,8 @@ function stopEngineAudio() {
     try { dying.turbo?.stop(); } catch { /* already stopped */ }
     try { dying.mechanical?.stop(); } catch { /* already stopped */ }
     try { dying.rumble?.stop(); } catch { /* already stopped */ }
+    try { dying.pulses?.stop(); } catch { /* already stopped */ }
+    try { dying.whine?.stop(); } catch { /* already stopped */ }
     try { dying.clatter?.stop(); } catch { /* already stopped */ }
     try { dying.clatterOsc?.stop(); } catch { /* already stopped */ }
     try { dying.squeal?.stop(); } catch { /* already stopped */ }
@@ -3953,6 +4122,28 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   engine.filter.frequency.setTargetAtTime(
     voice.block + normalised * voice.blockSweep + load * voice.blockSweep * 0.35, t, 0.075);
 
+  // The combustion itself. Playing the pulse buffer faster is revving the
+  // engine, which is the whole idea: the bangs get closer together rather than
+  // a tone getting higher. Under load the pulses harden and the pipe opens.
+  if (engine.pulses) {
+    engine.pulses.playbackRate.setTargetAtTime(
+      Math.max(0.35, firing / PULSE_BASE_HZ), t, 0.05);
+    const pull = 0.30 + 0.70 * THREE.MathUtils.clamp(Math.max(0, throttle), 0, 1);
+    engine.pulseGain.gain.setTargetAtTime(
+      (0.030 + normalised * 0.055) * pull * (voice.level ?? 1), t, 0.07);
+    engine.pipe.frequency.setTargetAtTime(
+      (voice.pipe?.[0] ?? 190) * (1 + normalised * 0.22), t, 0.12);
+    engine.pipeTwo.gain.setTargetAtTime(3 + load * 6, t, 0.12);
+  }
+
+  // The gearbox, which follows the road and not the engine.
+  if (engine.whineGain) {
+    const rolling = THREE.MathUtils.clamp(speedRatio, 0, 1);
+    engine.whine.frequency.setTargetAtTime(220 + rolling * 1350, t, 0.1);
+    engine.whineGain.gain.setTargetAtTime(
+      Math.min(1, rolling * 2.4) * (0.004 + load * 0.010) * voice.whine, t, 0.12);
+  }
+
   // The knock, in time with the engine.
   if (engine.clatterOsc) {
     const bite = voice.diesel * (0.34 + load * 0.66);
@@ -3969,8 +4160,11 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   // Overrun: off the throttle at revs, an engine gets quieter and thinner
   // rather than carrying on at the same volume in a lower key.
   const overrun = normalised > 0.3 && throttle < 0.08 ? 0.72 : 1;
+  const caught = engine.crank > 0
+    ? THREE.MathUtils.clamp((t - engine.startedAt) / engine.crank, 0, 1) : 1;
   engine.out.gain.setTargetAtTime(
-    (0.34 + load * 0.23) * (shifted ? 0.84 : 1) * overrun * voice.level, t, 0.055);
+    (0.34 + load * 0.23) * (shifted ? 0.84 : 1) * overrun * voice.level
+      * caught * caught, t, 0.055);
 
   // One restrained exhaust cough on a high-rpm lift. It is event-driven, not
   // a random crackle loop, so coasting does not sound like continuous gunfire.
