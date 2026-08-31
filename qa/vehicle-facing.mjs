@@ -61,10 +61,32 @@ const result = await page.evaluate(() => {
     for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 1 });
     const steered = ls.vehicleRig(index).steer || {};
     for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
+
+    // The lamps. Off, on, and on the brakes - a vehicle with no brake lights
+    // is invisible to anything behind it the moment it slows down, and the
+    // Bedford had no lamps of any kind because the model has none in it and
+    // nothing built any.
+    const lampsNow = () => {
+      const read = ls.vehicleRig(index);
+      return { head: read.lamps.head, tail: read.lamps.tail, beams: read.beams };
+    };
+    vehicle.setLights(false);
+    for (let step = 0; step < 6; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
+    const dark = lampsNow();
+    vehicle.setLights(true);
+    for (let step = 0; step < 40; step++) vehicle.update(1 / 60, { throttle: 1, steer: 0 });
+    const lit = lampsNow();
+    for (let step = 0; step < 8; step++) {
+      vehicle.update(1 / 60, { throttle: 0, steer: 0, brake: true });
+    }
+    const stopping = lampsNow();
+    vehicle.setLights(false);
+    for (let step = 0; step < 30; step++) vehicle.update(1 / 60, { throttle: 0, steer: 0 });
     state.speed = 0;
     state.x = from.x; state.z = from.z; state.heading = from.heading;
     state.occupied = false;
-    rows.push({ ...rig, travel: { forward: +forward.toFixed(2), sideways: +sideways.toFixed(2) }, steered });
+    rows.push({ ...rig, travel: { forward: +forward.toFixed(2), sideways: +sideways.toFixed(2) },
+      steered, lamps: { dark, lit, stopping } });
   }
   return rows;
 });
@@ -101,6 +123,22 @@ for (const row of result) {
   assert.ok(Math.abs(row.travel.sideways) < row.travel.forward * 0.1,
     `${row.name} crabbed ${row.travel.sideways} m sideways over ${row.travel.forward} m`);
 
+  // Every wheel turns about its axle, and an axle goes across a vehicle.
+  //
+  // The truck's did not. Its rig turns the whole model a quarter turn to bring
+  // the nose round to -Z, the wheels hang inside that turn, and the layer that
+  // rolls them was built in the wheel's own parent - so it rolled them about
+  // the length of the lorry. Six wheels turning like barrels rolling down the
+  // chassis. Nothing measured it, because everything that looked at a wheel
+  // asked where it was rather than which way it went round.
+  for (const [tag, axle] of Object.entries(row.axle || {})) {
+    assert.ok(axle, `${row.name}'s ${tag} wheel has no roll axis`);
+    assert.ok(Math.abs(axle[0]) > 0.99,
+      `${row.name}'s ${tag} wheel rolls about [${axle}]; an axle goes across the car, so that has to be X`);
+  }
+  assert.equal(Object.keys(row.axle || {}).length, tags.length,
+    `${row.name} has ${tags.length} wheels and ${Object.keys(row.axle || {}).length} roll axes`);
+
   // Only the front wheels turn, and they turn the same way as each other.
   for (const tag of ['LF', 'RF']) {
     assert.ok(row.steered[tag] !== null && row.steered[tag] !== undefined,
@@ -117,6 +155,23 @@ for (const row of result) {
     assert.ok(row.steered[tag] === null || row.steered[tag] === undefined,
       `${row.name}'s ${tag} wheel is on a kingpin; only the front pair steers`);
   }
+
+  // Lamps. Every vehicle has them, they go out when they are off, and the
+  // brake lights are brighter than the sidelights.
+  const { dark, lit, stopping } = row.lamps;
+  assert.ok(lit.head.length >= 2 && lit.tail.length >= 2,
+    `${row.name} has ${lit.head.length} headlamp(s) and ${lit.tail.length} tail lamp(s)`);
+  assert.ok(dark.head.every((glow) => glow < 0.01) && dark.tail.every((glow) => glow < 0.01),
+    `${row.name}'s lamps are lit with the lights switched off`);
+  assert.ok(lit.head.every((glow) => glow > 1),
+    `${row.name}'s headlamps only reach ${lit.head} with the lights on`);
+  assert.equal(lit.beams.lit, lit.beams.total,
+    `${row.name} lights ${lit.beams.lit} of its ${lit.beams.total} beams`);
+  assert.equal(dark.beams.lit, 0,
+    `${row.name} leaves ${dark.beams.lit} beam(s) burning with the lights off`);
+  assert.ok(stopping.tail.every((glow) => glow > Math.max(...lit.tail) * 1.5),
+    `${row.name}'s brake lights reach ${stopping.tail} against sidelights at ${lit.tail}`);
+  assert.ok(row.shell, `${row.name} has no body to lean; it will roll on its wheels`);
 
   // The driver is in the driving seat, on the side the wheel is.
   const [ex, ey, ez] = row.eye;
@@ -145,4 +200,5 @@ for (const row of result) {
     + `${(bogie - front).toFixed(2)} m`);
 }
 console.log(`Vehicle facing QA passed: ${result.length} vehicles, all of them nose-first, `
-  + 'steering at the front, driver at the wheel.');
+  + 'steering on the front axle, wheels rolling about their axles, lamps and brake '
+  + 'lights working, driver at the wheel.');
