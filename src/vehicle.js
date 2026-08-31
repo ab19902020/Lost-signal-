@@ -241,6 +241,20 @@ export const ESCORT_SPEC = Object.freeze({
   eye: Object.freeze([0.40, 1.30, -0.28]), door: Object.freeze([1.62, 0, -0.20]),
   hullMinY: 0.18, hullMaxY: 1.62,
   glass: true, cabin: true, lamps: true,
+  // What it sounds like.
+  //
+  // A four-stroke fires half its cylinders per revolution, so the note every
+  // other layer is built on is rpm * cylinders / 120. Everything else here is
+  // this particular engine: where it idles, where it stops, how far the block
+  // opens up as it comes on song, and which harmonics above the firing
+  // frequency harden under load.
+  voice: Object.freeze({
+    cylinders: 4, idleRpm: 950, redlineRpm: 6450,
+    turbo: true, diesel: 0,
+    exhaust: 0.5, block: 430, blockSweep: 1750,
+    orders: Object.freeze([[2, 0.052], [3, 0.026], [4, 0.020]]),
+    rumble: 1, level: 1, mechanical: 1,
+  }),
 });
 
 // The Bedford in the compound. Long, wide, tall, slow and geared like a lorry:
@@ -271,7 +285,20 @@ export const TRUCK_SPEC = Object.freeze({
   // cab whose roof rail is at 2.30, and on the left, where the wheel is.
   eye: Object.freeze([-0.42, 2.12, -1.16]), door: Object.freeze([-1.95, 0, -1.16]),
   hullMinY: 0.20, hullMaxY: 2.99,
-  glass: false, cabin: false, lamps: false,
+  glass: false, cabin: false, lamps: true,
+  // A six-cylinder indirect-injection diesel. It idles at a speed the Escort
+  // would stall at, it is finished by two and a half thousand, and most of
+  // what you hear is not combustion at all but the injectors knocking - which
+  // is why the clatter is locked to the firing frequency rather than being a
+  // hiss laid over the top. Both vehicles used to run the same synthesiser
+  // settings, so a four-tonne lorry pulled away sounding like a hot hatch.
+  voice: Object.freeze({
+    cylinders: 6, idleRpm: 560, redlineRpm: 2650,
+    turbo: false, diesel: 1,
+    exhaust: 0.5, block: 240, blockSweep: 620,
+    orders: Object.freeze([[2, 0.030], [3, 0.044], [4, 0.013]]),
+    rumble: 2.2, level: 1.1, mechanical: 2.4,
+  }),
 });
 
 // --- Rigging the supplied truck --------------------------------------------
@@ -552,24 +579,46 @@ export function createVehicle({ scene, colliders, assets, place, addInteraction,
   // yaws around the kingpin; the inner layer rolls around the axle. Keeping
   // those transforms off the supplied mesh means its authored orientation is
   // never overwritten and steering cannot make a tyre wobble or cone.
+  root.updateMatrixWorld(true);
   const wheelRigs = wheels.map((wheel, index) => {
     if (!wheel) return null;
     const parent = wheel.parent;
     const hub = wheel.position.clone();
+    // An axle goes across a vehicle, and a wheel turns about its axle. Both of
+    // those are facts about the vehicle, not about the file it came out of -
+    // so the layers that steer and roll are built in the vehicle's own frame
+    // rather than in whatever frame the wheel's parent happens to be in.
+    //
+    // On the Escort those are the same frame and this changes nothing. On the
+    // Bedford they are a quarter turn apart, because the rig turns the whole
+    // model to bring its nose round to -Z, and the wheels hang inside that
+    // turn. Rolling them about the local X therefore rolled them about the
+    // length of the lorry: six wheels turning like barrels rolling down the
+    // chassis, which is exactly as strange as it sounds and was on the screen
+    // the whole time.
+    const intoParent = parent.getWorldQuaternion(new THREE.Quaternion()).invert()
+      .multiply(root.getWorldQuaternion(new THREE.Quaternion()));
+    // Kept off the steering and spin groups themselves: both of those get an
+    // Euler angle written straight onto them every frame, which would throw
+    // any alignment stored there away.
+    const align = new THREE.Group();
+    align.name = `${wheel.name}_Align`;
+    align.position.copy(hub);
+    align.quaternion.copy(intoParent);
+    parent.add(align);
     const steer = index < 2 ? new THREE.Group() : null;
     const spin = new THREE.Group();
     spin.name = `${wheel.name}_Spin`;
     if (steer) {
       steer.name = `${wheel.name}_Steer`;
-      steer.position.copy(hub);
-      parent.add(steer);
+      align.add(steer);
       steer.add(spin);
     } else {
-      spin.position.copy(hub);
-      parent.add(spin);
+      align.add(spin);
     }
     spin.add(wheel);
     wheel.position.set(0, 0, 0);
+    wheel.quaternion.premultiply(intoParent.clone().invert());
     return { wheel, steer, spin };
   });
   const [frontLeftRig, frontRightRig] = wheelRigs;

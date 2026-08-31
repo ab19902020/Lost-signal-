@@ -661,10 +661,25 @@ async function prepare() {
             // wheel's bounding box moves as it spins, so measuring lock off
             // positions reads every wheel as steered a little.
             let steer = null;
+            let spin = null;
             for (let up = node; up && up !== root; up = up.parent) {
               if (/_Steer$/.test(up.name || '')) { steer = +up.rotation.y.toFixed(4); break; }
             }
+            // Which way the axle points, in the vehicle's own frame. A wheel
+            // rolls about its axle and an axle is across the car, so this has
+            // to be X - and on the truck it was Z, because the spin group was
+            // built inside the author's own rotated hierarchy.
+            for (let up = node; up && up !== root; up = up.parent) {
+              if (!/_Spin$/.test(up.name || '')) continue;
+              const axle = new THREE.Vector3(1, 0, 0)
+                .applyQuaternion(up.getWorldQuaternion(new THREE.Quaternion()))
+                .applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion()).invert());
+              spin = axle.toArray().map((value) => +value.toFixed(3));
+              break;
+            }
             out.wheels[tag] = wheel;
+            out.axle = out.axle || {};
+            out.axle[tag] = spin;
             out.steer = out.steer || {};
             out.steer[tag] = steer;
           }
@@ -739,10 +754,22 @@ async function prepare() {
         // screenshot.
         engineVoice: () => (engine ? {
           kind: engine.kind,
+          cylinders: engine.voice?.cylinders ?? null,
+          idleRpm: engine.voice?.idleRpm ?? null,
+          redlineRpm: engine.voice?.redlineRpm ?? null,
+          turbo: !!engine.turbo,
           firing: +engine.block[0].frequency.value.toFixed(1),
+          exhaust: +engine.exhaust.frequency.value.toFixed(1),
           level: +engine.out.gain.value.toFixed(4),
           induction: +engine.inductionGain.gain.value.toFixed(4),
           boost: +engine.boost.toFixed(3),
+          clatter: engine.clatterGain
+            ? { hz: +engine.clatterOsc.frequency.value.toFixed(1),
+              gain: +engine.clatterGain.gain.value.toFixed(5),
+              depth: +engine.clatterDepth.gain.value.toFixed(5) }
+            : null,
+          squeal: engine.squealGain ? +engine.squealGain.gain.value.toFixed(5) : null,
+          scrub: engine.scrubGain ? +engine.scrubGain.gain.value.toFixed(5) : null,
           orders: (engine.orders || []).map((order) => ({
             multiple: order.multiple,
             hz: +order.oscillator.frequency.value.toFixed(1),
@@ -751,9 +778,17 @@ async function prepare() {
         } : null),
         // Drive the engine's voice directly, as the car does each frame,
         // starting it first if nobody is sitting in the car.
-        engineAt: (speedRatio, throttle, rpm) => {
-          if (!engine) { startAudio(); startEngineAudio('car'); }
-          return engineAudio(speedRatio, throttle, null, rpm, false);
+        engineAt: (speedRatio, throttle, rpm, brakes = null) => {
+          if (!engine) { startAudio(); startEngineAudio('car', driving?.spec?.voice); }
+          return engineAudio(speedRatio, throttle, null, rpm, false, brakes);
+        },
+        // Start the synthesiser on a named vehicle's voice, so a harness can
+        // hear one without having to drive it.
+        engineFor: (index = 0) => {
+          stopEngineAudio();
+          startAudio();
+          startEngineAudio('car', (game.vehicles || [])[index]?.spec?.voice);
+          return (game.vehicles || [])[index]?.root?.name ?? null;
         },
         lights: (on) => (driving ? (on === undefined ? driving.toggleLights() : driving.setLights(on)) : null),
         horn: () => hornSound(),
@@ -1295,7 +1330,7 @@ function enterVehicle(vehicle) {
   // player's yaw are the same number: both are measured off -Z.
   yaw = vehicle.heading;
   pitch = CHASE_PITCH;
-  startEngineAudio();
+  startEngineAudio('car', vehicle.spec?.voice);
   flash(`${vehicle.label} — DRIVING · [ E ] TO GET OUT`, 3000);
   completeObjective('drive');
   return true;
@@ -3280,8 +3315,16 @@ function updateDriving(dt) {
     if (impact > 8) damage(Math.round(impact - 6));
   }
 
+  // What the brakes are doing, told to the sound rather than inferred from it.
+  // `braking` here is the pedal in any of its forms: the handbrake, and the
+  // throttle held against the way the car is travelling, which is how every
+  // arcade car since Out Run has braked.
+  const pedal = driveControls.brake ? 1
+    : (driveControls.throttle < -0.05 && speed > 0.5 ? Math.abs(driveControls.throttle)
+      : (driveControls.throttle > 0.05 && speed < -0.5 ? driveControls.throttle : 0));
   engineAudio(Math.abs(speed) / vehicle.topSpeed, driveControls.throttle,
-    vehicle.gear, vehicle.rpm, vehicle.state.shifted);
+    vehicle.gear, vehicle.rpm, vehicle.state.shifted,
+    { pedal, slide: vehicle.state.slide, speed });
 
   const mph = Math.round(Math.abs(speed) * MPH);
   if (driveSpeedEl) driveSpeedEl.textContent = String(mph);
@@ -3494,8 +3537,19 @@ function updateAmbience() {
 let engine = null;
 let lastGearShiftSound = -Infinity;
 
-function startEngineAudio(kind = 'car') {
+// What an engine sounds like when nobody has said. It is the Escort's, because
+// the Escort is what this synthesiser was written around.
+const DEFAULT_VOICE = Object.freeze({
+  cylinders: 4, idleRpm: 950, redlineRpm: 6450,
+  turbo: true, diesel: 0,
+  exhaust: 0.5, block: 430, blockSweep: 1750,
+  orders: Object.freeze([[2, 0.052], [3, 0.026], [4, 0.020]]),
+  rumble: 1, level: 1, mechanical: 1,
+});
+
+function startEngineAudio(kind = 'car', spoken = null) {
   if (!ac || engine) return;
+  const voice = { ...DEFAULT_VOICE, ...(spoken || {}) };
   const out = ac.createGain();
   out.gain.value = 0;
   const compressor = ac.createDynamicsCompressor();
@@ -3508,7 +3562,7 @@ function startEngineAudio(kind = 'car') {
 
   const filter = ac.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.value = 520;
+  filter.frequency.value = voice.block;
   filter.Q.value = .85;
   filter.connect(out);
 
@@ -3525,7 +3579,7 @@ function startEngineAudio(kind = 'car') {
   });
   const exhaust = ac.createOscillator();
   exhaust.type = 'sawtooth';
-  exhaust.frequency.value = 16;
+  exhaust.frequency.value = 32 * voice.exhaust;
   const exhaustGain = ac.createGain();
   exhaustGain.gain.value = 0.075;
   exhaust.connect(exhaustGain); exhaustGain.connect(filter);
@@ -3540,11 +3594,10 @@ function startEngineAudio(kind = 'car') {
   // fourth orders come up hard under load and fall away the moment you lift.
   // Their pitch follows the revs; their level follows the accelerator, and
   // that is the whole difference.
-  const orders = [
-    { multiple: 2, type: 'sawtooth', peak: 0.052, floor: 0.004 },
-    { multiple: 3, type: 'square', peak: 0.026, floor: 0.002 },
-    { multiple: 4, type: 'sawtooth', peak: 0.020, floor: 0.001 },
-  ].map((order) => {
+  const ORDER_SHAPE = ['sawtooth', 'square', 'sawtooth'];
+  const orders = voice.orders.map(([multiple, peak], at) => ({
+    multiple, peak, type: ORDER_SHAPE[at % ORDER_SHAPE.length], floor: peak * 0.08,
+  })).map((order) => {
     const oscillator = ac.createOscillator();
     oscillator.type = order.type;
     oscillator.frequency.value = 32 * order.multiple;
@@ -3614,7 +3667,7 @@ function startEngineAudio(kind = 'car') {
     propBand.frequency.value = 1400;
     prop.connect(propGain); propGain.connect(propBand); propBand.connect(out);
     prop.start();
-  } else {
+  } else if (voice.turbo) {
     // The RS Turbo's induction whistle lives above the four-cylinder block.
     // It follows load and boost rather than road speed, and falls away between
     // gears instead of becoming a permanent sine tone.
@@ -3666,12 +3719,90 @@ function startEngineAudio(kind = 'car') {
     wind.start();
   }
 
+  // Injector knock.
+  //
+  // Most of what a diesel sounds like from outside is not combustion, it is
+  // the injectors hammering - and it happens once per firing stroke, not
+  // continuously. So the noise is gated by a sawtooth running at the firing
+  // frequency: the clatter then speeds up with the engine and stays locked to
+  // it, which is the difference between a lorry and a hiss laid over a car.
+  let clatter = null;
+  let clatterFilter = null;
+  let clatterGain = null;
+  let clatterOsc = null;
+  let clatterDepth = null;
+  if (kind !== 'aircraft' && voice.diesel > 0) {
+    clatter = ac.createBufferSource();
+    clatter.buffer = noiseBuffer(2);
+    clatter.loop = true;
+    clatterFilter = ac.createBiquadFilter();
+    clatterFilter.type = 'bandpass';
+    clatterFilter.frequency.value = 1500;
+    clatterFilter.Q.value = 1.7;
+    clatterGain = ac.createGain();
+    clatterGain.gain.value = 0;
+    clatter.connect(clatterFilter);
+    clatterFilter.connect(clatterGain);
+    clatterGain.connect(out);
+    clatter.start();
+    clatterOsc = ac.createOscillator();
+    clatterOsc.type = 'sawtooth';
+    clatterOsc.frequency.value = 28;
+    clatterDepth = ac.createGain();
+    clatterDepth.gain.value = 0;
+    clatterOsc.connect(clatterDepth);
+    clatterDepth.connect(clatterGain.gain);
+    clatterOsc.start();
+  }
+
+  // The brakes and the tyres.
+  //
+  // A car had no brakes at all: you could stand on the pedal from seventy and
+  // the only thing that changed was the engine note. Two layers do most of the
+  // work - a resonant squeal that comes up as the car slows and dies with it,
+  // which is the one thing everybody recognises, and broadband scrub for a
+  // tyre that has stopped rolling and started sliding.
+  let squeal = null;
+  let squealGain = null;
+  let squealBand = null;
+  let scrub = null;
+  let scrubFilter = null;
+  let scrubGain = null;
+  if (kind !== 'aircraft') {
+    squeal = ac.createOscillator();
+    squeal.type = 'sawtooth';
+    squeal.frequency.value = 2400;
+    squealBand = ac.createBiquadFilter();
+    squealBand.type = 'bandpass';
+    squealBand.frequency.value = 2600;
+    squealBand.Q.value = 11;
+    squealGain = ac.createGain();
+    squealGain.gain.value = 0;
+    squeal.connect(squealBand); squealBand.connect(squealGain); squealGain.connect(out);
+    squeal.start();
+
+    scrub = ac.createBufferSource();
+    scrub.buffer = noiseBuffer(3);
+    scrub.loop = true;
+    scrubFilter = ac.createBiquadFilter();
+    scrubFilter.type = 'bandpass';
+    scrubFilter.frequency.value = 1100;
+    scrubFilter.Q.value = 0.8;
+    scrubGain = ac.createGain();
+    scrubGain.gain.value = 0;
+    scrub.connect(scrubFilter); scrubFilter.connect(scrubGain); scrubGain.connect(out);
+    scrub.start();
+  }
+
   engine = { out, compressor, filter, block, orders, exhaust, induction, inductionFilter,
     inductionGain, mechanical, mechanicalFilter, mechanicalGain,
     rumble, rumbleFilter, rumbleGain, prop, propGain, turbo, turboGain,
     road, roadFilter, roadGain, wind, windFilter, windGain,
+    clatter, clatterFilter, clatterGain, clatterOsc, clatterDepth,
+    squeal, squealBand, squealGain, scrub, scrubFilter, scrubGain,
+    voice,
     kind, revs: 0, throttle: 0, lastPop: -Infinity, lastDump: -Infinity, boost: 0,
-    lope: 0, lopePhase: 0 };
+    lope: 0, lopePhase: 0, wasMoving: false };
   out.gain.setTargetAtTime(0.42, ac.currentTime, 0.35);
 }
 
@@ -3691,6 +3822,10 @@ function stopEngineAudio() {
     try { dying.turbo?.stop(); } catch { /* already stopped */ }
     try { dying.mechanical?.stop(); } catch { /* already stopped */ }
     try { dying.rumble?.stop(); } catch { /* already stopped */ }
+    try { dying.clatter?.stop(); } catch { /* already stopped */ }
+    try { dying.clatterOsc?.stop(); } catch { /* already stopped */ }
+    try { dying.squeal?.stop(); } catch { /* already stopped */ }
+    try { dying.scrub?.stop(); } catch { /* already stopped */ }
     try { dying.road?.stop(); } catch { /* already stopped */ }
     try { dying.wind?.stop(); } catch { /* already stopped */ }
     try { dying.induction.stop(); } catch { /* already stopped */ }
@@ -3719,17 +3854,23 @@ function escortGearShiftSound(revs, load) {
   whistle.start(t); whistle.stop(t + .16);
 }
 
-function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = false) {
+function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = false,
+  brakes = null) {
   if (!engine || !ac) return;
   if (engine.kind === 'aircraft') return aircraftAudio(speedRatio, throttle);
+  const voice = engine.voice || DEFAULT_VOICE;
   const revs = rpm == null ? 0.28 + speedRatio * 0.72 : THREE.MathUtils.clamp(rpm, 0, 1);
   const load = Math.min(1, Math.abs(throttle) * 0.7 + speedRatio * 0.5);
   const t = ac.currentTime;
-  if (shifted) escortGearShiftSound(revs, load);
+  if (shifted && voice.turbo) escortGearShiftSound(revs, load);
   const normalised = THREE.MathUtils.clamp((revs - .28) / .72, 0, 1);
-  const engineRpm = 950 + normalised * 5500;
+  const engineRpm = voice.idleRpm + normalised * (voice.redlineRpm - voice.idleRpm);
   const shiftDip = shifted ? 0.78 : 1;
-  const firing = engineRpm / 30 * shiftDip;
+  // A four-stroke fires half its cylinders per revolution. Everything audible
+  // about an engine is built on that number, and it is the reason a six that
+  // never sees three thousand can still sound busier than a four that revs to
+  // six and a half.
+  const firing = engineRpm * voice.cylinders / 120 * shiftDip;
   // A four-cylinder at idle does not turn at a constant speed: it hunts, a
   // little, cylinder to cylinder. Without this the idle is a held organ note,
   // which is the one part of an engine everybody can hear is synthetic. It
@@ -3740,7 +3881,7 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
 
   engine.block[0].frequency.setTargetAtTime(firing * lope, t, 0.055);
   engine.block[1].frequency.setTargetAtTime(firing * 1.006 * lope, t, 0.06);
-  engine.exhaust.frequency.setTargetAtTime(firing * .5 * lope, t, 0.065);
+  engine.exhaust.frequency.setTargetAtTime(firing * voice.exhaust * lope, t, 0.065);
 
   // The orders track the revs and are voiced by the accelerator. Under power
   // the engine hardens; the moment the throttle shuts they drop away and what
@@ -3755,21 +3896,33 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
   }
   engine.mechanical?.frequency.setTargetAtTime(engineRpm / 60 * 2.15, t, .07);
   engine.mechanicalFilter?.frequency.setTargetAtTime(560 + normalised * 1250, t, .09);
-  engine.mechanicalGain?.gain.setTargetAtTime(.012 + normalised * .026, t, .1);
-  engine.filter.frequency.setTargetAtTime(430 + normalised * 1750 + load * 620, t, 0.075);
+  engine.mechanicalGain?.gain.setTargetAtTime(
+    (.012 + normalised * .026) * voice.mechanical, t, .1);
+  engine.filter.frequency.setTargetAtTime(
+    voice.block + normalised * voice.blockSweep + load * voice.blockSweep * 0.35, t, 0.075);
+
+  // The knock, in time with the engine.
+  if (engine.clatterOsc) {
+    const bite = voice.diesel * (0.34 + load * 0.66);
+    engine.clatterOsc.frequency.setTargetAtTime(Math.max(6, firing), t, 0.05);
+    engine.clatterGain.gain.setTargetAtTime(0.009 + bite * 0.017, t, 0.09);
+    engine.clatterDepth.gain.setTargetAtTime(0.011 + bite * 0.028, t, 0.09);
+    engine.clatterFilter.frequency.setTargetAtTime(1180 + normalised * 850, t, 0.1);
+  }
   engine.inductionFilter?.frequency.setTargetAtTime(620 + normalised * 1850 + load * 500, t, .09);
   engine.inductionGain.gain.setTargetAtTime(0.008 + load * 0.052, t, 0.085);
-  engine.rumbleGain?.gain.setTargetAtTime(.012 + load * .026 + speedRatio * .014, t, .12);
+  engine.rumbleGain?.gain.setTargetAtTime(
+    (.012 + load * .026 + speedRatio * .014) * voice.rumble, t, .12);
   if (engine.turbo) engine.turbo.frequency.setTargetAtTime(980 + normalised * 2150, t, 0.08);
   // Overrun: off the throttle at revs, an engine gets quieter and thinner
   // rather than carrying on at the same volume in a lower key.
   const overrun = normalised > 0.3 && throttle < 0.08 ? 0.72 : 1;
   engine.out.gain.setTargetAtTime(
-    (0.34 + load * 0.23) * (shifted ? 0.84 : 1) * overrun, t, 0.055);
+    (0.34 + load * 0.23) * (shifted ? 0.84 : 1) * overrun * voice.level, t, 0.055);
 
   // One restrained exhaust cough on a high-rpm lift. It is event-driven, not
   // a random crackle loop, so coasting does not sound like continuous gunfire.
-  if (engine.throttle > .58 && throttle < .12 && normalised > .48
+  if (voice.turbo && engine.throttle > .58 && throttle < .12 && normalised > .48
     && t - engine.lastPop > .42) {
     engine.lastPop = t;
     noiseBurst({ at: t + .035, hz: 135, q: .8, decay: .105, level: .045,
@@ -3793,6 +3946,44 @@ function engineAudio(speedRatio, throttle, gear = null, rpm = null, shifted = fa
     && t - engine.lastDump > .3) {
     engine.lastDump = t;
     dumpValveSound(engine.boost);
+  }
+
+  // The brakes and the tyres.
+  //
+  // `brakes` is what the driver is doing and what the car is doing about it:
+  // how hard the pedal is down, how much the back end is out, and how fast it
+  // is actually shedding speed. A brake squeals hardest as a car comes down to
+  // walking pace and stops the instant the car does, which is why this is tied
+  // to speed as well as to pedal - a squeal that carries on after the car has
+  // stopped is the sound of a synthesiser, not of a disc.
+  if (brakes && engine.squealGain) {
+    const held = THREE.MathUtils.clamp(brakes.pedal ?? 0, 0, 1);
+    const rolling = THREE.MathUtils.clamp(speedRatio, 0, 1);
+    // Loudest slow, silent stopped, and gone above about half of what the
+    // vehicle can do.
+    const window = Math.min(1, rolling * 9) * Math.max(0, 1 - rolling * 2.4);
+    const squeal = held * window * (voice.brakeSqueal ?? 1);
+    engine.squealGain.gain.setTargetAtTime(squeal * 0.030, t, 0.06);
+    engine.squeal.frequency.setTargetAtTime(1850 + rolling * 1500, t, 0.12);
+    engine.squealBand.frequency.setTargetAtTime(2150 + rolling * 1700, t, 0.12);
+    // Scrub: a tyre that is sliding rather than rolling. The handbrake does
+    // it, a locked wheel does it, and so does asking too much of the front in
+    // a corner.
+    const slide = THREE.MathUtils.clamp(brakes.slide ?? 0, 0, 1);
+    const locked = held * Math.max(0, rolling - 0.10) * 1.4;
+    const scrub = THREE.MathUtils.clamp(Math.max(slide, locked), 0, 1);
+    engine.scrubGain.gain.setTargetAtTime(scrub * scrub * 0.075, t, 0.07);
+    engine.scrubFilter.frequency.setTargetAtTime(780 + scrub * 900 + rolling * 500, t, 0.12);
+    // The settle. A vehicle that has been braking and has just stopped moving
+    // makes one last noise as everything that was being held forward comes
+    // back, and a lorry makes more of it than a hatchback.
+    const moving = rolling > 0.012;
+    if (engine.wasMoving && !moving && held > 0.2) {
+      noiseBurst({ at: t, hz: 120 * (voice.rumble > 1.5 ? 0.7 : 1), q: 1.1,
+        decay: 0.13, level: 0.030 * voice.rumble, type: 'lowpass' });
+      noiseBurst({ at: t + 0.03, hz: 900, q: 2.2, decay: 0.06, level: 0.012 });
+    }
+    engine.wasMoving = moving;
   }
 
   // The road under it and the air over it. Both follow speed, not revs - the

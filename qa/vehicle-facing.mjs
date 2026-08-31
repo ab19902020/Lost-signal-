@@ -101,6 +101,22 @@ for (const row of result) {
   assert.ok(Math.abs(row.travel.sideways) < row.travel.forward * 0.1,
     `${row.name} crabbed ${row.travel.sideways} m sideways over ${row.travel.forward} m`);
 
+  // Every wheel turns about its axle, and an axle goes across a vehicle.
+  //
+  // The truck's did not. Its rig turns the whole model a quarter turn to bring
+  // the nose round to -Z, the wheels hang inside that turn, and the layer that
+  // rolls them was built in the wheel's own parent - so it rolled them about
+  // the length of the lorry. Six wheels turning like barrels rolling down the
+  // chassis. Nothing measured it, because everything that looked at a wheel
+  // asked where it was rather than which way it went round.
+  for (const [tag, axle] of Object.entries(row.axle || {})) {
+    assert.ok(axle, `${row.name}'s ${tag} wheel has no roll axis`);
+    assert.ok(Math.abs(axle[0]) > 0.99,
+      `${row.name}'s ${tag} wheel rolls about [${axle}]; an axle goes across the car, so that has to be X`);
+  }
+  assert.equal(Object.keys(row.axle || {}).length, tags.length,
+    `${row.name} has ${tags.length} wheels and ${Object.keys(row.axle || {}).length} roll axes`);
+
   // Only the front wheels turn, and they turn the same way as each other.
   for (const tag of ['LF', 'RF']) {
     assert.ok(row.steered[tag] !== null && row.steered[tag] !== undefined,

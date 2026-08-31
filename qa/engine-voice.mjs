@@ -39,9 +39,9 @@ const result = await page.evaluate(async () => {
   if (!ls.engineVoice()) return { error: 'the engine never started' };
 
   // Hold the engine at a rev point and settle the audio graph, then read it.
-  const at = async (speedRatio, throttle, rpm) => {
+  const at = async (speedRatio, throttle, rpm, brakes = null) => {
     for (let step = 0; step < 40; step++) {
-      ls.engineAt(speedRatio, throttle, rpm);
+      ls.engineAt(speedRatio, throttle, rpm, brakes);
       await new Promise((resolve) => setTimeout(resolve, 12));
     }
     return ls.engineVoice();
@@ -57,8 +57,25 @@ const result = await page.evaluate(async () => {
   }
   const cruise = await at(0.45, 0.05, 0.55);   // same revs, shut throttle
   const pulling = await at(0.45, 1.0, 0.55);   // same revs, full throttle
+
+  // The pedal. There was no braking sound of any kind: you could stand on it
+  // from seventy and the only thing that changed was the engine note.
+  const rolling = await at(0.10, 0, 0.20, { pedal: 0, slide: 0 });
+  const braking = await at(0.10, 0, 0.20, { pedal: 1, slide: 0 });
+  const stopped = await at(0, 0, 0.10, { pedal: 1, slide: 0 });
+  const sliding = await at(0.45, 0, 0.50, { pedal: 1, slide: 0.9 });
+
+  // And the two vehicles, which used to be one vehicle twice. Each is started
+  // on its own voice and held at the same fraction of its own rev range, so
+  // what is compared is the engine rather than how hard it is being driven.
+  const voices = {};
+  for (let index = 0; index < ls.game.vehicles.length; index++) {
+    const name = ls.engineFor(index);
+    if (voices[name]) continue;
+    voices[name] = { idle: await at(0.01, 0, 0.02), top: await at(0.9, 1, 1.0) };
+  }
   return { idle, idleSwing: +(Math.max(...idleFiring) - Math.min(...idleFiring)).toFixed(2),
-    cruise, pulling };
+    cruise, pulling, rolling, braking, stopped, sliding, voices };
 });
 await browser.close();
 if (result.error) { console.error(result.error); process.exit(1); }
@@ -82,5 +99,34 @@ assert.ok(result.pulling.induction > result.cruise.induction,
 // The idle hunts a little rather than holding one note.
 assert.ok(result.idleSwing > 0.15,
   `the idle holds within ${result.idleSwing} Hz of one note; a four-cylinder hunts more`);
+// Brakes.
+assert.ok(result.rolling.squeal < 0.001,
+  `the brakes squeal at ${result.rolling.squeal} with nobody on the pedal`);
+assert.ok(result.braking.squeal > 0.004,
+  `standing on the brakes at walking pace produced ${result.braking.squeal} of squeal`);
+assert.ok(result.stopped.squeal < 0.001,
+  `the brakes go on squealing at ${result.stopped.squeal} after the car has stopped`);
+assert.ok(result.sliding.scrub > result.rolling.scrub + 0.004,
+  `a sliding tyre scrubs at ${result.sliding.scrub} and a rolling one at ${result.rolling.scrub}`);
+
+// Two vehicles, two engines.
+const heard = Object.entries(result.voices);
+assert.ok(heard.length >= 2, `only ${heard.length} vehicle voice(s) to compare`);
+for (const [name, rows] of heard) {
+  assert.ok(rows.top.firing > rows.idle.firing * 2,
+    `${name} only goes from ${rows.idle.firing} Hz to ${rows.top.firing} Hz across its rev range`);
+}
+const tops = heard.map(([, rows]) => rows.top.firing);
+assert.ok(Math.max(...tops) > Math.min(...tops) * 1.3,
+  `every vehicle tops out within a whisker of ${Math.min(...tops).toFixed(0)} Hz; `
+  + 'they are all running the same engine');
+const diesel = heard.find(([, rows]) => rows.idle.clatter);
+assert.ok(diesel, 'no vehicle has an injector clatter; the lorry is a petrol car');
+assert.ok(Math.abs(diesel[1].top.clatter.hz - diesel[1].top.firing) < diesel[1].top.firing * 0.05,
+  `${diesel[0]}'s clatter runs at ${diesel[1].top.clatter.hz} Hz while it fires at `
+  + `${diesel[1].top.firing} Hz; a knock happens on a stroke, not on a timer`);
+assert.ok(!diesel[1].top.turbo, `${diesel[0]} has a turbo whistle on a diesel lorry`);
+
 console.log('Engine voice QA passed: the orders track the revs and are voiced by the '
-  + 'accelerator, the throttle opens the induction, overrun goes quiet and the idle hunts.');
+  + 'accelerator, the throttle opens the induction, overrun goes quiet, the idle hunts, '
+  + 'the brakes squeal only while slowing, and the lorry is a diesel.');
